@@ -1,0 +1,216 @@
+using System;
+
+namespace CS2Econ.Core
+{
+    public enum ZoneKind : byte { None, ResidentialLow, ResidentialHigh, Commercial, Industrial, Office, Extractor }
+
+    /// <summary>Tradable + local resources. Raw feeds Industrial (Weber input);
+    /// Goods is the manufactured tradable; Services is local-only (commercial
+    /// capture of household spending); OfficeOutput has near-exogenous price
+    /// (design §4.2).</summary>
+    public enum Res : byte { Raw, Goods, Services, OfficeOutput }
+
+    public enum ExitMode : byte { Road, Rail, Sea, Air }
+
+    public enum LaborClass : byte { Basic, Skilled, Educated }
+
+    public enum Lifecycle : byte { Student, Single, Family, Senior }
+
+    /// <summary>Population segment = income × education × lifecycle (design §4.2),
+    /// with lifecycle carrying real weight structure: seniors have transfer income,
+    /// near-zero job-access weight and high amenity/healthcare weights; students
+    /// and singles bid low with high density tolerance.</summary>
+    public readonly struct Segment
+    {
+        public readonly string Name;
+        public readonly Lifecycle Life;
+        public readonly LaborClass Labor;
+        public readonly double Participation;   // labor-force share (seniors 0, students partial)
+        public readonly double Transfer;        // exogenous per tick (seniors, students)
+        public readonly double JobAccessW;      // weight on job access
+        public readonly double GoodsAccessW;    // weight on shopping access
+        public readonly double SchoolAccessW;
+        public readonly double AmenityW;
+        public readonly double HealthW;
+        public readonly double PollutionW;      // negative term weight
+        public readonly double DensityTolerance;// 0..1: 1 = happy in ResidentialHigh
+        public readonly double MaxRentShare;    // fraction of income bid for housing
+
+        public Segment(string name, Lifecycle life, LaborClass labor, double participation, double transfer,
+                       double jobW, double goodsW, double schoolW, double amenW, double healthW,
+                       double pollW, double densTol, double rentShare)
+        {
+            Name = name; Life = life; Labor = labor; Participation = participation; Transfer = transfer;
+            JobAccessW = jobW; GoodsAccessW = goodsW; SchoolAccessW = schoolW; AmenityW = amenW;
+            HealthW = healthW; PollutionW = pollW; DensityTolerance = densTol; MaxRentShare = rentShare;
+        }
+
+        /// <summary>The fixed segment table. Index = segment id everywhere. Wages
+        /// are per labor class (EconParams.Wage) — firms pay them; segments differ
+        /// through participation, transfers, and weights.</summary>
+        public static readonly Segment[] All = new[]
+        {
+            //           name          life               labor                part  transfer jobW  goodsW schoolW amenW healthW pollW densTol rentShare
+            new Segment("StudentLow",  Lifecycle.Student, LaborClass.Basic,    0.5,  3.0,     0.5,  0.6,   1.5,    0.6,  0.2,    0.5,  1.0,    0.40),
+            new Segment("SingleBasic", Lifecycle.Single,  LaborClass.Basic,    1.0,  0.0,     1.2,  0.8,   0.0,    0.7,  0.2,    0.6,  1.0,    0.34),
+            new Segment("SingleSkill", Lifecycle.Single,  LaborClass.Skilled,  1.0,  0.0,     1.2,  1.0,   0.0,    1.0,  0.2,    0.8,  0.9,    0.32),
+            new Segment("FamilyBasic", Lifecycle.Family,  LaborClass.Basic,    1.0,  1.0,     1.0,  1.0,   1.2,    0.9,  0.5,    1.0,  0.35,   0.30),
+            new Segment("FamilySkill", Lifecycle.Family,  LaborClass.Skilled,  1.0,  1.0,     1.0,  1.1,   1.3,    1.1,  0.5,    1.1,  0.30,   0.28),
+            new Segment("FamilyEdu",   Lifecycle.Family,  LaborClass.Educated, 1.0,  1.0,     1.0,  1.2,   1.4,    1.3,  0.5,    1.2,  0.30,   0.26),
+            new Segment("SeniorLow",   Lifecycle.Senior,  LaborClass.Basic,    0.0,  8.0,     0.05, 0.9,   0.0,    1.4,  1.5,    1.0,  0.5,    0.32),
+            new Segment("SeniorMid",   Lifecycle.Senior,  LaborClass.Skilled,  0.0, 13.0,     0.05, 1.0,   0.0,    1.6,  1.6,    1.1,  0.4,    0.30),
+        };
+
+        public static int Count => All.Length;
+    }
+
+    /// <summary>All named parameters with design-doc references. Everything the
+    /// design calls a knob lives here; nothing is buried as a literal.</summary>
+    public sealed class EconParams
+    {
+        // ---- shared rates (design §4.3) -------------------------------------
+        public double HurdleRate = 0.0004;        // h per tick (~15%/yr at 365 ticks/yr)
+        public double Depreciation = 0.00035;     // δ per tick
+        public double MaintenanceRate = 0.00025;  // m per tick
+        public int AnnuityHorizon = 3650;         // L ticks for a(h,L)
+
+        // ---- structure / levels (design §4.4) -------------------------------
+        public double RC1PerUnit = 700.0;         // replacement cost, level 1, per unit
+        public double LevelCostGamma = 1.5;       // RC_ℓ = RC1·γ^(ℓ−1), γ ∈ [1.4,1.6]
+        public double LevelBidAlpha = 0.45;       // concave bid uplift: quality(ℓ) = ℓ^α
+        public int MaxLevel = 5;
+        public double SalvageFraction = 0.35;     // salvage of V on scrape
+        public double DemolitionPerUnit = 60.0;
+
+        // ---- land accounting (design §4.3) ----------------------------------
+        public double CaptureFraction = 0.95;     // φ = τ_L/(r+τ_L); "full capture" default
+        public double StructureTaxRate = 0.0;     // τ_S default zero (self-teaching slider)
+        public bool WedgeEarmarkDefault = true;   // wedge → parcel escrow (TIF analog)
+        public int AssessmentPeriod = 30;         // ticks between a household's re-assessments
+        public double TenantProtectionRate = 0.05;// phase-in per assessment when district policy on
+
+        // ---- access (design §4.2) -------------------------------------------
+        public double ThetaCommute = 0.055;       // e^(−θc) decay, c in generalized minutes
+        public double ThetaShopping = 0.09;
+        public double ThetaFreight = 0.03;
+        public double ThetaOffice = 0.07;
+        public double OfficeAgglomGamma = 0.075;  // A(p)^γ, γ ∈ [0.05, 0.1]
+        public int IpfIterations = 6;
+
+        // ---- bids -----------------------------------------------------------
+        public double PremiumExponent = 2.2;      // convexity of the location premium
+        public double BidAccessScale = 0.42;      // rent willingness below the WTP cap: occupants keep surplus
+        public double CommercialMarkup = 0.35;    // gross margin on captured spending
+        public double OfficeOutputPrice = 3.1;    // near-exogenous (design §4.2)
+
+        // ---- production coefficients (viable at world anchors vs wages) ------
+        public double IndOutputPerSlot = 3.5;     // Goods per filled slot per tick
+        public double IndRawPerOutput = 0.5;      // Raw consumed per Goods unit
+        public double ExtractorOutputPerSlot = 6.0;
+        public double OfficeOutputPerSlot = 10.0;
+        public double LocalGoodsValue = 5.0;      // reference Goods value for COGS scaling
+
+        /// <summary>Flow value of liquid savings for affordability decisions:
+        /// households draw down wealth over roughly this horizon (a wealthy
+        /// retiree can rent; a broke worker cannot, whatever the wage tables say).</summary>
+        public double WealthDrawdownTicks = 300.0;
+
+        // ---- migration (design §4.1) ----------------------------------------
+        public double MigInElasticity = 0.0030;   // per segment per tick, on utility gap
+        public double MigOutElasticity = 0.0008;  // slower: attachment / loss aversion
+        public double MigOutLagAlpha = 0.008;     // EMA lag on the out-migration signal
+        public double RegionSize = 40_000;        // the shared "how big is the world" knob
+        public double ReservationReplenish = 0.001;
+        public double ProminenceScale = 60_000;   // city size at which field widening doubles
+        public double NetworkMemoryDecay = 0.995;
+        public double NetworkMemoryGain = 0.08;
+        public double FirmEntryElasticity = 0.004;
+
+        // ---- trade (design §4.5) --------------------------------------------
+        public double TradeSustainAlpha = 0.02;   // EMA to sustained Q
+        public double TradeTransientDecay = 0.85; // per tick resilience decay
+        public double TradeTransientBeta = 0.6;   // burst weight on effective position
+        public double LotSize = 25.0;             // quantized offer size
+
+        // ---- construction (design §4.6) -------------------------------------
+        public int ConstructionLag = 45;          // ticks to complete
+        public double SoftmaxSpread = 0.0005;     // logit spread over developer returns
+        public int MaxStartsPerTick = 6;          // construction industry capacity
+        public double AbandonMarginFactor = 0.25; // abandon if E[flow] < factor·h·remainingCost
+        public double CalibShrinkN0 = 12.0;       // shrinkage prior weight for correction factors
+
+        // ---- condition / decay ----------------------------------------------
+        public double ConditionDecayScale = 1.0;  // multiplies δ when S unpaid
+        public double EscrowToConditionRate = 0.02; // stalled escrow drains into condition
+
+        // ---- insolvency / floor (design §4.2) -------------------------------
+        public int InsolvencyGraceTicks = 18;
+        public double ConsumptionCutFactor = 0.6;
+        public double EmigrationMoveCost = 40.0;
+        public double ShelterCapacityShare = 0.015; // of population
+
+        // ---- consumption ----------------------------------------------------
+        public double BaseConsumptionShare = 0.80; // of after-housing income, spent at commercial
+        public double MovingCostMean = 25.0;
+        public double OwnerMovingCostMult = 2.2;   // owner-tagged margins are larger (§4.4)
+        public double OutsideShopMinutes = 40.0;   // outside option in the shopping logit
+        public double OutsideShopMass = 60.0;      // (uncaptured spending leaks outward)
+
+        // ---- city services / fiscal -----------------------------------------
+        public double ServiceCostPerHousehold = 1.2; // per tick, paid by Treasury
+        public double ServiceCostPerFirmSlot = 0.35;
+
+        // ---- engine cadence -------------------------------------------------
+        public int RefreshInterval = 5;            // ticks between Tier B refreshes
+        public int AssessSlices = 10;              // parcels assessed 1/N per tick (staggered)
+        public int ScrapePressureTicks = 60;       // sustained-gap requirement before warehousing
+        public double CondBidFloor = 0.45;         // bid factor at condition 0
+
+        // ---- population dynamics --------------------------------------------
+        public double ArrivalSavingsMean = 100.0, ArrivalSavingsSd = 30.0;
+        public double FirmSeedCapital = 200.0;
+        public double CompanyBankruptcyLimit = -150.0;
+        public double SeniorMortalityPerTick = 1.0 / 5475.0;  // ~15 sim-years
+
+        public double CondFactor(double condition) => CondBidFloor + (1 - CondBidFloor) * condition;
+
+        // ---- wages by labor class (education → qualification → wage, §1.1) ---
+        public double WageBasic = 10.0, WageSkilled = 16.0, WageEducated = 26.0;
+        public double Wage(LaborClass c) => c switch
+        {
+            LaborClass.Basic => WageBasic,
+            LaborClass.Skilled => WageSkilled,
+            _ => WageEducated,
+        };
+
+        // ---- labor matching (Balancing.cs slack cost: reservation friction) --
+        public double LaborSlackMinutes = 55.0;   // e^(−θ·slack) weight for unmatched
+
+        // ---- income tax (vanilla-retained labor side, §4.3) ------------------
+        public double IncomeTaxBasic = 0.10, IncomeTaxSkilled = 0.12, IncomeTaxEducated = 0.13;
+
+        public double IncomeTax(LaborClass c) => c switch
+        {
+            LaborClass.Basic => IncomeTaxBasic,
+            LaborClass.Skilled => IncomeTaxSkilled,
+            _ => IncomeTaxEducated,
+        };
+
+        public double RC(int level, int units) => RC1PerUnit * Math.Pow(LevelCostGamma, level - 1) * units;
+        public double Quality(int level) => Math.Pow(level, LevelBidAlpha);
+    }
+
+    /// <summary>Feature flags: every tier independently revertible (design §3,
+    /// PLAN §1). Off means the vanilla-analog behavior in whatever host runs the
+    /// core (the harness's vanilla baseline; the game's stock systems).</summary>
+    public sealed class FeatureFlags
+    {
+        public bool TierA_Migration = true;      // endogenous outside world
+        public bool TierB_Allocation = true;     // access-based allocation + residuals
+        public bool TierC_LandAccounting = true; // S/tax/wedge, escrow, LVT
+        public bool TierC2_Leveling = true;      // ℓ*, renovation clock, decay
+        public bool TierD_Trade = true;          // finite-depth exits, parity bands
+        public bool ConstructionRewire = true;   // residual-driven site selection
+        public bool ShadowAccountingOnly = false;// stage 3: assess + log, levy nothing
+    }
+}
