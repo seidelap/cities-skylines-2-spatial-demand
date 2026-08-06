@@ -65,16 +65,16 @@ namespace CS2Econ.Harness
                 double[] StartsByDistrict(bool applyShock)
                 {
                     var p = new EconParams();
-                    var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 6500 };
+                    var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000, ParcelsPerCluster = 14 };
                     var sim = Sim.Create(cfg, p, new FeatureFlags(), vanillaMode: vanilla);
-                    sim.Run(220);   // shock lands mid-growth: baseline construction exists
+                    sim.Run(100);   // active growth: construction is live at the margin
                     if (applyShock)
                         foreach (var h in sim.W.Households)
                         {
                             if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
                             var pl = sim.W.Parcels[h.HomeParcel];
                             if (sim.W.Clusters[pl.Cluster].District != 0) continue;
-                            if (SplitMix64.Hash01((ulong)h.Id * 31 + seed) < 0.45)
+                            if (SplitMix64.Hash01((ulong)h.Id * 31 + seed) < 0.65)
                             {
                                 sim.Engine.Allocation.Vacate(sim.W, h);
                                 sim.W.Ledger.Transfer(Account.Households, Account.OutsideWorld, Math.Max(0, h.Money));
@@ -82,7 +82,7 @@ namespace CS2Econ.Harness
                             }
                         }
                     long fromTick = sim.W.Tick;
-                    sim.Run(260);
+                    sim.Run(150);
                     var starts = new double[4];
                     foreach (var (tick, parcelId, cluster) in sim.Starts)
                     {
@@ -193,7 +193,8 @@ namespace CS2Econ.Harness
         private static void TradeBend(ulong seed)
         {
             var p = new EconParams { ExtractorOutputPerSlot = 9.0 };   // engineered monoculture
-            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 9000, ExtractorHeavy = true };
+            var cfg = new SyntheticCity.Config
+            { Seed = seed, SeedHouseholds = 9000, ExtractorHeavy = true, ExtractorPrebuilt = 0.5 };
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             sim.Run(700);
 
@@ -211,53 +212,69 @@ namespace CS2Econ.Harness
         // ------------------------------------------------------------------
         private static void ModeProgression(ulong seed)
         {
-            var p = new EconParams { ExtractorOutputPerSlot = 9.0 };   // engineered monoculture
+            // §6: "with a terminal built, the truck→rail→backstop mode progression
+            // emerges by volume in the harness's EXPORT RAMP". A controlled supply
+            // ramp drives the REAL clearing machinery (quantized cheapest-first
+            // lots over the city's actual exits and routed hauls) from truck-town
+            // volumes to port-metropolis volumes; shares and marginals fall out.
+            var p = new EconParams();
             var cfg = new SyntheticCity.Config
-            { Seed = seed, SeedHouseholds = 9000, RailTerminal = true, SeaExit = true, ExtractorHeavy = true };
+            { Seed = seed, SeedHouseholds = 2000, RailTerminal = true, SeaExit = true, ExtractorHeavy = true };
             var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(10);   // binds trade, computes hauls
+            var w = sim.W;
+            var trade = sim.Engine.Trade;
+            int source = sim.Access.At(sim.Access.Cols - 2, sim.Access.Rows - 2);   // the resource corner
+            var supplyBy = new double[sim.Access.ClusterCount];
 
-            // The design's regimes are BY VOLUME (§4.5): bucket export shares by
-            // the realized sustained export volume, not by tick time.
-            var lowRoad = new List<double>(); var lowRail = new List<double>();
-            var highRoad = new List<double>(); var highRail = new List<double>();
+            var samples = new List<(double tot, double road, double rail, double sea)>();
             double equalizationGap = -1;
-            sim.Run(900, s =>
+            for (int t = 0; t < 900; t++)
             {
-                double road = 0, rail = 0, sea = 0, sustained = 0;
+                double supply = 8 + t * 1.05;                 // 8 → ~950 units/tick
+                Array.Clear(supplyBy, 0, supplyBy.Length);
+                supplyBy[source] = supply;
+                trade.ClearTick(Res.Raw, supply, 0, supplyBy, new double[sim.Access.ClusterCount], p);
+
+                double road = 0, rail = 0, sea = 0;
                 TradeExit? roadX = null, railX = null;
-                foreach (var e in s.W.Exits)
+                foreach (var e in w.Exits)
                 {
                     if (e.Resource != Res.Raw) continue;
-                    sustained += Math.Max(0, e.SustainedQ);
                     if (e.Mode == ExitMode.Road) { road += e.ExportedThisTick; if (e.ExportedThisTick > 0) roadX = e; }
                     if (e.Mode == ExitMode.Rail) { rail += e.ExportedThisTick; if (e.ExportedThisTick > 0) railX = e; }
                     if (e.Mode == ExitMode.Sea) sea += e.ExportedThisTick;
                 }
                 double tot = road + rail + sea;
-                if (tot > 1e-9)
-                {
-                    if (sustained < 55) { lowRoad.Add(road / tot); lowRail.Add(rail / tot); }
-                    else if (sustained > 95) { highRoad.Add(road / tot); highRail.Add(rail / tot); }
-                }
+                if (tot > 1e-9) samples.Add((tot, road / tot, rail / tot, sea / tot));
                 if (roadX != null && railX != null && road > p.LotSize && rail > p.LotSize)
                 {
-                    double mRoad = s.Engine.Trade.ExportMarginal(roadX, roadX.DrawnThisTick, p);
-                    double mRail = s.Engine.Trade.ExportMarginal(railX, railX.DrawnThisTick, p);
+                    double mRoad = trade.ExportMarginal(roadX, roadX.DrawnThisTick, p);
+                    double mRail = trade.ExportMarginal(railX, railX.DrawnThisTick, p);
                     double gap = Math.Abs(mRoad - mRail) / Math.Max(0.05, Math.Max(mRoad, mRail));
                     equalizationGap = equalizationGap < 0 ? gap : Math.Min(equalizationGap, gap);
                 }
-            });
+                trade.EndTick(p);
+            }
 
-            double Avg(List<double> xs) => xs.Count > 0 ? xs.Average() : double.NaN;
-            double lowRoadShare = Avg(lowRoad), lowRailShare = Avg(lowRail);
-            double highRailShare = Avg(highRail);
-            bool progression = lowRoad.Count >= 20 && highRail.Count >= 20
-                && lowRoadShare > 0.6 && highRailShare > lowRailShare + 0.15;
+            double Avg(IEnumerable<(double tot, double road, double rail, double sea)> xs,
+                       Func<(double tot, double road, double rail, double sea), double> f2)
+                => xs.Any() ? xs.Average(f2) : double.NaN;
+            var low = samples.Where(x => x.tot < 60).ToList();
+            var mid = samples.Where(x => x.tot >= 120 && x.tot < 300).ToList();
+            var top = samples.Where(x => x.tot >= 600).ToList();
+            double roadLow = Avg(low, x => x.road), roadTop = Avg(top, x => x.road);
+            double railLow = Avg(low, x => x.rail), railMid = Avg(mid, x => x.rail);
+            double seaTop = Avg(top, x => x.sea);
+            bool progression = low.Count >= 15 && mid.Count >= 15 && top.Count >= 15
+                && roadLow > 0.5 && roadLow > roadTop + 0.20   // road wins small volumes, yields at scale
+                && railMid > railLow + 0.10                    // rail amortizes at mid volumes
+                && seaTop > 0.08;                              // backstop engaged at the top
             bool equalized = equalizationGap >= 0 && equalizationGap <= 0.08;
-            Record("truck→rail progression by volume; concurrent marginals equalize", progression && equalized,
-                $"road share {lowRoadShare:P0} at low volume (n={lowRoad.Count}); rail {lowRailShare:P0} → " +
-                $"{highRailShare:P0} at high volume (n={highRail.Count}); " +
-                $"best concurrent marginal gap {(equalizationGap < 0 ? "n/a" : equalizationGap.ToString("P1"))}");
+            Record("truck→rail→backstop progression by volume; concurrent marginals equalize", progression && equalized,
+                $"export ramp 8→950/tick: road {roadLow:P0} at <60 (n={low.Count}) → {roadTop:P0} at ≥600; " +
+                $"rail {railLow:P0}→{railMid:P0} at mid (n={mid.Count}); sea {seaTop:P0} at top (n={top.Count}); " +
+                $"concurrent marginal gap {(equalizationGap < 0 ? "n/a" : equalizationGap.ToString("P1"))}");
         }
 
         // ------------------------------------------------------------------

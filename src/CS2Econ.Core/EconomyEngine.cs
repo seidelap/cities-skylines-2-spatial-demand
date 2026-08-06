@@ -117,7 +117,7 @@ namespace CS2Econ.Core
                 SeekersEma[s] = MathUtil.Ema(SeekersEma[s], seekersNow[s], 0.15);
             }
 
-            Residuals.Refresh(W, Access, Trade, SeekersEma, P);
+            Residuals.Refresh(W, Access, Trade, SeekersEma, SegmentPresence, P);
 
             // Segment average charged rents (migration's rent term).
             var sums = new double[Segment.Count]; var counts = new double[Segment.Count];

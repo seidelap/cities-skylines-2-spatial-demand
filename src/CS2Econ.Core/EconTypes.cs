@@ -99,7 +99,7 @@ namespace CS2Econ.Core
 
         // ---- bids -----------------------------------------------------------
         public double PremiumExponent = 2.2;      // convexity of the location premium
-        public double BidAccessScale = 0.42;      // rent willingness below the WTP cap: occupants keep surplus
+        public double BidAccessScale = 0.47;      // rent willingness below the WTP cap: occupants keep surplus
         public double CommercialMarkup = 0.35;    // gross margin on captured spending
         public double OfficeOutputPrice = 3.1;    // near-exogenous (design §4.2)
 
@@ -141,7 +141,7 @@ namespace CS2Econ.Core
         public double CalibShrinkN0 = 12.0;       // shrinkage prior weight for correction factors
 
         // ---- condition / decay ----------------------------------------------
-        public double ConditionDecayScale = 1.0;  // multiplies δ when S unpaid
+        public double ConditionDecayScale = 8.0;  // multiplies δ when S unpaid: vacant stock cheapens in ~sim-months, not years
         public double EscrowToConditionRate = 0.02; // stalled escrow drains into condition
 
         // ---- insolvency / floor (design §4.2) -------------------------------

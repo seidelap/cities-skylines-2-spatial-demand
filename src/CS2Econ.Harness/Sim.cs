@@ -54,7 +54,8 @@ namespace CS2Econ.Harness
             if (_pendingStartScan && beforeStates != null)
             {
                 foreach (var pl in W.Parcels)
-                    if (pl.State == ParcelState.UnderConstruction && !beforeStates.Contains(pl.Id))
+                    if (pl.State == ParcelState.UnderConstruction && !beforeStates.Contains(pl.Id)
+                        && pl.CommittedCost > 0)   // developer/spawner commits; scrapes are §4.4 events
                         Starts.Add((W.Tick, pl.Id, pl.Cluster));
             }
 

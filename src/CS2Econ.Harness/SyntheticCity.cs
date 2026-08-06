@@ -128,6 +128,7 @@ namespace CS2Econ.Harness
             public bool RailTerminal = false;
             public bool SeaExit = false;
             public bool ExtractorHeavy = false;   // monoculture-export runs (§6 trade targets)
+            public double ExtractorPrebuilt = 0.0; // seeded extraction share in ExtractorHeavy mode
             public ulong Seed = 20260806;
         }
 
@@ -160,9 +161,10 @@ namespace CS2Econ.Harness
             {
                 var (x, y) = access.Pos(c);
                 double r = Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) / maxR;
-                int cornerSize = cfg.ExtractorHeavy ? 4 : 2;
-                bool resourceCorner = (x < cornerSize && y < cornerSize)
-                                      || (x >= cfg.Cols - cornerSize && y >= cfg.Rows - cornerSize);
+                int cornerSize = cfg.ExtractorHeavy ? 6 : 2;
+                bool resourceCorner = cfg.ExtractorHeavy
+                    ? (x >= cfg.Cols - cornerSize && y >= cfg.Rows - cornerSize)   // single corner near rail/east exits
+                    : (x < cornerSize && y < cornerSize) || (x >= cfg.Cols - cornerSize && y >= cfg.Rows - cornerSize);
                 double roll = rng.NextDouble();
                 if (resourceCorner)
                     return cfg.ExtractorHeavy
@@ -182,7 +184,8 @@ namespace CS2Econ.Harness
                 {
                     var kind = ZoneFor(c, ref w.Rng);
                     var pl = new Parcel { Id = w.Parcels.Count, Cluster = c, Zoned = kind, State = ParcelState.Empty };
-                    if (w.Rng.NextDouble() < cfg.PrebuiltShare)
+                    double prebuilt = kind == ZoneKind.Extractor && cfg.ExtractorHeavy ? cfg.ExtractorPrebuilt : cfg.PrebuiltShare;
+                    if (w.Rng.NextDouble() < prebuilt)
                     {
                         pl.State = ParcelState.Built;
                         pl.Use = kind;
@@ -272,7 +275,7 @@ namespace CS2Econ.Harness
                     AddExit(ExitMode.Rail, eastExit, res, anchor, t: 0.10, d: 1, handling: 0.50);
                 if (cfg.SeaExit)
                     AddExit(ExitMode.Sea, access.At(cfg.Cols / 2, cfg.Rows - 1), res,
-                            anchor, t: 0, d: double.PositiveInfinity, handling: 0.55, capacity: 260);
+                            anchor, t: 0, d: double.PositiveInfinity, handling: 0.90, capacity: 260);
             }
 
             w.Ledger = new Ledger(hhMoney, firmMoney, initialTreasury: 3000);

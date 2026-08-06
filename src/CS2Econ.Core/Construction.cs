@@ -10,12 +10,12 @@ namespace CS2Econ.Core
     {
         public double[][] ByUse = Array.Empty<double[]>();   // [use][cluster], units/slots
         private static readonly ZoneKind[] Uses =
-            { ZoneKind.ResidentialLow, ZoneKind.ResidentialHigh, ZoneKind.Commercial, ZoneKind.Industrial, ZoneKind.Office };
+            { ZoneKind.ResidentialLow, ZoneKind.ResidentialHigh, ZoneKind.Commercial, ZoneKind.Industrial, ZoneKind.Office, ZoneKind.Extractor };
 
         public static int UseIndex(ZoneKind k) => k switch
         {
             ZoneKind.ResidentialLow => 0, ZoneKind.ResidentialHigh => 1, ZoneKind.Commercial => 2,
-            ZoneKind.Industrial => 3, ZoneKind.Office => 4, _ => -1,
+            ZoneKind.Industrial => 3, ZoneKind.Office => 4, ZoneKind.Extractor => 5, _ => -1,
         };
 
         public double Get(int cluster, ZoneKind use, ClaimsLedger claims)
@@ -27,30 +27,41 @@ namespace CS2Econ.Core
         /// <summary>seekersBySegment: households currently looking (unhoused +
         /// sheltered + expected near-term arrivals EMA).</summary>
         public void Refresh(WorldState w, AccessState acc, TradeSystem trade,
-                            double[] seekersBySegment, EconParams p)
+                            double[] seekersBySegment, double[] seekerPresence, EconParams p)
         {
             int C = acc.C;
-            ByUse = new double[5][];
-            for (int u = 0; u < 5; u++) ByUse[u] = new double[C];
+            ByUse = new double[6][];
+            for (int u = 0; u < 6; u++) ByUse[u] = new double[C];
 
-            // ---- residential: seekers spread by choice shares ----------------
+            // ---- residential: seekers spread by choice shares, weighted by
+            // AFFORDABILITY of the stock their demand would trigger. A seeker who
+            // cannot pay a new unit's assessment is shelter/migration pressure,
+            // not construction demand — residual predicts FILL (§4.2), and
+            // counting priced-out demand stalls construction against a vacancy
+            // overhang it can never absorb.
             var share = new double[C];
             for (int s = 0; s < Segment.Count; s++)
             {
                 double seekers = seekersBySegment[s];
                 if (seekers <= 0) continue;
                 var seg = Segment.All[s];
+                ZoneKind kind = seg.DensityTolerance >= 0.5 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
                 double sum = 0;
                 for (int c = 0; c < C; c++)
                 {
-                    share[c] = Math.Exp(acc.AccessValue[s][c] / 1.5);
+                    double bid = LandAccounting.ResidentialBidPerUnit(acc, c, kind, 2, seekerPresence, p);
+                    double assessProxy = p.CaptureFraction * bid
+                                         + (1 - p.CaptureFraction) * LandAccounting.SPerUnit(2, 1.0, p);
+                    double affordCap = seg.MaxRentShare * acc.ExpectedIncome(s, c, p) * 1.1;
+                    double afford = assessProxy > 1e-9
+                        ? MathUtil.Clamp(1.2 * affordCap / assessProxy - 0.2, 0, 1) : 1;
+                    share[c] = Math.Exp(acc.AccessValue[s][c] / 1.5) * afford;
                     sum += share[c];
                 }
                 if (sum <= 0) continue;
                 for (int c = 0; c < C; c++)
                 {
                     double mass = seekers * share[c] / sum;
-                    // High-density-tolerant segments demand ResHigh; others ResLow.
                     if (seg.DensityTolerance >= 0.5) { ByUse[1][c] += mass * 0.75; ByUse[0][c] += mass * 0.25; }
                     else { ByUse[0][c] += mass * 0.85; ByUse[1][c] += mass * 0.15; }
                 }
@@ -65,6 +76,8 @@ namespace CS2Econ.Core
                 ByUse[3][c] = 10.0 * indProfit / p.WageBasic;
                 double offProfit = LandAccounting.FirmBidPerSlot(acc, trade, c, ZoneKind.Office, 2, p);
                 ByUse[4][c] = 10.0 * offProfit / p.WageBasic;
+                double extProfit = LandAccounting.FirmBidPerSlot(acc, trade, c, ZoneKind.Extractor, 2, p);
+                ByUse[5][c] = 10.0 * extProfit / p.WageBasic;
             }
 
             // Export-base feedback: sustained raw exports induce processing
@@ -85,8 +98,8 @@ namespace CS2Econ.Core
             }
 
             // ---- net out incumbents' vacancies and the claims ledger ---------
-            var vacantByUse = new double[5][];
-            for (int u = 0; u < 5; u++) vacantByUse[u] = new double[C];
+            var vacantByUse = new double[6][];
+            for (int u = 0; u < 6; u++) vacantByUse[u] = new double[C];
             foreach (var pl in w.Parcels)
             {
                 int u = UseIndex(pl.Use);
@@ -97,7 +110,7 @@ namespace CS2Econ.Core
                     else if (!pl.IsResidential && pl.OccupantFirm < 0) vacantByUse[u][pl.Cluster] += pl.Units;
                 }
             }
-            for (int u = 0; u < 5; u++)
+            for (int u = 0; u < 6; u++)
                 for (int c = 0; c < C; c++)
                     ByUse[u][c] -= vacantByUse[u][c];
             // NOTE: claims are subtracted LIVE in Get(), not baked at refresh —
