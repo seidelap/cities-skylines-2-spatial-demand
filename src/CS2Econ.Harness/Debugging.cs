@@ -8,6 +8,116 @@ namespace CS2Econ.Harness
     /// the quantities the acceptance tests depend on. Tuning aid, not a test.</summary>
     public static class Debugging
     {
+        /// <summary>`harness firmdiag` — firm-level A/B: demand-informed siting
+        /// (spatial) vs geography-blind spawning (vanilla) on identical seeds.
+        /// Answers: do shops sit where demand is, are they meeting real demand
+        /// (zombie share), and is profitability higher under residual-driven
+        /// site selection?</summary>
+        public static int FirmDiag(ulong seed, int ticks)
+        {
+            (string label, double profitRate, double zombieShare, double comVacancy,
+             int alive, int dead, double alignment, double capturePerSlot)
+                RunMode(bool vanilla)
+            {
+                var p = new EconParams();
+                var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
+                var sim = Sim.Create(cfg, p, new FeatureFlags(), vanillaMode: vanilla);
+                var w = sim.W;
+
+                // Track cumulative commercial revenue and wage cost over the last
+                // window for a real operating-margin measure.
+                double revWindow = 0, ageProfitNum = 0, ageProfitDen = 0;
+                int windowFrom = ticks - 200;
+                sim.Run(ticks, s2 =>
+                {
+                    if (s2.W.Tick < windowFrom) return;
+                    foreach (var fm in s2.W.Firms)
+                        if (!fm.Dead && fm.Sector == ZoneKind.Commercial) revWindow += fm.RevenueThisTick;
+                });
+
+                int alive = 0, dead = 0; double zombies = 0;
+                double capturePerSlot = 0; int slots = 0;
+                foreach (var fm in w.Firms)
+                {
+                    if (fm.Sector != ZoneKind.Commercial) continue;
+                    if (fm.Dead) { dead++; continue; }
+                    alive++;
+                    slots += fm.JobSlots;
+                    double seedCap = fm.EnteredTick > 0 ? p.FirmSeedCapital : 300;
+                    long age = Math.Max(1, w.Tick - fm.EnteredTick);
+                    ageProfitNum += (fm.Money - seedCap) / age;
+                    ageProfitDen += 1;
+                    // Zombie: sustained revenue below its wage bill.
+                    double wageBill = 0;
+                    for (int cl = 0; cl < 3; cl++) wageBill += fm.FilledByClass[cl] * p.Wage((LaborClass)cl);
+                    if (fm.ProfitEma < wageBill) zombies++;
+                }
+
+                int comParcels = 0, comVacant = 0;
+                foreach (var pl in w.Parcels)
+                    if (pl.State == ParcelState.Built && pl.Use == ZoneKind.Commercial)
+                    { comParcels++; if (pl.OccupantFirm < 0) comVacant++; }
+
+                // Alignment: rank correlation across clusters between commercial
+                // slots and household spending mass (do shops sit where money is?).
+                var acc = sim.Engine.Access;
+                var slotsByCluster = new double[acc.C];
+                foreach (var fm in w.Firms)
+                    if (!fm.Dead && fm.Sector == ZoneKind.Commercial && fm.Parcel >= 0)
+                        slotsByCluster[w.Parcels[fm.Parcel].Cluster] += fm.JobSlots;
+                double alignment = SpearmanArr(slotsByCluster, acc.SpendMass);
+
+                return (vanilla ? "vanilla" : "spatial",
+                        ageProfitDen > 0 ? ageProfitNum / ageProfitDen : 0,
+                        alive > 0 ? zombies / alive : 0,
+                        comParcels > 0 ? (double)comVacant / comParcels : 0,
+                        alive, dead, alignment,
+                        slots > 0 ? revWindow / 200 / slots : 0);
+            }
+
+            foreach (var vanilla in new[] { false, true })
+            {
+                var r = RunMode(vanilla);
+                Console.WriteLine(
+                    $"{r.label,8}: com firms alive={r.alive} dead={r.dead} | " +
+                    $"profit/firm/tick={r.profitRate:F3} | zombie share={r.zombieShare:P0} | " +
+                    $"com-parcel vacancy={r.comVacancy:P0} | " +
+                    $"shops-vs-spending alignment (Spearman)={r.alignment:F2} | " +
+                    $"capture rev/slot/tick={r.capturePerSlot:F2}");
+            }
+            return 0;
+        }
+
+        private static double SpearmanArr(double[] a, double[] b)
+        {
+            var la = a.ToList(); var lb = b.ToList();
+            int n = la.Count;
+            double[] Ranks(System.Collections.Generic.List<double> xs)
+            {
+                var idx = Enumerable.Range(0, xs.Count).OrderBy(i => xs[i]).ToArray();
+                var ranks = new double[xs.Count];
+                int i0 = 0;
+                while (i0 < idx.Length)
+                {
+                    int i1 = i0;
+                    while (i1 + 1 < idx.Length && xs[idx[i1 + 1]] == xs[idx[i0]]) i1++;
+                    double avg = (i0 + i1) / 2.0;
+                    for (int k = i0; k <= i1; k++) ranks[idx[k]] = avg;
+                    i0 = i1 + 1;
+                }
+                return ranks;
+            }
+            var ra = Ranks(la); var rb = Ranks(lb);
+            double ma = ra.Average(), mb = rb.Average(), cov = 0, va = 0, vb = 0;
+            for (int i = 0; i < n; i++)
+            {
+                cov += (ra[i] - ma) * (rb[i] - mb);
+                va += (ra[i] - ma) * (ra[i] - ma);
+                vb += (rb[i] - mb) * (rb[i] - mb);
+            }
+            return va > 0 && vb > 0 ? cov / Math.Sqrt(va * vb) : 0;
+        }
+
         public static int Run(ulong seed, int ticks)
         {
             var p = new EconParams();
