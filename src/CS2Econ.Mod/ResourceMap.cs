@@ -39,6 +39,7 @@ namespace CS2Econ.Mod
 
         static ResourceMap()
         {
+#if OUT_OF_GAME_BUILD
             // Out-of-game placeholder: identity over the 11 core resources.
             // Nothing consumes game indices out-of-game (the harness speaks Res
             // directly); the placeholder just keeps the class total and testable.
@@ -49,7 +50,14 @@ namespace CS2Econ.Mod
                 _coreOfGame[i] = (Res)i;
                 _tracked[i] = true;
             }
-#if !OUT_OF_GAME_BUILD
+#else
+            // In-game: start from a CLEAN slate — every index untracked, every
+            // core bucket analog-less — so only Verify_BuildGameResourceTable's
+            // explicit Map lines populate the tables. (The identity placeholder
+            // above must never leak in-game: game indices 0..10 are arbitrary
+            // members of the Resource flags enum, not our buckets.)
+            for (int g = 0; g < MaxGameResources; g++) { _coreOfGame[g] = Res.Services; _tracked[g] = false; }
+            for (int i = 0; i < ResourceCatalog.Count; i++) _gameIndexOfCore[i] = -1;
             Verify_BuildGameResourceTable();
 #endif
         }
@@ -87,8 +95,8 @@ namespace CS2Econ.Mod
         public static int SegmentFor(int educationLevel, int ageGroup, bool retired, bool student)
         {
             if (student) return 0;                        // StudentLow
-            if (retired || ageGroup >= 3)                 // Elderly
-                return educationLevel >= 3 ? 7 : 6;       // SeniorMid : SeniorLow
+            if (retired || ageGroup >= 3)                 // Elderly — the ≥2 split mirrors the
+                return educationLevel >= 2 ? 7 : 6;       // SingleSkill threshold: SeniorMid : SeniorLow
             if (ageGroup <= 1) return 0;                  // child/teen dependents ride the low-bid segment
             if (educationLevel >= 4) return 5;            // FamilyEdu (sole Educated-labor segment)
             return educationLevel >= 2 ? 2 : 1;           // SingleSkill : SingleBasic
@@ -121,11 +129,22 @@ namespace CS2Econ.Mod
                 if (primary) _gameIndexOfCore[(int)core] = gi;
             }
 
+            // Fold discipline (it is load-bearing, not taste): RAW game
+            // resources fold into raw buckets (extractor outputs index the
+            // RawCount-sized suitability fields), PROCESSED game resources into
+            // processed buckets (industrial output must resolve a recipe via
+            // ResourceCatalog.RecipeFor or the firm produces zero). Hence
+            // Minerals/Concrete→Metals (processed mineral goods, NOT raw Ore),
+            // Pharmaceuticals→Plastics (petrochem chain, NOT Machinery), and
+            // Meals→Food (restaurants restock food through freight, keeping
+            // them in the spatial economy rather than local-only Services).
+
             // raws (extractor outputs) — the Weber anchors
             Map(Game.Economy.Resource.Grain, Res.Grain, primary: true);
             Map(Game.Economy.Resource.Vegetables, Res.Grain);
             Map(Game.Economy.Resource.Livestock, Res.Grain);
             Map(Game.Economy.Resource.Cotton, Res.Grain);
+            Map(Game.Economy.Resource.Fish, Res.Grain);    // raw food input (fisheries)
             Map(Game.Economy.Resource.Wood, Res.Wood, primary: true);
             Map(Game.Economy.Resource.Ore, Res.Ore, primary: true);
             Map(Game.Economy.Resource.Coal, Res.Ore);

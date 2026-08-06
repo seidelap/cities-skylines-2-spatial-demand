@@ -37,7 +37,7 @@ namespace CS2Econ.Harness
                 });
 
                 int alive = 0, dead = 0; double zombies = 0;
-                double capturePerSlot = 0; int slots = 0;
+                int slots = 0;
                 foreach (var fm in w.Firms)
                 {
                     if (fm.Sector != ZoneKind.Commercial) continue;

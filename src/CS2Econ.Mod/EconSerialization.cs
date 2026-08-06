@@ -85,16 +85,19 @@ namespace CS2Econ.Mod
     }
 
     // ---------------------------------------------------------------------
-    // Per-exit state (attached to the outside-connection entity).
+    // Per-exit state: a BUFFER on the outside-connection entity, one element
+    // per tradable resource — the engine keeps one TradeExit per (resource ×
+    // connection), so a single component could only persist one of ~10.
     // Mirrors TradeExit.{SustainedQ, TransientB} — the finite-depth trade
     // position (design §4.5) that prices p(Q) = a ± t·(Q/ρ)^(1/d).
     // ---------------------------------------------------------------------
     public struct ExitEconState
 #if !OUT_OF_GAME_BUILD
-        : IComponentData, ISerializable
+        : IBufferElementData, ISerializable
 #endif
     {
         public uint Version;
+        public byte ResourceIndex;    // (byte)TradeExit.Resource — the buffer key
         public float SustainedQ;      // EMA of drawn volume (the slow position)
         public float TransientB;      // burst layer, decays at resilience rate
 
@@ -102,6 +105,7 @@ namespace CS2Econ.Mod
         public void Serialize<TWriter>(TWriter writer) where TWriter : IWriter
         {
             writer.Write(EconSchema.Version);
+            writer.Write(ResourceIndex);
             writer.Write(SustainedQ);
             writer.Write(TransientB);
         }
@@ -111,6 +115,7 @@ namespace CS2Econ.Mod
             reader.Read(out Version);
             if (Version >= 1)
             {
+                reader.Read(out ResourceIndex);
                 reader.Read(out SustainedQ);
                 reader.Read(out TransientB);
             }
@@ -202,6 +207,7 @@ namespace CS2Econ.Mod
         public static ExitEconState Capture(TradeExit e) => new ExitEconState
         {
             Version = EconSchema.Version,
+            ResourceIndex = (byte)e.Resource,
             SustainedQ = (float)e.SustainedQ,
             TransientB = (float)e.TransientB,
         };
@@ -292,4 +298,106 @@ namespace CS2Econ.Mod
         }
 #endif
     }
+
+#if !OUT_OF_GAME_BUILD
+    /// <summary>The two save-state seams, wired: Capture stamps the codec's
+    /// structs onto entities so they ride the NEXT game save (there is no
+    /// notes-verified pre-save hook, so the bridge calls this periodically —
+    /// at worst the save carries state CaptureEveryTicks engine ticks stale,
+    /// well inside the EMAs' time constants); Restore pulls them back into a
+    /// freshly built WorldState at the load seam (EconReader.BuildInitial).
+    ///
+    /// Shadow-mode discipline: the bridge gates Capture on ShadowAccountingOnly
+    /// being OFF — observe-only sessions leave ZERO footprint in the save
+    /// (stage-3 rule: shadow cannot corrupt anything). Until the first levying
+    /// session, saves simply contain no mod components and Restore is a no-op.</summary>
+    public static class EconStatePersistence
+    {
+        /// <summary>Engine ticks between captures. Cheap (a few thousand
+        /// SetComponentData of tiny structs), but no reason to run every tick.</summary>
+        public const int CaptureEveryTicks = 8;
+
+        private static readonly List<EconGlobalState> _globalsScratch = new List<EconGlobalState>();
+        private static readonly Dictionary<Entity, List<ExitEconState>> _exitScratch
+            = new Dictionary<Entity, List<ExitEconState>>();
+
+        public static void Capture(EntityManager em, EconReader reader, WorldState w)
+        {
+            // Parcels: one ParcelEconState per building/block entity.
+            for (int k = 0; k < reader.ParcelEntities.Count; k++)
+            {
+                var e = reader.ParcelEntities[k];
+                if (!em.Exists(e)) continue;
+                var s = EconStateCodec.Capture(w.Parcels[reader.ParcelIds[k]]);
+                if (em.HasComponent<ParcelEconState>(e)) em.SetComponentData(e, s);
+                else em.AddComponentData(e, s);
+            }
+
+            // Exits: group the per-resource TradeExits sharing one connection
+            // entity into that entity's ExitEconState buffer.
+            _exitScratch.Clear();
+            for (int i = 0; i < reader.ExitEntities.Count; i++)
+            {
+                var e = reader.ExitEntities[i];
+                if (!em.Exists(e)) continue;
+                if (!_exitScratch.TryGetValue(e, out var list))
+                    _exitScratch[e] = list = new List<ExitEconState>();
+                list.Add(EconStateCodec.Capture(w.Exits[i]));
+            }
+            foreach (var kv in _exitScratch)
+            {
+                var buf = em.HasBuffer<ExitEconState>(kv.Key)
+                    ? em.GetBuffer<ExitEconState>(kv.Key)
+                    : em.AddBuffer<ExitEconState>(kv.Key);
+                buf.Clear();
+                for (int i = 0; i < kv.Value.Count; i++) buf.Add(kv.Value[i]);
+            }
+
+            // Globals: the tagged-scalar stream on one singleton entity.
+            EconStateCodec.Pack(w, _globalsScratch);
+            var singleton = FindGlobalsSingleton(em);
+            if (singleton == Entity.Null)
+            {
+                singleton = em.CreateEntity();
+                em.AddBuffer<EconGlobalState>(singleton);
+            }
+            EconStateCodec.CopyTo(_globalsScratch, em.GetBuffer<EconGlobalState>(singleton));
+        }
+
+        public static void Restore(EntityManager em, EconReader reader, WorldState w)
+        {
+            for (int k = 0; k < reader.ParcelEntities.Count; k++)
+            {
+                var e = reader.ParcelEntities[k];
+                if (!em.Exists(e) || !em.HasComponent<ParcelEconState>(e)) continue;
+                EconStateCodec.Restore(em.GetComponentData<ParcelEconState>(e),
+                                       w.Parcels[reader.ParcelIds[k]]);
+            }
+            for (int i = 0; i < reader.ExitEntities.Count; i++)
+            {
+                var e = reader.ExitEntities[i];
+                if (!em.Exists(e) || !em.HasBuffer<ExitEconState>(e)) continue;
+                var ex = w.Exits[i];
+                var buf = em.GetBuffer<ExitEconState>(e, true);
+                for (int j = 0; j < buf.Length; j++)
+                    if (buf[j].ResourceIndex == (byte)ex.Resource)
+                    { EconStateCodec.Restore(buf[j], ex); break; }
+            }
+            var singleton = FindGlobalsSingleton(em);
+            if (singleton != Entity.Null)
+            {
+                EconStateCodec.CopyFrom(em.GetBuffer<EconGlobalState>(singleton, true), _globalsScratch);
+                EconStateCodec.Unpack(_globalsScratch, w);
+            }
+        }
+
+        private static Entity FindGlobalsSingleton(EntityManager em)
+        {
+            var q = em.CreateEntityQuery(ComponentType.ReadWrite<EconGlobalState>());
+            if (q.IsEmptyIgnoreFilter) return Entity.Null;
+            using var ents = q.ToEntityArray(Unity.Collections.Allocator.Temp);
+            return ents.Length > 0 ? ents[0] : Entity.Null;
+        }
+    }
+#endif
 }

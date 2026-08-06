@@ -19,6 +19,7 @@ Supporting documents:
 - [`cs2-economy-mod-research-notes.md`](cs2-economy-mod-research-notes.md) — CS2 modding surface research (verified components, systems, precedent mods, UI routes)
 - [`PLAN.md`](PLAN.md) — implementation & test plan (module map, build order, acceptance tests)
 - [`RESULTS.md`](RESULTS.md) — measured harness results against the design's §6 targets
+- [`MOD-BRINGUP.md`](MOD-BRINGUP.md) — in-game bring-up runbook: building `-p:InGame=true` on the game machine, the expected-compile-fix sites, the §9 verification checklist, and the shadow→live tier flip order
 
 ## Layout
 
@@ -36,4 +37,9 @@ src/CS2Econ.Harness/   Standalone validation outside the game: synthetic city,
 dotnet run -c Release --project src/CS2Econ.Harness -- verify     # correctness suite
 dotnet run -c Release --project src/CS2Econ.Harness -- scenarios  # §6 acceptance scenarios
 dotnet run -c Release --project src/CS2Econ.Harness -- all        # everything → RESULTS.md
+dotnet run -c Release --project src/CS2Econ.Harness -- map        # economy on the real Chicago road network
 ```
+
+To build and install the actual mod on a machine that owns the game, follow
+[`MOD-BRINGUP.md`](MOD-BRINGUP.md) (`dotnet build src/CS2Econ.Mod -c Release
+-p:InGame=true` plus the Verify_ compile-and-fix pass).

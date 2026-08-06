@@ -28,6 +28,8 @@
 
   <PropertyGroup Condition="'$(InGame)' == 'true'">
     <CSIIToolPath>$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))</CSIIToolPath>
+    <!-- Official-template layout: Mod.targets' publish flow reads this. -->
+    <PublishConfigurationPath>Properties/PublishConfiguration.xml</PublishConfigurationPath>
   </PropertyGroup>
 
   <Import Project="$(CSIIToolPath)\Mod.props"
@@ -38,6 +40,10 @@
     <Reference Include="Colossal.Core" Private="false" />
     <Reference Include="Colossal.Logging" Private="false" />
     <Reference Include="Colossal.Mathematics" Private="false" />
+    <!-- EconModSettings' [FileLocation] + Mod's LoadSettings live here. -->
+    <Reference Include="Colossal.IO.AssetDatabase" Private="false" />
+    <!-- EconSerialization's ISerializable/IWriter/IReader live here. -->
+    <Reference Include="Colossal.Serialization.Entities" Private="false" />
     <Reference Include="Unity.Entities" Private="false" />
     <Reference Include="Unity.Collections" Private="false" />
     <Reference Include="Unity.Mathematics" Private="false" />

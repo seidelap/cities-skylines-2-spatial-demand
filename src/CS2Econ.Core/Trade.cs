@@ -28,7 +28,7 @@ namespace CS2Econ.Core
     {
         private double[] _localPrice = new double[ResourceCatalog.Count];
         // Per (res, cluster): haul to cheapest producing cluster (freight-in term)
-        private double[][] _localSourceHaul = new double[ResourceCatalog.Count][];
+        private double[]?[] _localSourceHaul = new double[ResourceCatalog.Count][];
         private double[][] _haulToExit = Array.Empty<double[]>();   // [exitIdx][cluster]
         private WorldState _w = null!;
         private IAccessCosts _costs = null!;
@@ -137,8 +137,9 @@ namespace CS2Econ.Core
         public double DeliveredCost(Res r, int cluster)
         {
             double wgt = ResourceCatalog.Weight[(int)r];
-            double local = _localSourceHaul[(int)r] != null && !double.IsInfinity(_localSourceHaul[(int)r][cluster])
-                ? _localPrice[(int)r] + _localSourceHaul[(int)r][cluster]
+            var srcHaul = _localSourceHaul[(int)r];
+            double local = srcHaul != null && !double.IsInfinity(srcHaul[cluster])
+                ? _localPrice[(int)r] + srcHaul[cluster]
                 : double.PositiveInfinity;
             double import = double.PositiveInfinity;
             for (int e = 0; e < _w.Exits.Count; e++)
