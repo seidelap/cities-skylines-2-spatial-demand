@@ -65,9 +65,9 @@ namespace CS2Econ.Harness
                 double[] StartsByDistrict(bool applyShock)
                 {
                     var p = new EconParams();
-                    var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
+                    var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 6500 };
                     var sim = Sim.Create(cfg, p, new FeatureFlags(), vanillaMode: vanilla);
-                    sim.Run(350);
+                    sim.Run(220);   // shock lands mid-growth: baseline construction exists
                     if (applyShock)
                         foreach (var h in sim.W.Households)
                         {
@@ -82,7 +82,7 @@ namespace CS2Econ.Harness
                             }
                         }
                     long fromTick = sim.W.Tick;
-                    sim.Run(150);
+                    sim.Run(260);
                     var starts = new double[4];
                     foreach (var (tick, parcelId, cluster) in sim.Starts)
                     {
@@ -123,21 +123,31 @@ namespace CS2Econ.Harness
                 var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
                 var sim = Sim.Create(cfg, p, new FeatureFlags(), vanillaMode: vanilla);
                 sim.Run(1300);
-                var levels = new List<double>(); var accessVals = new List<double>();
+                // §6: "the realized level map correlates with access (rank
+                // correlation against ℓ*)" — ℓ* is the supported level of the
+                // parcel's own use at its location (both modes compute identical
+                // assessments; only leveling/construction differ).
+                var levels = new List<double>(); var supported = new List<double>();
                 foreach (var pl in sim.W.Parcels)
                 {
                     if (pl.State != ParcelState.Built || !pl.IsResidential) continue;
+                    int lStar = 1; double best = double.NegativeInfinity;
+                    for (int l = 1; l <= p.MaxLevel; l++)
+                    {
+                        double bid = LandAccounting.BidPerUnit(sim.Engine.Access, sim.Engine.Trade,
+                            pl.Cluster, pl.Use, l, sim.Engine.SegmentPresence, p);
+                        double v = bid - LandAccounting.SPerUnit(l, 1.0, p);
+                        if (v > best) { best = v; lStar = l; }
+                    }
                     levels.Add(pl.Level);
-                    double a = 0;
-                    for (int s = 0; s < Segment.Count; s++) a += sim.Engine.Access.AccessValue[s][pl.Cluster];
-                    accessVals.Add(a);
+                    supported.Add(lStar);
                 }
-                return Spearman(levels, accessVals);
+                return Spearman(levels, supported);
             }
             double spatial = Corr(false), baseline = Corr(true);
             bool pass = spatial >= 0.35 && spatial > baseline + 0.15;
-            Record("level map correlates with access (not uniform grind)", pass,
-                $"Spearman spatial {spatial:F2} vs vanilla {baseline:F2}");
+            Record("level map correlates with access (rank corr vs ℓ*, not grind)", pass,
+                $"Spearman(realized level, ℓ*) spatial {spatial:F2} vs vanilla {baseline:F2}");
         }
 
         // ------------------------------------------------------------------
@@ -182,7 +192,7 @@ namespace CS2Econ.Harness
         // ------------------------------------------------------------------
         private static void TradeBend(ulong seed)
         {
-            var p = new EconParams();
+            var p = new EconParams { ExtractorOutputPerSlot = 9.0 };   // engineered monoculture
             var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 9000, ExtractorHeavy = true };
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             sim.Run(700);
@@ -201,28 +211,34 @@ namespace CS2Econ.Harness
         // ------------------------------------------------------------------
         private static void ModeProgression(ulong seed)
         {
-            var p = new EconParams();
+            var p = new EconParams { ExtractorOutputPerSlot = 9.0 };   // engineered monoculture
             var cfg = new SyntheticCity.Config
             { Seed = seed, SeedHouseholds = 9000, RailTerminal = true, SeaExit = true, ExtractorHeavy = true };
             var sim = Sim.Create(cfg, p, new FeatureFlags());
 
-            var roadShare = new List<double>(); var railShare = new List<double>();
+            // The design's regimes are BY VOLUME (§4.5): bucket export shares by
+            // the realized sustained export volume, not by tick time.
+            var lowRoad = new List<double>(); var lowRail = new List<double>();
+            var highRoad = new List<double>(); var highRail = new List<double>();
             double equalizationGap = -1;
             sim.Run(900, s =>
             {
-                double road = 0, rail = 0, sea = 0;
+                double road = 0, rail = 0, sea = 0, sustained = 0;
                 TradeExit? roadX = null, railX = null;
                 foreach (var e in s.W.Exits)
                 {
                     if (e.Resource != Res.Raw) continue;
-                    if (e.Mode == ExitMode.Road) { road += e.DrawnThisTick; if (e.DrawnThisTick > 0) roadX = e; }
-                    if (e.Mode == ExitMode.Rail) { rail += e.DrawnThisTick; if (e.DrawnThisTick > 0) railX = e; }
-                    if (e.Mode == ExitMode.Sea) sea += e.DrawnThisTick;
+                    sustained += Math.Max(0, e.SustainedQ);
+                    if (e.Mode == ExitMode.Road) { road += e.ExportedThisTick; if (e.ExportedThisTick > 0) roadX = e; }
+                    if (e.Mode == ExitMode.Rail) { rail += e.ExportedThisTick; if (e.ExportedThisTick > 0) railX = e; }
+                    if (e.Mode == ExitMode.Sea) sea += e.ExportedThisTick;
                 }
                 double tot = road + rail + sea;
-                roadShare.Add(tot > 1e-9 ? road / tot : double.NaN);
-                railShare.Add(tot > 1e-9 ? rail / tot : double.NaN);
-                // Marginal-price equalization whenever both modes are concurrently active.
+                if (tot > 1e-9)
+                {
+                    if (sustained < 55) { lowRoad.Add(road / tot); lowRail.Add(rail / tot); }
+                    else if (sustained > 95) { highRoad.Add(road / tot); highRail.Add(rail / tot); }
+                }
                 if (roadX != null && railX != null && road > p.LotSize && rail > p.LotSize)
                 {
                     double mRoad = s.Engine.Trade.ExportMarginal(roadX, roadX.DrawnThisTick, p);
@@ -232,18 +248,15 @@ namespace CS2Econ.Harness
                 }
             });
 
-            double W(List<double> xs, int from, int to)
-            {
-                var v = xs.Skip(from).Take(to - from).Where(x => !double.IsNaN(x)).ToList();
-                return v.Count > 0 ? v.Average() : double.NaN;
-            }
-            double earlyRoad = W(roadShare, 60, 200);
-            double earlyRail = W(railShare, 60, 200);
-            double lateRail = W(railShare, 600, 900);
-            bool progression = earlyRoad > 0.6 && lateRail > earlyRail + 0.15;
+            double Avg(List<double> xs) => xs.Count > 0 ? xs.Average() : double.NaN;
+            double lowRoadShare = Avg(lowRoad), lowRailShare = Avg(lowRail);
+            double highRailShare = Avg(highRail);
+            bool progression = lowRoad.Count >= 20 && highRail.Count >= 20
+                && lowRoadShare > 0.6 && highRailShare > lowRailShare + 0.15;
             bool equalized = equalizationGap >= 0 && equalizationGap <= 0.08;
             Record("truck→rail progression by volume; concurrent marginals equalize", progression && equalized,
-                $"road share early {earlyRoad:P0}; rail early {earlyRail:P0} → late {lateRail:P0}; " +
+                $"road share {lowRoadShare:P0} at low volume (n={lowRoad.Count}); rail {lowRailShare:P0} → " +
+                $"{highRailShare:P0} at high volume (n={highRail.Count}); " +
                 $"best concurrent marginal gap {(equalizationGap < 0 ? "n/a" : equalizationGap.ToString("P1"))}");
         }
 

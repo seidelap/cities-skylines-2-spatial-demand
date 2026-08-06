@@ -292,8 +292,9 @@ namespace CS2Econ.Harness
             var sim = Sim.Create(cfg, p, flags, vanillaMode: true);
             sim.Run(150);
             Check("feature flags: vanilla-mode fallback runs (every tier revertible)",
-                  sim.Population[^1] > 0 && sim.W.Parcels.Any(x => x.State == ParcelState.Built),
-                  $"pop {sim.Population[^1]}, drift {sim.W.Ledger.Drift():E1}");
+                  sim.Population[^1] > 0 && sim.Population[^1] < 30_000
+                  && sim.W.Parcels.Any(x => x.State == ParcelState.Built),
+                  $"pop {sim.Population[^1]} (sane bounds), drift {sim.W.Ledger.Drift():E1}");
         }
 
         private static void Determinism(ulong seed)

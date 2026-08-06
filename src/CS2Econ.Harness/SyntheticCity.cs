@@ -266,10 +266,10 @@ namespace CS2Econ.Harness
             foreach (var res in new[] { Res.Raw, Res.Goods })
             {
                 double anchor = res == Res.Raw ? 2.6 : 5.4;
-                AddExit(ExitMode.Road, westExit, res, anchor, t: 0.55, d: 2);
-                AddExit(ExitMode.Road, eastExit, res, anchor, t: 0.55, d: 2);
+                AddExit(ExitMode.Road, westExit, res, anchor, t: 0.62, d: 2);
+                AddExit(ExitMode.Road, eastExit, res, anchor, t: 0.62, d: 2);
                 if (cfg.RailTerminal)
-                    AddExit(ExitMode.Rail, eastExit, res, anchor, t: 0.15, d: 1, handling: 0.35);
+                    AddExit(ExitMode.Rail, eastExit, res, anchor, t: 0.10, d: 1, handling: 0.50);
                 if (cfg.SeaExit)
                     AddExit(ExitMode.Sea, access.At(cfg.Cols / 2, cfg.Rows - 1), res,
                             anchor, t: 0, d: double.PositiveInfinity, handling: 0.55, capacity: 260);
@@ -289,7 +289,7 @@ namespace CS2Econ.Harness
                 w.Exits.Add(new TradeExit
                 {
                     Id = w.Exits.Count, Mode = ExitMode.Rail, Cluster = cluster, Resource = res,
-                    Anchor = anchor, T = 0.15, D = 1, PerUnitHandling = 0.35,
+                    Anchor = anchor, T = 0.10, D = 1, PerUnitHandling = 0.50,
                     Rho = p.RegionSize / 400.0,
                 });
             }

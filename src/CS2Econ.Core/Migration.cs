@@ -85,6 +85,10 @@ namespace CS2Econ.Core
                 // momentum from network memory (chain migration).
                 double inRate = p.MigInElasticity * Math.Max(0, gap) * popScale * prominence
                                 * (1.0 + (endogenousOutside ? m.NetworkMemory : 0));
+                // Physical cap: even a gold-rush city absorbs at most ~1%/tick —
+                // and with the endogenous outside world OFF there is no reservation
+                // threshold to equilibrate, so the cap is the only brake.
+                inRate = Math.Min(inRate, 0.01 * popScale);
                 // Out-migration: responds to a LAGGED signal, lower elasticity.
                 m.OutSignalEma[s] = MathUtil.Ema(m.OutSignalEma[s], Math.Max(0, -gap), p.MigOutLagAlpha);
                 double outRate = p.MigOutElasticity * m.OutSignalEma[s] * popScale;
