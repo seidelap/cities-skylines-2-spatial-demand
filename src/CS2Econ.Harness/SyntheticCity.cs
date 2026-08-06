@@ -159,9 +159,13 @@ namespace CS2Econ.Harness
                 for (int k = 0; k < centerCount[raw]; k++)
                 {
                     var (px, py) = RandPos(1);
-                    if (cfg.ExtractorHeavy && raw >= 2)     // Ore/Oil into the SE region
-                    { px = cfg.Cols - 3 + drng.NextDouble() * 2; py = cfg.Rows - 3 + drng.NextDouble() * 2; }
-                    depositCenters.Add((raw, px, py, centerRadius[raw],
+                    double radius = centerRadius[raw];
+                    if (cfg.ExtractorHeavy && raw >= 2)     // Ore/Oil into the SE region, doubled reach
+                    {
+                        px = cfg.Cols - 3 + drng.NextDouble() * 2; py = cfg.Rows - 3 + drng.NextDouble() * 2;
+                        radius *= 2.2;
+                    }
+                    depositCenters.Add((raw, px, py, radius,
                                         cfg.ExtractorHeavy && raw >= 2 ? 1.0 : 0.75 + 0.25 * drng.NextDouble()));
                 }
 

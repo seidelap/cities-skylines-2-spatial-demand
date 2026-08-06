@@ -56,19 +56,23 @@ namespace CS2Econ.Harness
         // ------------------------------------------------------------------
         private static void VacancyLocalization(ulong seed)
         {
-            // Shock-vs-control on identical seeds: the shock's construction
-            // suppression should land in the shocked district (spatial mode) or
-            // spread evenly everywhere (vanilla's global scalar). Measured over
-            // the 150 ticks after the shock, before in-migration refills it.
+            // Shock-vs-control on identical seeds, measured at CLUSTER grain:
+            // vacancies are a per-cluster signal, and quadrant aggregation dilutes
+            // the suppression with unshocked hot clusters. Shocked set = clusters
+            // where the shock actually created vacancies (>=5 evictions); the rest
+            // of the map is the reference. Rates normalized by the control RUN.
             (double ratio, string detail) RunMode(bool vanilla)
             {
-                double[] StartsByDistrict(bool applyShock)
+                var shockedClusters = new HashSet<int>();
+                Dictionary<int, double> StartsByCluster(bool applyShock)
                 {
                     var p = new EconParams();
                     var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000, ParcelsPerCluster = 14 };
                     var sim = Sim.Create(cfg, p, new FeatureFlags(), vanillaMode: vanilla);
                     sim.Run(100);   // active growth: construction is live at the margin
                     if (applyShock)
+                    {
+                        var evictions = new Dictionary<int, int>();
                         foreach (var h in sim.W.Households)
                         {
                             if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
@@ -79,29 +83,41 @@ namespace CS2Econ.Harness
                                 sim.Engine.Allocation.Vacate(sim.W, h);
                                 sim.W.Ledger.Transfer(Account.Households, Account.OutsideWorld, Math.Max(0, h.Money));
                                 h.Money = 0; h.ExitedTick = sim.W.Tick;
+                                evictions.TryGetValue(pl.Cluster, out var n); evictions[pl.Cluster] = n + 1;
                             }
                         }
+                        shockedClusters.Clear();
+                        foreach (var kv in evictions) if (kv.Value >= 5) shockedClusters.Add(kv.Key);
+                    }
                     long fromTick = sim.W.Tick;
                     sim.Run(150);
-                    var starts = new double[4];
+                    var byCluster = new Dictionary<int, double>();
                     foreach (var (tick, parcelId, cluster) in sim.Starts)
                     {
                         if (tick <= fromTick) continue;
                         var pl = sim.W.Parcels[parcelId];
                         if (pl.Use != ZoneKind.ResidentialLow && pl.Use != ZoneKind.ResidentialHigh) continue;
-                        starts[sim.W.Clusters[cluster].District]++;
+                        byCluster.TryGetValue(cluster, out var n); byCluster[cluster] = n + 1;
                     }
-                    return starts;
+                    return byCluster;
                 }
 
-                var shock = StartsByDistrict(true);
-                var control = StartsByDistrict(false);
-                // Survival = post-shock construction relative to control (+1 Laplace).
-                double survShocked = (shock[0] + 1) / (control[0] + 1);
-                double survFar = (shock[3] + 1) / (control[3] + 1);
+                var shockRun = StartsByCluster(true);     // defines shockedClusters
+                var controlRun = StartsByCluster(false);  // identical seed, no shock
+                double Sum(Dictionary<int, double> m, bool inSet)
+                {
+                    double t = 0;
+                    foreach (var kv in m)
+                        if (shockedClusters.Contains(kv.Key) == inSet) t += kv.Value;
+                    return t;
+                }
+                double shockedIn = Sum(shockRun, true), controlIn = Sum(controlRun, true);
+                double farShock = Sum(shockRun, false), farCtrl = Sum(controlRun, false);
+                double survShocked = (shockedIn + 1) / (controlIn + 1);
+                double survFar = (farShock + 1) / (farCtrl + 1);
                 double ratio = survFar / Math.Max(1e-9, survShocked);
                 return (ratio,
-                    $"shocked {control[0]:F0}→{shock[0]:F0} starts, far {control[3]:F0}→{shock[3]:F0}, " +
+                    $"shocked clusters {controlIn:F0}→{shockedIn:F0} starts, elsewhere {farCtrl:F0}→{farShock:F0}, " +
                     $"suppression localization {ratio:F1}:1");
             }
 
@@ -192,9 +208,9 @@ namespace CS2Econ.Harness
         // ------------------------------------------------------------------
         private static void TradeBend(ulong seed)
         {
-            var p = new EconParams { ExtractorOutputPerSlot = 9.0 };   // engineered monoculture
+            var p = new EconParams { ExtractorOutputPerSlot = 13.0 };   // engineered monoculture
             var cfg = new SyntheticCity.Config
-            { Seed = seed, SeedHouseholds = 9000, ExtractorHeavy = true, ExtractorPrebuilt = 0.5 };
+            { Seed = seed, SeedHouseholds = 9000, ExtractorHeavy = true, ExtractorPrebuilt = 0.8 };
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             sim.Run(700);
 
