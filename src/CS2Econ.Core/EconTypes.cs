@@ -4,11 +4,82 @@ namespace CS2Econ.Core
 {
     public enum ZoneKind : byte { None, ResidentialLow, ResidentialHigh, Commercial, Industrial, Office, Extractor }
 
-    /// <summary>Tradable + local resources. Raw feeds Industrial (Weber input);
-    /// Goods is the manufactured tradable; Services is local-only (commercial
-    /// capture of household spending); OfficeOutput has near-exogenous price
-    /// (design §4.2).</summary>
-    public enum Res : byte { Raw, Goods, Services, OfficeOutput }
+    /// <summary>Resource-level economy (design §4.2/§4.5): four extracted raws
+    /// with per-cluster natural suitability, processed goods with recipes (one
+    /// two-input chain so multi-sourcing is real), a local-only service good, and
+    /// near-exogenous office output. Maps 1:1 onto CS2's Resource members at the
+    /// mod boundary (EconAdapters) — the harness set is the spatial skeleton.</summary>
+    public enum Res : byte
+    {
+        Grain, Wood, Ore, Oil,                       // raws (extractor output)
+        Food, Timber, Metals, Plastics, Machinery,   // processed (industrial recipes)
+        Services,                                    // local-only (commercial)
+        OfficeOutput,                                // exogenous price
+    }
+
+    /// <summary>One industrial recipe: inputs (with quantities per unit of
+    /// output) → output. Recipe CHOICE at a location is the Weber decision:
+    /// where each input is sourced (local haul vs import parity) prices into
+    /// the location's industrial bid.</summary>
+    public readonly struct Recipe
+    {
+        public readonly Res Output;
+        public readonly (Res res, double qty)[] Inputs;
+        public readonly double OutputPerSlot;      // units per filled slot per tick
+        public Recipe(Res output, double outputPerSlot, params (Res, double)[] inputs)
+        { Output = output; OutputPerSlot = outputPerSlot; Inputs = inputs; }
+    }
+
+    public static class ResourceCatalog
+    {
+        public const int Count = 11;
+        public const int RawCount = 4;
+
+        public static bool IsRaw(Res r) => (byte)r < RawCount;
+        public static bool IsProcessed(Res r) => r >= Res.Food && r <= Res.Machinery;
+        public static bool IsTradable(Res r) => r != Res.Services && r != Res.OfficeOutput;
+
+        /// <summary>World anchor prices (per unit, at the fundamental).</summary>
+        public static readonly double[] Anchor =
+        {
+            /*Grain*/ 1.6, /*Wood*/ 2.0, /*Ore*/ 2.6, /*Oil*/ 3.2,
+            /*Food*/ 3.6, /*Timber*/ 4.2, /*Metals*/ 5.4, /*Plastics*/ 6.0, /*Machinery*/ 13.0,
+            /*Services*/ 1.0, /*Office*/ 0,
+        };
+
+        /// <summary>Freight weight multiplier (heavier goods haul dearer —
+        /// vanilla's per-mode m_WeightMultiplier analog, per resource).</summary>
+        public static readonly double[] Weight =
+        {
+            /*Grain*/ 1.0, /*Wood*/ 1.3, /*Ore*/ 1.6, /*Oil*/ 1.2,
+            /*Food*/ 0.9, /*Timber*/ 1.1, /*Metals*/ 1.2, /*Plastics*/ 0.7, /*Machinery*/ 0.8,
+            /*Services*/ 0, /*Office*/ 0,
+        };
+
+        /// <summary>Household consumption basket: how captured commercial
+        /// spending decomposes into restocking demand (share of spend by value).</summary>
+        public static readonly (Res res, double share)[] Basket =
+        {
+            (Res.Food, 0.16), (Res.Machinery, 0.08), (Res.Timber, 0.03), (Res.Plastics, 0.03),
+        };
+
+        /// <summary>Recipes; industrial firms choose one at entry (argmax profit
+        /// at their location). Machinery is the two-input chain.</summary>
+        public static readonly Recipe[] Recipes =
+        {
+            new Recipe(Res.Food,      3.4, (Res.Grain, 0.55)),
+            new Recipe(Res.Timber,    3.2, (Res.Wood, 0.60)),
+            new Recipe(Res.Metals,    3.0, (Res.Ore, 0.60)),
+            new Recipe(Res.Plastics,  2.8, (Res.Oil, 0.55)),
+            new Recipe(Res.Machinery, 1.1, (Res.Metals, 0.45), (Res.Plastics, 0.35)),
+        };
+
+        public static Recipe RecipeFor(Res output)
+        {
+            foreach (var r in Recipes) if (r.Output == output) return r;
+            return default;
+        }
+    }
 
     public enum ExitMode : byte { Road, Rail, Sea, Air }
 
@@ -104,11 +175,9 @@ namespace CS2Econ.Core
         public double OfficeOutputPrice = 3.1;    // near-exogenous (design §4.2)
 
         // ---- production coefficients (viable at world anchors vs wages) ------
-        public double IndOutputPerSlot = 3.5;     // Goods per filled slot per tick
-        public double IndRawPerOutput = 0.5;      // Raw consumed per Goods unit
-        public double ExtractorOutputPerSlot = 6.0;
+        public double ExtractorOutputPerSlot = 6.0;  // × cluster suitability for the raw
         public double OfficeOutputPerSlot = 10.0;
-        public double LocalGoodsValue = 5.0;      // reference Goods value for COGS scaling
+        public double RecipeOutputScale = 1.0;       // global multiplier on catalog OutputPerSlot
 
         /// <summary>Flow value of liquid savings for affordability decisions:
         /// households draw down wealth over roughly this horizon (a wealthy

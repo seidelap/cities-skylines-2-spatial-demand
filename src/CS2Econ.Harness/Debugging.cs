@@ -163,8 +163,8 @@ namespace CS2Econ.Harness
                 double rawExp = 0, rawImp = 0, goodsExp = 0, goodsImp = 0, rawSust = 0, goodsSust = 0;
                 foreach (var x in w.Exits)
                 {
-                    if (x.Resource == Res.Raw) { rawSust += x.SustainedQ; rawExp += x.ExportedThisTick; rawImp += x.ImportedThisTick; }
-                    if (x.Resource == Res.Goods) { goodsSust += x.SustainedQ; goodsExp += x.ExportedThisTick; goodsImp += x.ImportedThisTick; }
+                    if (ResourceCatalog.IsRaw(x.Resource)) { rawSust += x.SustainedQ; rawExp += x.ExportedThisTick; rawImp += x.ImportedThisTick; }
+                    if (ResourceCatalog.IsProcessed(x.Resource)) { goodsSust += x.SustainedQ; goodsExp += x.ExportedThisTick; goodsImp += x.ImportedThisTick; }
                 }
 
                 var aliveBySector = w.Firms.Where(x => !x.Dead).GroupBy(x => x.Sector)
@@ -187,7 +187,7 @@ namespace CS2Econ.Harness
                     $"built={built} uc={uc} empty={empty} L={string.Join(",", levelHist.Skip(1))} | " +
                     $"starts={sim.Engine.Construction.StartedTotal} aband={sim.Engine.Construction.AbandonedTotal} | " +
                     $"raw sust={rawSust:F0} x={rawExp:F0}/i={rawImp:F0} goods sust={goodsSust:F0} x={goodsExp:F0}/i={goodsImp:F0} | " +
-                    $"pRaw={sim.Engine.Trade.LocalPrice(Res.Raw):F2} pGoods={sim.Engine.Trade.LocalPrice(Res.Goods):F2} | " +
+                    $"pOre={sim.Engine.Trade.LocalPrice(Res.Ore):F2} pMetals={sim.Engine.Trade.LocalPrice(Res.Metals):F2} | " +
                     $"wedgeΣ={wedgeSum:F0} LRΣ={lrSum:F0} avgAssess={assessSum / Math.Max(1, occupiedRes):F2} | " +
                     $"displ={sim.Engine.DisplacementExits.Count} " +
                     $"arr={sim.Engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0} dep={sim.Engine.LastFlows.DeparturesBySegment?.Sum() ?? 0} " +

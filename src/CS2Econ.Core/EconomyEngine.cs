@@ -344,38 +344,77 @@ namespace CS2Econ.Core
             LandRevenueByCluster[pl.Cluster] += land;
         }
 
+        // Per-resource scratch reused each tick
+        private double[][] _supplyByCluster = Array.Empty<double[]>();
+        private double[][] _demandByCluster = Array.Empty<double[]>();
+        private readonly double[] _supplyTotal = new double[ResourceCatalog.Count];
+        private readonly double[] _demandTotal = new double[ResourceCatalog.Count];
+
         private void ProductionAndTrade()
         {
             int C = Costs.ClusterCount;
-            var rawSupplyByCluster = new double[C];
-            var rawDemandByCluster = new double[C];
-            var goodsSupplyByCluster = new double[C];
-            var goodsDemandByCluster = new double[C];
-            double rawSupply = 0, rawDemand = 0, goodsSupply = 0, goodsDemand = 0;
+            int R = ResourceCatalog.Count;
+            if (_supplyByCluster.Length != R)
+            {
+                _supplyByCluster = new double[R][];
+                _demandByCluster = new double[R][];
+                for (int r = 0; r < R; r++) { _supplyByCluster[r] = new double[C]; _demandByCluster[r] = new double[C]; }
+            }
+            for (int r = 0; r < R; r++)
+            {
+                Array.Clear(_supplyByCluster[r], 0, C);
+                Array.Clear(_demandByCluster[r], 0, C);
+                _supplyTotal[r] = 0; _demandTotal[r] = 0;
+            }
 
+            // ---- production and input demand, per resource -------------------
             foreach (var f in W.Firms)
             {
                 if (f.Dead || f.Parcel < 0) continue;
+                Array.Clear(f.InputNeedByRes, 0, R);
                 var pl = W.Parcels[f.Parcel];
                 int c = pl.Cluster;
                 double cond = Math.Max(0.2, pl.Condition);
                 switch (f.Sector)
                 {
                     case ZoneKind.Extractor:
-                        f.OutputThisTick = f.WorkersFilled * P.ExtractorOutputPerSlot * cond;
-                        rawSupplyByCluster[c] += f.OutputThisTick; rawSupply += f.OutputThisTick;
+                    {
+                        // Output scales with the cluster's geology for THIS raw.
+                        double suit = W.Clusters[c].ResourceSuitability[(int)f.Output];
+                        f.OutputThisTick = f.WorkersFilled * P.ExtractorOutputPerSlot * suit * cond;
+                        _supplyByCluster[(int)f.Output][c] += f.OutputThisTick;
+                        _supplyTotal[(int)f.Output] += f.OutputThisTick;
                         break;
+                    }
                     case ZoneKind.Industrial:
-                        f.OutputThisTick = f.WorkersFilled * P.IndOutputPerSlot * cond * P.Quality(pl.Level) / P.Quality(1);
-                        double need = f.OutputThisTick * P.IndRawPerOutput;
-                        rawDemandByCluster[c] += need; rawDemand += need;
-                        goodsSupplyByCluster[c] += f.OutputThisTick; goodsSupply += f.OutputThisTick;
+                    {
+                        var recipe = ResourceCatalog.RecipeFor(f.Output);
+                        if (recipe.Inputs == null) { f.OutputThisTick = 0; break; }
+                        f.OutputThisTick = f.WorkersFilled * recipe.OutputPerSlot * P.RecipeOutputScale
+                                           * cond * P.Quality(pl.Level) / P.Quality(1);
+                        foreach (var (res, qty) in recipe.Inputs)
+                        {
+                            double need = f.OutputThisTick * qty;
+                            f.InputNeedByRes[(int)res] = need;
+                            _demandByCluster[(int)res][c] += need;
+                            _demandTotal[(int)res] += need;
+                        }
+                        _supplyByCluster[(int)f.Output][c] += f.OutputThisTick;
+                        _supplyTotal[(int)f.Output] += f.OutputThisTick;
                         break;
+                    }
                     case ZoneKind.Commercial:
-                        double gNeed = f.RevenueThisTick * 0.3 / Math.Max(0.5, Trade.LocalPrice(Res.Goods));
-                        f.InputNeedThisTick = gNeed;
-                        goodsDemandByCluster[c] += gNeed; goodsDemand += gNeed;
+                    {
+                        // Restocking: the consumption basket behind captured spending.
+                        foreach (var (res, share) in ResourceCatalog.Basket)
+                        {
+                            double need = f.RevenueThisTick * share / Math.Max(0.5, Trade.LocalPrice(res));
+                            f.InputNeedByRes[(int)res] = need;
+                            _demandByCluster[(int)res][c] += need;
+                            _demandTotal[(int)res] += need;
+                        }
                         break;
+                    }
                     case ZoneKind.Office:
                     {
                         double rev = f.WorkersFilled * P.OfficeOutputPerSlot * P.OfficeOutputPrice
@@ -387,31 +426,25 @@ namespace CS2Econ.Core
                 }
             }
 
-            var rawClear = Flags.TierD_Trade
-                ? Trade.ClearTick(Res.Raw, rawSupply, rawDemand, rawSupplyByCluster, rawDemandByCluster, P)
-                : FlatClear(Res.Raw, rawSupply, rawDemand);
-            var goodsClear = Flags.TierD_Trade
-                ? Trade.ClearTick(Res.Goods, goodsSupply, goodsDemand, goodsSupplyByCluster, goodsDemandByCluster, P)
-                : FlatClear(Res.Goods, goodsSupply, goodsDemand);
-
-            SettleResource(Res.Raw, rawClear, rawSupply, rawDemand,
-                sellerOf: f => f.Sector == ZoneKind.Extractor,
-                buyerOf: f => f.Sector == ZoneKind.Industrial,
-                sellerVolume: f => f.OutputThisTick,
-                buyerVolume: f => f.OutputThisTick * P.IndRawPerOutput);
-            SettleResource(Res.Goods, goodsClear, goodsSupply, goodsDemand,
-                sellerOf: f => f.Sector == ZoneKind.Industrial,
-                buyerOf: f => f.Sector == ZoneKind.Commercial,
-                sellerVolume: f => f.OutputThisTick,
-                buyerVolume: f => f.InputNeedThisTick);
+            // ---- clear and settle each tradable resource ---------------------
+            for (int r = 0; r < R; r++)
+            {
+                var res = (Res)r;
+                if (!ResourceCatalog.IsTradable(res)) continue;
+                if (_supplyTotal[r] <= 1e-9 && _demandTotal[r] <= 1e-9) continue;
+                var clear = Flags.TierD_Trade
+                    ? Trade.ClearTick(res, _supplyTotal[r], _demandTotal[r],
+                                      _supplyByCluster[r], _demandByCluster[r], P)
+                    : FlatClear(res, _supplyTotal[r], _demandTotal[r]);
+                SettleResource(res, clear, _supplyTotal[r], _demandTotal[r]);
+            }
         }
 
         /// <summary>Vanilla-style flat-price fallback (TierD off): infinite depth
-        /// at the anchor price of the first matching exit.</summary>
+        /// at the world anchor.</summary>
         private ClearResult FlatClear(Res r, double supply, double demand)
         {
-            double anchor = 0;
-            foreach (var x in W.Exits) if (x.Resource == r) { anchor = x.Anchor; break; }
+            double anchor = ResourceCatalog.Anchor[(int)r];
             var res = new ClearResult { LocalPrice = anchor };
             double surplus = supply - demand;
             if (surplus > 0) { res.Exported = surplus; res.ExportRevenue = surplus * anchor; }
@@ -420,36 +453,32 @@ namespace CS2Econ.Core
         }
 
         /// <summary>Money settlement for one resource: local trades net between
-        /// firm groups; exports arrive from OutsideWorld; imports leave to it.
-        /// Pro-rata across firms; conservation exact by construction.</summary>
-        private void SettleResource(Res r, ClearResult clear, double supply, double demand,
-                                    Func<Firm, bool> sellerOf, Func<Firm, bool> buyerOf,
-                                    Func<Firm, double> sellerVolume, Func<Firm, double> buyerVolume)
+        /// producing and consuming firms; exports arrive from OutsideWorld,
+        /// imports leave to it. Pro-rata across firms by their actual volumes;
+        /// conservation exact by construction.</summary>
+        private void SettleResource(Res r, ClearResult clear, double supply, double demand)
         {
             double price = clear.LocalPrice;
             double localVolume = Math.Min(supply - clear.Exported - clear.Unsold, demand - clear.Imported);
             localVolume = Math.Max(0, localVolume);
 
-            // Sellers: local sales at local price + exports at marginal net revenue.
             double sellerRevenue = localVolume * price + clear.ExportRevenue;
-            // Buyers: local buys at local price + imports at delivered cost.
             double buyerCost = localVolume * price + clear.ImportCost;
 
             if (supply > 1e-9 && sellerRevenue > 0)
                 foreach (var f in W.Firms)
                 {
-                    if (f.Dead || !sellerOf(f)) continue;
-                    double share = sellerVolume(f) / supply;
+                    if (f.Dead || f.Output != r || f.OutputThisTick <= 0) continue;
+                    double share = f.OutputThisTick / supply;
                     f.Money += sellerRevenue * share;
                     f.RevenueThisTick += sellerRevenue * share;
                 }
             if (demand > 1e-9 && buyerCost > 0)
                 foreach (var f in W.Firms)
                 {
-                    if (f.Dead || !buyerOf(f)) continue;
-                    f.Money -= buyerCost * (buyerVolume(f) / demand);
+                    if (f.Dead || f.InputNeedByRes[(int)r] <= 0) continue;
+                    f.Money -= buyerCost * (f.InputNeedByRes[(int)r] / demand);
                 }
-            // Net external flow: export revenue in, import cost out.
             W.Ledger.Transfer(Account.OutsideWorld, Account.Firms, clear.ExportRevenue);
             W.Ledger.Transfer(Account.Firms, Account.OutsideWorld, clear.ImportCost);
         }
@@ -477,7 +506,7 @@ namespace CS2Econ.Core
                     RouteLandCharge(pl, pay - sPaid - structPaid, fromFirm: true);
                 }
                 f.ProfitEma = MathUtil.Ema(f.ProfitEma, f.RevenueThisTick, 0.05);
-                f.RevenueThisTick = 0; f.InputNeedThisTick = 0; f.OutputThisTick = 0;
+                f.RevenueThisTick = 0; f.OutputThisTick = 0;
 
                 if (f.Money < P.CompanyBankruptcyLimit)
                 {
@@ -495,7 +524,8 @@ namespace CS2Econ.Core
             {
                 if (pl.State != ParcelState.Built || pl.IsResidential || pl.OccupantFirm >= 0) continue;
                 if (pl.Use == ZoneKind.None || pl.Warehousing) continue;
-                double bid = LandAccounting.FirmBidPerSlot(Access, Trade, pl.Cluster, pl.Use, pl.Level, P)
+                double bid = LandAccounting.FirmBidPerSlot(Access, Trade, pl.Cluster, pl.Use, pl.Level, P,
+                                                           out Res chosen, W.Clusters)
                              * P.CondFactor(pl.Condition);
                 double assess = LandAccounting.UnitAssessment(pl, P);
                 double excess = bid - assess;
@@ -503,9 +533,13 @@ namespace CS2Econ.Core
                 double prob = MathUtil.Clamp(P.FirmEntryElasticity * excess * pl.Units * 10, 0, 0.5);
                 if (W.Rng.NextDouble() < prob)
                 {
+                    // The entrant fixes its output here: extractors mine what the
+                    // geology supports, industry commits to the recipe whose
+                    // input sourcing is cheapest from THIS location (Weber).
                     var firm = new Firm
                     {
                         Id = W.Firms.Count, Sector = pl.Use, Parcel = pl.Id,
+                        Output = pl.Use == ZoneKind.Commercial ? Res.Services : chosen,
                         Money = P.FirmSeedCapital, JobSlots = pl.Units, EnteredTick = W.Tick,
                     };
                     W.Firms.Add(firm);

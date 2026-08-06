@@ -141,12 +141,36 @@ namespace CS2Econ.Harness
             double maxR = Math.Sqrt(cx * cx + cy * cy);
 
             // ---- clusters ----------------------------------------------------
+            // Geology: deposit centers per raw with radial falloff — fertile
+            // plains broad (Grain), forests medium (Wood), ore/oil concentrated.
+            // ExtractorHeavy pulls the mineral deposits into the SE corner so the
+            // monoculture scenarios have a coherent resource region.
+            var depositCenters = new List<(int raw, double x, double y, double radius, double strength)>();
+            var drng = new SplitMix64(cfg.Seed * 977 + 11);
+            (double, double) RandPos(double margin)
+            {
+                double px = margin + drng.NextDouble() * (cfg.Cols - 1 - 2 * margin);
+                double py = margin + drng.NextDouble() * (cfg.Rows - 1 - 2 * margin);
+                return (px, py);
+            }
+            int[] centerCount = { 3, 3, 2, 2 };            // Grain, Wood, Ore, Oil
+            double[] centerRadius = { 5.0, 3.5, 2.2, 2.0 };
+            for (int raw = 0; raw < ResourceCatalog.RawCount; raw++)
+                for (int k = 0; k < centerCount[raw]; k++)
+                {
+                    var (px, py) = RandPos(1);
+                    if (cfg.ExtractorHeavy && raw >= 2)     // Ore/Oil into the SE region
+                    { px = cfg.Cols - 3 + drng.NextDouble() * 2; py = cfg.Rows - 3 + drng.NextDouble() * 2; }
+                    depositCenters.Add((raw, px, py, centerRadius[raw],
+                                        cfg.ExtractorHeavy && raw >= 2 ? 1.0 : 0.75 + 0.25 * drng.NextDouble()));
+                }
+
             w.Clusters = new ClusterInfo[C];
             for (int c = 0; c < C; c++)
             {
                 var (x, y) = access.Pos(c);
                 double r = Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) / maxR;
-                w.Clusters[c] = new ClusterInfo
+                var ci = new ClusterInfo
                 {
                     Id = c, X = x, Y = y,
                     District = (x * 2 / cfg.Cols) + 2 * (y * 2 / cfg.Rows),   // quadrants 0..3
@@ -154,22 +178,32 @@ namespace CS2Econ.Harness
                     School = 20 + 40 * SplitMix64.Hash01((ulong)c * 1289),
                     Health = 15 + 30 * SplitMix64.Hash01((ulong)c * 2039),
                 };
+                foreach (var (raw, px, py, radius, strength) in depositCenters)
+                {
+                    double d = Math.Sqrt((x - px) * (x - px) + (y - py) * (y - py));
+                    double v = strength * Math.Max(0, 1 - d / radius);
+                    if (v > ci.ResourceSuitability[raw]) ci.ResourceSuitability[raw] = v;
+                }
+                w.Clusters[c] = ci;
             }
 
-            // ---- zoning template by radius -----------------------------------
+            // ---- zoning template: radial density gradient; extraction zoned
+            // where the geology is (outside the urban core) --------------------
             ZoneKind ZoneFor(int c, ref SplitMix64 rng)
             {
                 var (x, y) = access.Pos(c);
                 double r = Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) / maxR;
-                int cornerSize = cfg.ExtractorHeavy ? 6 : 2;
-                bool resourceCorner = cfg.ExtractorHeavy
-                    ? (x >= cfg.Cols - cornerSize && y >= cfg.Rows - cornerSize)   // single corner near rail/east exits
-                    : (x < cornerSize && y < cornerSize) || (x >= cfg.Cols - cornerSize && y >= cfg.Rows - cornerSize);
                 double roll = rng.NextDouble();
-                if (resourceCorner)
-                    return cfg.ExtractorHeavy
-                        ? (roll < 0.6 ? ZoneKind.Extractor : (roll < 0.9 ? ZoneKind.ResidentialLow : ZoneKind.Commercial))
-                        : (roll < 0.6 ? ZoneKind.Extractor : ZoneKind.Industrial);
+                double maxSuit = 0;
+                for (int raw = 0; raw < ResourceCatalog.RawCount; raw++)
+                    maxSuit = Math.Max(maxSuit, w.Clusters[c].ResourceSuitability[raw]);
+                double extractThresh = cfg.ExtractorHeavy ? 0.35 : 0.45;
+                if (r > 0.35 && maxSuit > extractThresh)
+                {
+                    double pExtract = (cfg.ExtractorHeavy ? 0.75 : 0.5) * maxSuit;
+                    if (roll < pExtract) return ZoneKind.Extractor;
+                    if (roll < pExtract + 0.25) return ZoneKind.ResidentialLow;   // workforce housing
+                }
                 if (r < 0.18) return roll < 0.5 ? ZoneKind.Commercial : ZoneKind.Office;
                 if (r < 0.40) return roll < 0.6 ? ZoneKind.ResidentialHigh : (roll < 0.8 ? ZoneKind.Commercial : ZoneKind.ResidentialLow);
                 if (r < 0.75) return roll < 0.7 ? ZoneKind.ResidentialLow : (roll < 0.85 ? ZoneKind.ResidentialHigh : ZoneKind.Commercial);
@@ -198,15 +232,45 @@ namespace CS2Econ.Harness
                 }
 
             // ---- firms in prebuilt firm parcels ------------------------------
+            // Extractors mine the best raw under their cluster; seeded industry
+            // takes the recipe of the raw with the best suitability-weighted
+            // proximity (a static proxy for the live Weber choice entrants make),
+            // with a slice of Machinery near the center (multi-input chain).
+            Res SeedRecipeOutput(int cluster, ref SplitMix64 rng2)
+            {
+                double bestScore = double.NegativeInfinity; int bestRaw = 0;
+                for (int raw = 0; raw < ResourceCatalog.RawCount; raw++)
+                {
+                    double score = 0;
+                    for (int c2 = 0; c2 < C; c2++)
+                    {
+                        double suit = w.Clusters[c2].ResourceSuitability[raw];
+                        if (suit <= 0.05) continue;
+                        score = Math.Max(score, suit * Math.Exp(-0.06 * access.Cost(cluster, c2, AccessPurpose.Freight)));
+                    }
+                    if (score > bestScore) { bestScore = score; bestRaw = raw; }
+                }
+                if (rng2.NextDouble() < 0.12) return Res.Machinery;
+                return ResourceCatalog.Recipes[bestRaw].Output;   // recipes[i] consumes raw i
+            }
             double firmMoney = 0;
             foreach (var pl in w.Parcels)
             {
                 if (pl.State != ParcelState.Built || pl.IsResidential) continue;
                 if (w.Rng.NextDouble() < 0.8)
                 {
+                    Res output = pl.Use switch
+                    {
+                        ZoneKind.Extractor => BestRawAt(w, pl.Cluster),
+                        ZoneKind.Industrial => SeedRecipeOutput(pl.Cluster, ref w.Rng),
+                        ZoneKind.Office => Res.OfficeOutput,
+                        _ => Res.Services,
+                    };
+                    if (pl.Use == ZoneKind.Extractor && w.Clusters[pl.Cluster].ResourceSuitability[(int)output] < 0.1)
+                        continue;   // no geology, no mine
                     var f = new Firm
                     {
-                        Id = w.Firms.Count, Sector = pl.Use, Parcel = pl.Id,
+                        Id = w.Firms.Count, Sector = pl.Use, Parcel = pl.Id, Output = output,
                         Money = 300, JobSlots = pl.Units,
                     };
                     w.Firms.Add(f);
@@ -266,16 +330,21 @@ namespace CS2Econ.Harness
             }
             int westExit = access.At(0, cfg.Rows / 2);
             int eastExit = access.At(cfg.Cols - 1, cfg.Rows / 2);
-            foreach (var res in new[] { Res.Raw, Res.Goods })
+            for (int ri = 0; ri < ResourceCatalog.Count; ri++)
             {
-                double anchor = res == Res.Raw ? 2.6 : 5.4;
-                AddExit(ExitMode.Road, westExit, res, anchor, t: 0.62, d: 2);
-                AddExit(ExitMode.Road, eastExit, res, anchor, t: 0.62, d: 2);
+                var res = (Res)ri;
+                if (!ResourceCatalog.IsTradable(res)) continue;
+                // Depth slope scales with the anchor so the fractional bend at a
+                // given volume is comparable across cheap grain and dear machinery.
+                double anchor = ResourceCatalog.Anchor[ri];
+                double tRoad = 0.24 * anchor;
+                AddExit(ExitMode.Road, westExit, res, anchor, t: tRoad, d: 2);
+                AddExit(ExitMode.Road, eastExit, res, anchor, t: tRoad, d: 2);
                 if (cfg.RailTerminal)
-                    AddExit(ExitMode.Rail, eastExit, res, anchor, t: 0.10, d: 1, handling: 0.50);
+                    AddExit(ExitMode.Rail, eastExit, res, anchor, t: 0.04 * anchor, d: 1, handling: 0.19 * anchor);
                 if (cfg.SeaExit)
                     AddExit(ExitMode.Sea, access.At(cfg.Cols / 2, cfg.Rows - 1), res,
-                            anchor, t: 0, d: double.PositiveInfinity, handling: 0.90, capacity: 260);
+                            anchor, t: 0, d: double.PositiveInfinity, handling: 0.35 * anchor, capacity: 260);
             }
 
             w.Ledger = new Ledger(hhMoney, firmMoney, initialTreasury: 3000);
@@ -283,16 +352,27 @@ namespace CS2Econ.Harness
             return (w, access);
         }
 
+        public static Res BestRawAt(WorldState w, int cluster)
+        {
+            int best = 0; double bestSuit = -1;
+            for (int raw = 0; raw < ResourceCatalog.RawCount; raw++)
+                if (w.Clusters[cluster].ResourceSuitability[raw] > bestSuit)
+                { bestSuit = w.Clusters[cluster].ResourceSuitability[raw]; best = raw; }
+            return (Res)best;
+        }
+
         public static void AddRailTerminal(WorldState w, GridAccess access, EconParams p)
         {
             int cluster = access.At(access.Cols - 1, access.Rows / 2);
-            foreach (var res in new[] { Res.Raw, Res.Goods })
+            for (int ri = 0; ri < ResourceCatalog.Count; ri++)
             {
-                double anchor = res == Res.Raw ? 2.6 : 5.4;
+                var res = (Res)ri;
+                if (!ResourceCatalog.IsTradable(res)) continue;
+                double anchor = ResourceCatalog.Anchor[ri];
                 w.Exits.Add(new TradeExit
                 {
                     Id = w.Exits.Count, Mode = ExitMode.Rail, Cluster = cluster, Resource = res,
-                    Anchor = anchor, T = 0.10, D = 1, PerUnitHandling = 0.50,
+                    Anchor = anchor, T = 0.04 * anchor, D = 1, PerUnitHandling = 0.19 * anchor,
                     Rho = p.RegionSize / 400.0,
                 });
             }

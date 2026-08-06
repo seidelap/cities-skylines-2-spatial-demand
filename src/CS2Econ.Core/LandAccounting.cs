@@ -84,7 +84,18 @@ namespace CS2Econ.Core
         /// agglomeration multiplier (design §4.2).</summary>
         public static double FirmBidPerSlot(
             AccessState acc, IPriceContext prices, int cluster, ZoneKind sector, int level, EconParams p)
+            => FirmBidPerSlot(acc, prices, cluster, sector, level, p, out _, workCluster: null);
+
+        /// <summary>Overload exposing the chosen output — for industrial the
+        /// argmax RECIPE (the Weber decision: each input priced at its own
+        /// delivered cost — local source + haul vs import parity — so where to
+        /// source each specific resource shapes where each industry bids), and
+        /// for extractors the best raw the cluster's geology supports.</summary>
+        public static double FirmBidPerSlot(
+            AccessState acc, IPriceContext prices, int cluster, ZoneKind sector, int level, EconParams p,
+            out Res chosenOutput, ClusterInfo[]? workCluster)
         {
+            chosenOutput = Res.Services;
             double fillEst = FirmFillEstimate(acc, cluster, sector);
             double quality = p.Quality(level) / p.Quality(1);
             // Production needs labor: revenue AND wages both scale with fill —
@@ -96,17 +107,31 @@ namespace CS2Econ.Core
                 {
                     double capturePerSlot = acc.PhantomCommercialCapture(cluster, 6.0 * quality) / 6.0;
                     double wage = 0.7 * p.WageBasic + 0.3 * p.WageSkilled;
-                    double goodsCost = 0.30 * capturePerSlot / Math.Max(0.5, p.LocalGoodsValue)
-                                       * prices.DeliveredCost(Res.Goods, cluster);
-                    profitPerFilledSlot = capturePerSlot * p.CommercialMarkup - goodsCost * 0.1 - wage;
+                    // Restocking cost: the consumption basket at delivered prices,
+                    // relative to its anchor value (imported/near baskets squeeze margin).
+                    double cogsIndex = 0;
+                    foreach (var (res, share) in ResourceCatalog.Basket)
+                        cogsIndex += share * prices.DeliveredCost(res, cluster) / ResourceCatalog.Anchor[(int)res];
+                    profitPerFilledSlot = capturePerSlot * (p.CommercialMarkup - 0.1 * (cogsIndex - 0.3)) - wage;
                     break;
                 }
                 case ZoneKind.Industrial:
                 {
-                    double outNet = Math.Max(prices.LocalPrice(Res.Goods), prices.BestExportNet(Res.Goods, cluster));
-                    double rawCost = prices.DeliveredCost(Res.Raw, cluster);
+                    // Weber: max over recipes of margin at THIS location.
                     double wage = 0.6 * p.WageBasic + 0.4 * p.WageSkilled;
-                    profitPerFilledSlot = p.IndOutputPerSlot * quality * (outNet - p.IndRawPerOutput * rawCost) - wage;
+                    profitPerFilledSlot = double.NegativeInfinity;
+                    foreach (var recipe in ResourceCatalog.Recipes)
+                    {
+                        double outNet = Math.Max(prices.LocalPrice(recipe.Output),
+                                                 prices.BestExportNet(recipe.Output, cluster));
+                        double inputCost = 0;
+                        foreach (var (res, qty) in recipe.Inputs)
+                            inputCost += qty * prices.DeliveredCost(res, cluster);
+                        double perSlot = recipe.OutputPerSlot * p.RecipeOutputScale * quality
+                                         * (outNet - inputCost) - wage;
+                        if (perSlot > profitPerFilledSlot)
+                        { profitPerFilledSlot = perSlot; chosenOutput = recipe.Output; }
+                    }
                     break;
                 }
                 case ZoneKind.Office:
@@ -114,12 +139,25 @@ namespace CS2Econ.Core
                     double wage = 0.3 * p.WageSkilled + 0.7 * p.WageEducated;
                     profitPerFilledSlot = p.OfficeOutputPerSlot * quality * p.OfficeOutputPrice
                                           * acc.OfficeAgglomMult[cluster] - wage;
+                    chosenOutput = Res.OfficeOutput;
                     break;
                 }
                 case ZoneKind.Extractor:
                 {
-                    double outNet = Math.Max(prices.LocalPrice(Res.Raw), prices.BestExportNet(Res.Raw, cluster));
-                    profitPerFilledSlot = p.ExtractorOutputPerSlot * quality * outNet - p.WageBasic;
+                    // Best raw the geology supports, priced at its own market.
+                    profitPerFilledSlot = double.NegativeInfinity;
+                    var suit = workCluster != null ? workCluster[cluster].ResourceSuitability : null;
+                    for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
+                    {
+                        double s2 = suit != null ? suit[rr] : 0.5;
+                        if (s2 <= 0.05) continue;
+                        var res = (Res)rr;
+                        double outNet = Math.Max(prices.LocalPrice(res), prices.BestExportNet(res, cluster));
+                        double perSlot = p.ExtractorOutputPerSlot * quality * s2 * outNet - p.WageBasic;
+                        if (perSlot > profitPerFilledSlot)
+                        { profitPerFilledSlot = perSlot; chosenOutput = res; }
+                    }
+                    if (double.IsNegativeInfinity(profitPerFilledSlot)) return 0;
                     break;
                 }
                 default: return 0;

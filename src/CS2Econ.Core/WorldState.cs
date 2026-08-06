@@ -16,6 +16,10 @@ namespace CS2Econ.Core
         public double Health;         // healthcare access mass
         public double Pollution;      // industrial ground/air pollution (updated by engine)
         public double Noise;
+        /// <summary>Natural-resource suitability per raw (indexed by Res 0..3):
+        /// extraction output scales with it; zero elsewhere. The spatial anchor
+        /// of the whole Weber structure.</summary>
+        public double[] ResourceSuitability = new double[ResourceCatalog.RawCount];
         public bool TenantProtection; // per-district policy, mirrored here per cluster
         public bool WedgeEarmark = true; // per-district: wedge → escrow vs general revenue
     }
@@ -97,6 +101,10 @@ namespace CS2Econ.Core
     {
         public int Id;
         public ZoneKind Sector;          // Commercial | Industrial | Office | Extractor
+        /// <summary>What this firm produces: extractor → its cluster's raw;
+        /// industrial → its chosen recipe's output (the Weber decision, fixed at
+        /// entry); commercial → Services; office → OfficeOutput.</summary>
+        public Res Output = Res.Services;
         public int Parcel = -1;
         public double Money;
         public int JobSlots;
@@ -109,7 +117,7 @@ namespace CS2Econ.Core
         // Per-tick scratch (settlement + telemetry)
         public double RevenueThisTick;
         public double OutputThisTick;
-        public double InputNeedThisTick;
+        public double[] InputNeedByRes = new double[ResourceCatalog.Count];
     }
 
     /// <summary>One outside connection with its own supply/demand law
@@ -196,7 +204,6 @@ namespace CS2Econ.Core
         public ClaimsLedger Claims = new ClaimsLedger();
         public CalibrationState Calibration = new CalibrationState();
         public Ledger Ledger = new Ledger(0, 0, 0);
-        public double[] LocalPrice = new double[4];      // per Res, city clearing price (within parity band)
         public long Tick;
         public SplitMix64 Rng;
         public int RenovationsTotal, ScrapesTotal;

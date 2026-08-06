@@ -76,7 +76,8 @@ namespace CS2Econ.Core
                 ByUse[3][c] = 10.0 * indProfit / p.WageBasic;
                 double offProfit = LandAccounting.FirmBidPerSlot(acc, trade, c, ZoneKind.Office, 2, p);
                 ByUse[4][c] = 10.0 * offProfit / p.WageBasic;
-                double extProfit = LandAccounting.FirmBidPerSlot(acc, trade, c, ZoneKind.Extractor, 2, p);
+                double extProfit = LandAccounting.FirmBidPerSlot(acc, trade, c, ZoneKind.Extractor, 2, p,
+                                                                 out _, w.Clusters);
                 ByUse[5][c] = 10.0 * extProfit / p.WageBasic;
             }
 
@@ -88,7 +89,9 @@ namespace CS2Econ.Core
                 var rawW = new double[C];
                 for (int c = 0; c < C; c++)
                 {
-                    double cost = trade.DeliveredCost(Res.Raw, c);
+                    double cost = double.PositiveInfinity;
+                    for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
+                        cost = Math.Min(cost, trade.DeliveredCost((Res)rr, c));
                     rawW[c] = Math.Exp(-1.2 * cost);
                     totalRawW += rawW[c];
                 }

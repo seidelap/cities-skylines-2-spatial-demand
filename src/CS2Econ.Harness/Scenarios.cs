@@ -198,7 +198,7 @@ namespace CS2Econ.Harness
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             sim.Run(700);
 
-            var rawExits = sim.W.Exits.Where(e => e.Resource == Res.Raw && e.Mode == ExitMode.Road).ToList();
+            var rawExits = sim.W.Exits.Where(e => e.Resource == Res.Ore && e.Mode == ExitMode.Road).ToList();
             double sustained = rawExits.Sum(e => e.SustainedQ);
             var busiest = rawExits.OrderByDescending(e => e.SustainedQ).First();
             double actual = sim.Engine.Trade.ExportMarginal(busiest, 0, p);
@@ -234,13 +234,13 @@ namespace CS2Econ.Harness
                 double supply = 8 + t * 1.05;                 // 8 → ~950 units/tick
                 Array.Clear(supplyBy, 0, supplyBy.Length);
                 supplyBy[source] = supply;
-                trade.ClearTick(Res.Raw, supply, 0, supplyBy, new double[sim.Access.ClusterCount], p);
+                trade.ClearTick(Res.Ore, supply, 0, supplyBy, new double[sim.Access.ClusterCount], p);
 
                 double road = 0, rail = 0, sea = 0;
                 TradeExit? roadX = null, railX = null;
                 foreach (var e in w.Exits)
                 {
-                    if (e.Resource != Res.Raw) continue;
+                    if (e.Resource != Res.Ore) continue;
                     if (e.Mode == ExitMode.Road) { road += e.ExportedThisTick; if (e.ExportedThisTick > 0) roadX = e; }
                     if (e.Mode == ExitMode.Rail) { rail += e.ExportedThisTick; if (e.ExportedThisTick > 0) railX = e; }
                     if (e.Mode == ExitMode.Sea) sea += e.ExportedThisTick;

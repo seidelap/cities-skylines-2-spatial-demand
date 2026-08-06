@@ -26,10 +26,9 @@ namespace CS2Econ.Core
     /// concurrently active exits hold marginal prices locked together.</summary>
     public sealed class TradeSystem : IPriceContext
     {
-        private readonly Dictionary<(Res, int), double> _groupSustained = new Dictionary<(Res, int), double>();
-        private double[] _localPrice = new double[4];
+        private double[] _localPrice = new double[ResourceCatalog.Count];
         // Per (res, cluster): haul to cheapest producing cluster (freight-in term)
-        private double[][] _localSourceHaul = new double[4][];
+        private double[][] _localSourceHaul = new double[ResourceCatalog.Count][];
         private double[][] _haulToExit = Array.Empty<double[]>();   // [exitIdx][cluster]
         private WorldState _w = null!;
         private IAccessCosts _costs = null!;
@@ -39,10 +38,10 @@ namespace CS2Econ.Core
         public void Bind(WorldState w, IAccessCosts costs)
         {
             _w = w; _costs = costs;
-            _localPrice[(int)Res.Raw] = 2.4;
-            _localPrice[(int)Res.Goods] = 5.0;
+            // Local prices start near world anchors and float inside parity bands.
+            for (int r = 0; r < ResourceCatalog.Count; r++)
+                _localPrice[r] = ResourceCatalog.Anchor[r] * 0.95;
             _localPrice[(int)Res.Services] = 1.0;
-            _localPrice[(int)Res.OfficeOutput] = 0;
         }
 
         /// <summary>Refresh haul caches (rides the same dirty cadence as access;
@@ -59,24 +58,23 @@ namespace CS2Econ.Core
                     _haulToExit[e][c] = _costs.Cost(c, _w.Exits[e].Cluster, AccessPurpose.Freight)
                                         * FreightCostPerMinute;
             }
-            for (int r = 0; r < 4; r++)
+            for (int r = 0; r < ResourceCatalog.Count; r++)
             {
                 var res = (Res)r;
+                if (!ResourceCatalog.IsTradable(res)) { _localSourceHaul[r] = null; continue; }
                 var haul = new double[C];
                 var producers = new List<int>();
                 foreach (var f in _w.Firms)
-                {
-                    if (f.Dead || f.Parcel < 0) continue;
-                    if ((res == Res.Raw && f.Sector == ZoneKind.Extractor)
-                        || (res == Res.Goods && f.Sector == ZoneKind.Industrial))
+                    if (!f.Dead && f.Parcel >= 0 && f.Output == res
+                        && (f.Sector == ZoneKind.Extractor || f.Sector == ZoneKind.Industrial))
                         producers.Add(_w.Parcels[f.Parcel].Cluster);
-                }
+                double wgt = ResourceCatalog.Weight[r];
                 for (int c = 0; c < C; c++)
                 {
                     double best = double.PositiveInfinity;
                     foreach (int src in producers)
                     {
-                        double h = _costs.Cost(src, c, AccessPurpose.Freight) * FreightCostPerMinute;
+                        double h = _costs.Cost(src, c, AccessPurpose.Freight) * FreightCostPerMinute * wgt;
                         if (h < best) best = h;
                     }
                     haul[c] = best;   // +inf when nothing produces locally
@@ -138,6 +136,7 @@ namespace CS2Econ.Core
 
         public double DeliveredCost(Res r, int cluster)
         {
+            double wgt = ResourceCatalog.Weight[(int)r];
             double local = _localSourceHaul[(int)r] != null && !double.IsInfinity(_localSourceHaul[(int)r][cluster])
                 ? _localPrice[(int)r] + _localSourceHaul[(int)r][cluster]
                 : double.PositiveInfinity;
@@ -146,7 +145,7 @@ namespace CS2Econ.Core
             {
                 var x = _w.Exits[e];
                 if (x.Resource != r || Saturated(x)) continue;
-                double m = ImportMarginal(x, 0, _p) + _haulToExit[e][cluster];
+                double m = ImportMarginal(x, 0, _p) + _haulToExit[e][cluster] * wgt;
                 if (m < import) import = m;
             }
             double v = Math.Min(local, import);
@@ -155,12 +154,13 @@ namespace CS2Econ.Core
 
         public double BestExportNet(Res r, int cluster)
         {
+            double wgt = ResourceCatalog.Weight[(int)r];
             double best = 0;
             for (int e = 0; e < _w.Exits.Count; e++)
             {
                 var x = _w.Exits[e];
                 if (x.Resource != r || Saturated(x)) continue;
-                double m = ExportMarginal(x, 0, _p) - _haulToExit[e][cluster];
+                double m = ExportMarginal(x, 0, _p) - _haulToExit[e][cluster] * wgt;
                 if (m > best) best = m;
             }
             return best;
@@ -180,13 +180,15 @@ namespace CS2Econ.Core
             foreach (var x in _w.Exits)
                 if (x.Resource == r) { x.DrawnThisTick = 0; x.ExportedThisTick = 0; x.ImportedThisTick = 0; }
 
-            // Volume-weighted mean haul for this tick's flows.
+            // Volume-weighted mean haul for this tick's flows (per-resource
+            // freight weight applied — ore hauls dearer than plastics).
+            double resWeight = ResourceCatalog.Weight[(int)r];
             double MeanHaul(int exitIdx, double[] byCluster, double total)
             {
-                if (total <= 1e-9) return _haulToExit[exitIdx].Length > 0 ? _haulToExit[exitIdx][0] : 0;
+                if (total <= 1e-9) return _haulToExit[exitIdx].Length > 0 ? _haulToExit[exitIdx][0] * resWeight : 0;
                 double s = 0;
                 for (int c = 0; c < byCluster.Length; c++) s += byCluster[c] * _haulToExit[exitIdx][c];
-                return s / total;
+                return s / total * resWeight;
             }
 
             double surplus = supply - demand;
@@ -266,11 +268,11 @@ namespace CS2Econ.Core
                 x.SustainedQ = MathUtil.Ema(x.SustainedQ, net, p.TradeSustainAlpha);
                 x.TransientB = p.TradeTransientDecay * x.TransientB
                                + Math.Max(0, total - Math.Abs(x.SustainedQ));
-                if (x.Resource == Res.Raw) rawExportSustained += Math.Max(0, x.SustainedQ);
+                if (ResourceCatalog.IsRaw(x.Resource)) rawExportSustained += Math.Max(0, x.SustainedQ);
             }
             // Export-base multiplier: sustained raw exports induce local
             // processing demand (Weber pull re-enters via Construction).
-            InducedProcessingSlots = 0.35 * rawExportSustained / Math.Max(1, _p.IndOutputPerSlot);
+            InducedProcessingSlots = 0.35 * rawExportSustained / 3.0;
         }
 
         /// <summary>Overlay: parity band for a resource at a cluster (§4.7).</summary>
@@ -281,8 +283,9 @@ namespace CS2Econ.Core
             {
                 var x = _w.Exits[e];
                 if (x.Resource != r || Saturated(x)) continue;
-                lo = Math.Max(lo, ExportMarginal(x, 0, _p) - _haulToExit[e][cluster]);
-                hi = Math.Min(hi, ImportMarginal(x, 0, _p) + _haulToExit[e][cluster]);
+                double wgt = ResourceCatalog.Weight[(int)r];
+                lo = Math.Max(lo, ExportMarginal(x, 0, _p) - _haulToExit[e][cluster] * wgt);
+                hi = Math.Min(hi, ImportMarginal(x, 0, _p) + _haulToExit[e][cluster] * wgt);
             }
             return (lo, hi);
         }

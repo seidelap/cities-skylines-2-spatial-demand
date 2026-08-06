@@ -28,6 +28,7 @@ namespace CS2Econ.Harness
             AnnuityRoundTrip();
             InteriorOptimum();
             TradeLaws(seed);
+            WeberRecipeChoice(seed);
             Staggering();
             CircularityGuard(seed);
             LedgerConservation(seed);
@@ -112,8 +113,8 @@ namespace CS2Econ.Harness
             sim.Engine.Trade.Refresh(p);
 
             // Road curve concave increasing (d=2), rail linear (d=1).
-            var road = w.Exits.First(e => e.Mode == ExitMode.Road && e.Resource == Res.Goods);
-            var rail = w.Exits.First(e => e.Mode == ExitMode.Rail && e.Resource == Res.Goods);
+            var road = w.Exits.First(e => e.Mode == ExitMode.Road && e.Resource == Res.Metals);
+            var rail = w.Exits.First(e => e.Mode == ExitMode.Rail && e.Resource == Res.Metals);
             double r1 = sim.Engine.Trade.ExportMarginal(road, 100, p);
             double r2 = sim.Engine.Trade.ExportMarginal(road, 200, p);
             double r3 = sim.Engine.Trade.ExportMarginal(road, 300, p);
@@ -130,14 +131,16 @@ namespace CS2Econ.Harness
             double surplus = 600;
             var supplyBy = new double[sim.Access.ClusterCount];
             supplyBy[sim.Access.At(3, 3)] = surplus;
-            var clear = sim.Engine.Trade.ClearTick(Res.Goods, surplus, 0, supplyBy, new double[sim.Access.ClusterCount], p);
+            var clear = sim.Engine.Trade.ClearTick(Res.Metals, surplus, 0, supplyBy, new double[sim.Access.ClusterCount], p);
 
             // Brute force: same lots, same marginal formulas, global best-first.
-            foreach (var x in w.Exits) if (x.Resource == Res.Goods) x.DrawnThisTick = 0;
+            var _clearDraws = w.Exits.Where(e => e.Resource == Res.Metals).Select(e => e.DrawnThisTick).ToList();
+            foreach (var x in w.Exits) if (x.Resource == Res.Metals) x.DrawnThisTick = 0;
             double bfRevenue = 0, remaining = surplus;
-            var goodsExits = w.Exits.Where(e => e.Resource == Res.Goods).ToList();
+            var goodsExits = w.Exits.Where(e => e.Resource == Res.Metals).ToList();
             double HaulOf(TradeExit e) => sim.Access.Cost(sim.Access.At(3, 3), e.Cluster, AccessPurpose.Freight)
-                                          * sim.Engine.Trade.FreightCostPerMinute;
+                                          * sim.Engine.Trade.FreightCostPerMinute
+                                          * ResourceCatalog.Weight[(int)Res.Metals];
             while (remaining > 1e-6)
             {
                 double lot = Math.Min(p.LotSize, remaining);
@@ -151,9 +154,10 @@ namespace CS2Econ.Harness
                 if (best == null) break;
                 best.DrawnThisTick += lot; bfRevenue += lot * bestNet; remaining -= lot;
             }
+            var perExit = string.Join(" ", goodsExits.Select((e, i) => $"e{i}:{_clearDraws[i]:F0}/{e.DrawnThisTick:F0}"));
             Check("multimodal composition = horizontal summation (vs brute force)",
                   Math.Abs(clear.ExportRevenue - bfRevenue) < 1e-6 * Math.Max(1, bfRevenue),
-                  $"clear {clear.ExportRevenue:F2} vs brute {bfRevenue:F2}");
+                  $"clear {clear.ExportRevenue:F2} vs brute {bfRevenue:F2} (clear/brute per exit: {perExit})");
 
             // Sustained EMA + transient layer decay round-trip.
             var exit = goodsExits[0];
@@ -165,6 +169,63 @@ namespace CS2Econ.Harness
             Check("transient impact layer decays at resilience rate",
                   b1 > 0 && exit.TransientB < b1 && Math.Abs(exit.TransientB - b1 * p.TradeTransientDecay) < 1e-9,
                   $"burst {b1:F1} -> {exit.TransientB:F1}");
+        }
+
+        private static void WeberRecipeChoice(ulong seed)
+        {
+            // Resource-level spatial economics: extraction follows geology, and
+            // industry's recipe choice follows input sourcing costs (§4.2 Weber).
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 6000 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(300);
+            var w = sim.W;
+
+            int extract = 0, extractRight = 0;
+            int ind = 0, indAligned = 0;
+            var outputsSeen = new HashSet<Res>();
+            foreach (var f in w.Firms)
+            {
+                if (f.Dead || f.Parcel < 0) continue;
+                int c = w.Parcels[f.Parcel].Cluster;
+                if (f.Sector == ZoneKind.Extractor)
+                {
+                    extract++;
+                    // Geology oracle (seeds) or value-weighted geology oracle
+                    // (entrants price the output too — mining the slightly less
+                    // abundant but dearer raw is correct economics).
+                    int bestBySuit = 0, bestByValue = 0; double bs = -1, bv = -1;
+                    for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
+                    {
+                        double suit = w.Clusters[c].ResourceSuitability[rr];
+                        if (suit > bs) { bs = suit; bestBySuit = rr; }
+                        double val = suit * Math.Max(sim.Engine.Trade.LocalPrice((Res)rr),
+                                                     sim.Engine.Trade.BestExportNet((Res)rr, c));
+                        if (val > bv) { bv = val; bestByValue = rr; }
+                    }
+                    if ((int)f.Output == bestBySuit || (int)f.Output == bestByValue) extractRight++;
+                }
+                else if (f.Sector == ZoneKind.Industrial)
+                {
+                    outputsSeen.Add(f.Output);
+                    if (f.Output == Res.Machinery) continue;   // multi-input: no single cheapest raw
+                    ind++;
+                    // The chosen recipe's raw should be the locally cheapest raw
+                    // to deliver (allowing a 15% tolerance band for ties).
+                    var recipe = ResourceCatalog.RecipeFor(f.Output);
+                    double own = sim.Engine.Trade.DeliveredCost(recipe.Inputs[0].res, c);
+                    double cheapest = double.PositiveInfinity;
+                    for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
+                        cheapest = Math.Min(cheapest, sim.Engine.Trade.DeliveredCost((Res)rr, c));
+                    if (own <= cheapest * 1.15 + 0.05) indAligned++;
+                }
+            }
+            double extractShare = extract > 0 ? (double)extractRight / extract : 0;
+            double indShare = ind > 0 ? (double)indAligned / ind : 0;
+            Check("Weber: extraction follows geology; recipes follow input sourcing",
+                  extract >= 5 && extractShare >= 0.9 && ind >= 5 && indShare >= 0.55 && outputsSeen.Count >= 2,
+                  $"{extract} extractors ({extractShare:P0} on best raw); {ind} single-input industrials " +
+                  $"({indShare:P0} on cheapest-sourced recipe); {outputsSeen.Count} distinct industrial outputs");
         }
 
         private static void Staggering()
