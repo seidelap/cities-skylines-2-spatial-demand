@@ -18,10 +18,10 @@ namespace CS2Econ.Core
             ZoneKind.Industrial => 3, ZoneKind.Office => 4, _ => -1,
         };
 
-        public double Get(int cluster, ZoneKind use)
+        public double Get(int cluster, ZoneKind use, ClaimsLedger claims)
         {
             int u = UseIndex(use);
-            return u < 0 ? 0 : ByUse[u][cluster];
+            return u < 0 ? 0 : ByUse[u][cluster] - claims.Get(cluster, use);
         }
 
         /// <summary>seekersBySegment: households currently looking (unhoused +
@@ -98,11 +98,11 @@ namespace CS2Econ.Core
                 }
             }
             for (int u = 0; u < 5; u++)
-            {
-                var use = Uses[u];
                 for (int c = 0; c < C; c++)
-                    ByUse[u][c] = ByUse[u][c] - vacantByUse[u][c] - w.Claims.Get(c, use);
-            }
+                    ByUse[u][c] -= vacantByUse[u][c];
+            // NOTE: claims are subtracted LIVE in Get(), not baked at refresh —
+            // commits inside a refresh window must see each other immediately
+            // (the §4.6 pipeline-not-mirage discipline; scrutiny finding #19).
         }
     }
 
@@ -258,7 +258,7 @@ namespace CS2Econ.Core
             int units = LandAccounting.UnitsFor(use);
             double bid = LandAccounting.BidPerUnit(acc, trade, pl.Cluster, use, level, segmentPresence, p)
                          * w.Calibration.Factor(use);
-            double resid = residuals.Get(pl.Cluster, use);
+            double resid = residuals.Get(pl.Cluster, use, w.Claims);
             // A project under construction already sits in the claims ledger;
             // its own claim must not count against its own re-evaluation.
             if (pl.State == ParcelState.UnderConstruction) resid += pl.Units;

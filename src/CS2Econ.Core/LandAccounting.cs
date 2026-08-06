@@ -204,8 +204,9 @@ namespace CS2Econ.Core
                 else
                 {
                     // Scrape and rebuild: demolition + new RC − salvage of V (§4.4).
-                    cost = p.DemolitionPerUnit * parcel.Units + p.RC(lvl, units)
-                           - p.SalvageFraction * vNow;
+                    // Salvage can never mint money: cost floors at zero.
+                    cost = Math.Max(0, p.DemolitionPerUnit * parcel.Units + p.RC(lvl, units)
+                           - p.SalvageFraction * vNow);
                     scrape = true;
                 }
 
@@ -232,10 +233,13 @@ namespace CS2Econ.Core
             if (parcel.Units == 0) return 0;
             double s = SPerUnit(parcel.Level, parcel.Condition, p);
             double land = p.CaptureFraction * parcel.AssessedLR / parcel.Units;
-            double structTax = p.StructureTaxRate * parcel.Condition
-                               * p.RC(parcel.Level, 1) ;
-            return s + land + structTax;
+            return s + land + StructureTaxPerUnit(parcel, p);
         }
+
+        /// <summary>τ_S leg of the split rate (§4.3) — treasury revenue on
+        /// structure value, never escrow (raising it must STALL upgrades).</summary>
+        public static double StructureTaxPerUnit(Parcel parcel, EconParams p)
+            => p.StructureTaxRate * parcel.Condition * p.RC(parcel.Level, 1);
 
         /// <summary>Capitalized land value for display: P_L = LR/(r + τ_L) with
         /// r = h (design §4.3). At full capture the market price of land

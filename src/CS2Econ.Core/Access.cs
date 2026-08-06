@@ -226,17 +226,19 @@ namespace CS2Econ.Core
         }
 
         /// <summary>Expected household income at a cluster: employment-probability-
-        /// weighted wage plus transfers. Used for bids and migration; never reads
-        /// realized rents (§3 circularity guard).</summary>
+        /// weighted wage NET OF INCOME TAX plus transfers. Net-of-tax is what makes
+        /// the §4.3 incidence chain live: taxes reduce disposable income → lower
+        /// bids → lower land values and LVT base (scrutiny finding #3). Never
+        /// reads realized rents (§3 circularity guard).</summary>
         public double ExpectedIncome(int segment, int cluster, EconParams p)
         {
             var seg = Segment.All[segment];
             double emp = seg.Participation > 0 ? EmploymentRate[(int)seg.Labor][cluster] : 0;
-            return seg.Participation * emp * p.Wage(seg.Labor) + seg.Transfer;
+            return seg.Participation * emp * p.Wage(seg.Labor) * (1 - p.IncomeTax(seg.Labor)) + seg.Transfer;
         }
 
         public static double HouseholdIncomeEstimate(Household h, Segment seg, EconParams p)
-            => (h.Employed ? p.Wage(seg.Labor) : 0) + seg.Transfer;
+            => (h.Employed ? p.Wage(seg.Labor) * (1 - p.IncomeTax(seg.Labor)) : 0) + seg.Transfer;
 
         /// <summary>Income flow plus annuitized savings — what housing decisions
         /// (search caps, exit thresholds) compare against assessments.</summary>

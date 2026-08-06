@@ -126,26 +126,15 @@ namespace CS2Econ.Core
         public double D;                 // catchment dimension: road 2, rail 1, sea/air ∞
         public double PerUnitHandling;   // rail terminal handling; 0 for road
         public double Capacity;          // per tick; sea/air are capacity-capped
+        public int RegionGroup = -1;     // exits sharing a group share their sustained scalar
         public double SustainedQ;        // EMA of drawn volume (the slow position)
         public double TransientB;        // burst layer, decays at resilience rate
         public double DrawnThisTick;
         public double ExportedThisTick, ImportedThisTick;   // direction split (telemetry)
 
-        /// <summary>Marginal received price for EXPORTING the (SustainedQ-effective + q)-th unit.</summary>
-        public double ExportMarginal(double q, EconParams p)
-        {
-            double eff = Math.Max(0, SustainedQ + p.TradeTransientBeta * TransientB + q);
-            double depth = double.IsInfinity(D) ? 0 : T * Math.Pow(eff / Rho, 1.0 / D);
-            return Anchor - PerUnitHandling - depth;
-        }
-
-        /// <summary>Marginal paid price for IMPORTING at current position.</summary>
-        public double ImportMarginal(double q, EconParams p)
-        {
-            double eff = Math.Max(0, SustainedQ + p.TradeTransientBeta * TransientB + q);
-            double depth = double.IsInfinity(D) ? 0 : T * Math.Pow(eff / Rho, 1.0 / D);
-            return Anchor + PerUnitHandling + depth;
-        }
+        // Pricing lives in TradeSystem (group coupling, net positions) — no
+        // per-exit marginal methods here (a diverging duplicate was scrutiny
+        // finding #11).
     }
 
     /// <summary>Tier A state: the weakly endogenous outside world (design §4.1).</summary>

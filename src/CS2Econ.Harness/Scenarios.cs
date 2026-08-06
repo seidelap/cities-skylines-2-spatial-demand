@@ -20,20 +20,25 @@ namespace CS2Econ.Harness
             Console.WriteLine($"  [{(pass ? "PASS" : "FAIL")}] {name} — {detail}");
         }
 
-        public static int RunAll(ulong seed, out string report)
+        public static int RunAll(ulong seed, out string report, string? only = null)
         {
             Results.Clear();
-            Console.WriteLine("scenarios: §6 acceptance targets");
-            VacancyLocalization(seed);
-            LevelGeography(seed);
-            FiscalLoop(seed);
-            TradeBend(seed);
-            ModeProgression(seed);
-            BoomBustAsymmetry(seed);
-            NoSynchronization(seed);
-            StalledConstruction(seed);
-            OverlayHonesty(seed);
-            PerformanceShape(seed);
+            Console.WriteLine("scenarios: §6 acceptance targets" + (only != null ? $" (only: {only})" : ""));
+            var all = new (string key, Action<ulong> run)[]
+            {
+                ("vacancy", VacancyLocalization),
+                ("levels", LevelGeography),
+                ("fiscal", FiscalLoop),
+                ("tradebend", TradeBend),
+                ("modes", ModeProgression),
+                ("boombust", BoomBustAsymmetry),
+                ("nosync", NoSynchronization),
+                ("stalled", StalledConstruction),
+                ("overlay", OverlayHonesty),
+                ("perf", PerformanceShape),
+            };
+            foreach (var (key, run) in all)
+                if (only == null || key == only) run(seed);
 
             int failed = Results.Count(r => !r.pass);
             var sb = new StringBuilder();

@@ -30,9 +30,14 @@ namespace CS2Econ.Core
                 sumW += weight;
             }
             double meanAccess = sumW > 0 ? sumV / sumW : 0;
-            double meanIncome = 0;
-            for (int c = 0; c < acc.C; c++) meanIncome += acc.ExpectedIncome(segment, c, p);
-            meanIncome /= Math.Max(1, acc.C);
+            double meanIncome = 0, incomeW = 0;
+            for (int c = 0; c < acc.C; c++)
+            {
+                double wgt = 1 + w.HouseholdCountByCluster[c];
+                meanIncome += acc.ExpectedIncome(segment, c, p) * wgt;
+                incomeW += wgt;
+            }
+            meanIncome = incomeW > 0 ? meanIncome / incomeW : 0;
 
             double rentBurden = meanIncome > 0.1 ? avgRentBySeg / (seg.MaxRentShare * meanIncome) : 2.0;
             // Absolute scale: a citywide amenity/access improvement MUST move the
@@ -73,10 +78,11 @@ namespace CS2Econ.Core
                 m.SegmentAttractEma[s] = MathUtil.Ema(m.SegmentAttractEma[s], attract, 0.05);
 
                 double outsideU = BaseOutsideUtility + (endogenousOutside ? m.ReservationThreshold[s] : 0);
-                double gap = attract - outsideU;
+                // The design's inflow is LAGGED: word travels before people move.
+                double gap = m.SegmentAttractEma[s] - outsideU;
 
-                // In-migration: fast response, widened by prominence, momentum
-                // from network memory (chain migration lowers next movers' costs).
+                // In-migration: faster than outflow, widened by prominence,
+                // momentum from network memory (chain migration).
                 double inRate = p.MigInElasticity * Math.Max(0, gap) * popScale * prominence
                                 * (1.0 + (endogenousOutside ? m.NetworkMemory : 0));
                 // Out-migration: responds to a LAGGED signal, lower elasticity.
@@ -89,10 +95,12 @@ namespace CS2Econ.Core
 
                 if (endogenousOutside)
                 {
-                    // Reservation threshold: cumulative drawdown of the regional
-                    // migration field, replenishing over time.
-                    m.ReservationThreshold[s] += Math.Max(0, flows.ArrivalsBySegment[s]) / p.RegionSize;
-                    m.ReservationThreshold[s] *= (1.0 - p.ReservationReplenish);
+                    // Reservation threshold: drawdown of the regional migration
+                    // field by cumulative NET in-migration (§4.1 — return flow
+                    // replenishes the field), decaying replenishment over time.
+                    double net = flows.ArrivalsBySegment[s] - flows.DeparturesBySegment[s];
+                    m.ReservationThreshold[s] += net / (p.RegionSize * p.MigFieldResponsiveness);
+                    m.ReservationThreshold[s] = Math.Max(0, m.ReservationThreshold[s] * (1.0 - p.ReservationReplenish));
                 }
             }
 

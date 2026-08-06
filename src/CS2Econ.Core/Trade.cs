@@ -93,27 +93,44 @@ namespace CS2Econ.Core
             return total;
         }
 
-        private static int RegionGroupOf(TradeExit e) => e.Mode == ExitMode.Sea || e.Mode == ExitMode.Air
-            ? 1000 + e.Id       // deep baths are their own group
-            : (int)e.Mode;      // road exits share a region; rail exits share a corridor market
+        /// <summary>Adjacent-exit coupling at the fundamental (§4.5): road exits
+        /// share the surrounding region's market; each rail corridor is its OWN
+        /// one-dimensional market (a second corridor is the design's relief valve
+        /// for rail saturation — scrutiny finding #9); sea/air baths stand alone.
+        /// Hosts may override via TradeExit.RegionGroup.</summary>
+        private static int RegionGroupOf(TradeExit e) => e.RegionGroup >= 0 ? e.RegionGroup
+            : e.Mode == ExitMode.Road ? 0
+            : 1000 + e.Id;
 
         // Positions are NET sustained flow (exports − imports): a region the city
         // imports from is undersupplied — marginal exports into it fetch the
         // anchor, they are not depressed by the import volume. Depth builds only
         // in the direction actually pushed.
+        // The sustained EMA already contains the routine daily volume, so the
+        // within-tick position is max(sustained, q) — a routine day trades at the
+        // sustained marginal p(Q); only volume beyond the routine position pushes
+        // deeper (no p(2Q) double count — scrutiny finding #10). Bursts ride the
+        // transient layer.
         public double ExportMarginal(TradeExit e, double qInTick, EconParams p)
         {
-            double eff = Math.Max(0, GroupSustained(e.Resource, e) + p.TradeTransientBeta * e.TransientB + qInTick);
+            double eff = Math.Max(0, Math.Max(GroupSustained(e.Resource, e), qInTick)
+                                     + p.TradeTransientBeta * e.TransientB);
             double depth = double.IsInfinity(e.D) ? 0 : e.T * Math.Pow(eff / e.Rho, 1.0 / e.D);
             return e.Anchor - e.PerUnitHandling - depth;
         }
 
         public double ImportMarginal(TradeExit e, double qInTick, EconParams p)
         {
-            double eff = Math.Max(0, -GroupSustained(e.Resource, e) + p.TradeTransientBeta * e.TransientB + qInTick);
+            double eff = Math.Max(0, Math.Max(-GroupSustained(e.Resource, e), qInTick)
+                                     + p.TradeTransientBeta * e.TransientB);
             double depth = double.IsInfinity(e.D) ? 0 : e.T * Math.Pow(eff / e.Rho, 1.0 / e.D);
             return e.Anchor + e.PerUnitHandling + depth;
         }
+
+        /// <summary>A capacity-capped exit running at ≥90% sustained utilization
+        /// cannot price the margin for Tier B/C bids or the parity overlay.</summary>
+        private static bool Saturated(TradeExit e)
+            => e.Capacity > 0 && Math.Abs(e.SustainedQ) >= 0.9 * e.Capacity;
 
         // ---- IPriceContext (what Tier B/C read) -----------------------------
 
@@ -128,7 +145,7 @@ namespace CS2Econ.Core
             for (int e = 0; e < _w.Exits.Count; e++)
             {
                 var x = _w.Exits[e];
-                if (x.Resource != r) continue;
+                if (x.Resource != r || Saturated(x)) continue;
                 double m = ImportMarginal(x, 0, _p) + _haulToExit[e][cluster];
                 if (m < import) import = m;
             }
@@ -142,7 +159,7 @@ namespace CS2Econ.Core
             for (int e = 0; e < _w.Exits.Count; e++)
             {
                 var x = _w.Exits[e];
-                if (x.Resource != r) continue;
+                if (x.Resource != r || Saturated(x)) continue;
                 double m = ExportMarginal(x, 0, _p) - _haulToExit[e][cluster];
                 if (m > best) best = m;
             }
@@ -263,7 +280,7 @@ namespace CS2Econ.Core
             for (int e = 0; e < _w.Exits.Count; e++)
             {
                 var x = _w.Exits[e];
-                if (x.Resource != r) continue;
+                if (x.Resource != r || Saturated(x)) continue;
                 lo = Math.Max(lo, ExportMarginal(x, 0, _p) - _haulToExit[e][cluster]);
                 hi = Math.Min(hi, ImportMarginal(x, 0, _p) + _haulToExit[e][cluster]);
             }

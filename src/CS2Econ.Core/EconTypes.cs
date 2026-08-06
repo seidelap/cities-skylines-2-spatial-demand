@@ -121,6 +121,7 @@ namespace CS2Econ.Core
         public double MigOutLagAlpha = 0.008;     // EMA lag on the out-migration signal
         public double RegionSize = 40_000;        // the shared "how big is the world" knob
         public double ReservationReplenish = 0.001;
+        public double MigFieldResponsiveness = 0.025; // threshold responds at RegionSize×this arrivals
         public double ProminenceScale = 60_000;   // city size at which field widening doubles
         public double NetworkMemoryDecay = 0.995;
         public double NetworkMemoryGain = 0.08;

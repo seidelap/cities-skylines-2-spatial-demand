@@ -34,6 +34,12 @@ namespace CS2Econ.Core
         public Migration.Flows LastFlows;
 
         private readonly List<int> _unhoused = new List<int>();
+        private readonly List<int> _aliveScratch = new List<int>();
+
+        /// <summary>True when Tier C actually charges money. Shadow mode and
+        /// TierC-off must be behaviorally inert: no charged assessments, no
+        /// assessment-driven displacement, no S-underpayment condition decay.</summary>
+        public bool Levying => Flags.TierC_LandAccounting && !Flags.ShadowAccountingOnly;
 
         public EconomyEngine(WorldState w, IAccessCosts costs, EconParams p, FeatureFlags flags)
         {
@@ -94,7 +100,10 @@ namespace CS2Econ.Core
                 double rate = Access.EmploymentRate[(int)seg.Labor][c] * seg.Participation;
                 // Epoch-hashed draw: employment persists ~60 ticks, then the job
                 // search re-rolls — a bad draw is a spell, not a life sentence.
-                ulong epoch = (ulong)(W.Tick / 60);
+                // The epoch boundary is offset per household (hashed), so there is
+                // no citywide re-roll tick (design §3; scrutiny finding #21).
+                long offset = (long)(SplitMix64.Hash((ulong)h.Id * 13UL) % 60UL);
+                ulong epoch = (ulong)((W.Tick + offset) / 60);
                 h.Employed = SplitMix64.Hash01((ulong)h.Id * 7919UL + epoch * 104729UL + 3) < rate;
             }
 
@@ -120,13 +129,19 @@ namespace CS2Econ.Core
             int pop = 0; foreach (var h in W.Households) if (h.ExitedTick < 0) pop++;
             ShelterCapacity = (int)(P.ShelterCapacityShare * Math.Max(200, pop));
 
-            // City-mean expected income per segment: what a newcomer can expect
-            // to earn once housed — the basis of arrival housing search.
+            // City-mean expected income per segment, population-weighted so empty
+            // map corners cannot dilute it (scrutiny finding #15) — what a
+            // newcomer can expect to earn once housed.
             for (int s2 = 0; s2 < Segment.Count; s2++)
             {
-                double sum = 0;
-                for (int c = 0; c < Access.C; c++) sum += Access.ExpectedIncome(s2, c, P);
-                MeanExpectedIncome[s2] = sum / Math.Max(1, Access.C);
+                double sum = 0, wsum = 0;
+                for (int c = 0; c < Access.C; c++)
+                {
+                    double wgt = 1 + W.HouseholdCountByCluster[c];
+                    sum += Access.ExpectedIncome(s2, c, P) * wgt;
+                    wsum += wgt;
+                }
+                MeanExpectedIncome[s2] = wsum > 0 ? sum / wsum : 0;
             }
         }
 
@@ -167,17 +182,26 @@ namespace CS2Econ.Core
                     W.Ledger.Transfer(Account.NationalCounterparty, Account.Households, transfer);
                 }
             }
-            double totalWages = wageByClass[0] + wageByClass[1] + wageByClass[2];
-            W.Ledger.Transfer(Account.Firms, Account.Households, totalWages);
             W.Ledger.Transfer(Account.Households, Account.Treasury, IncomeTaxThisTick);
 
-            // Charge firms: per class, pro-rata to filled slots.
+            // Charge firms: per class, pro-rata to filled slots. A class with no
+            // firm capacity behind it (stale rates after deaths) is paid by the
+            // outside world instead — the ledger and entity views must never
+            // diverge (scrutiny findings #4/#23).
             var filledTotals = new double[3];
             foreach (var f in W.Firms)
             {
                 if (f.Dead || f.Parcel < 0) continue;
                 FillFirm(f);
                 for (int cl = 0; cl < 3; cl++) filledTotals[cl] += f.FilledByClass[cl];
+            }
+            for (int cl = 0; cl < 3; cl++)
+            {
+                if (wageByClass[cl] <= 0) continue;
+                if (filledTotals[cl] > 1e-9)
+                    W.Ledger.Transfer(Account.Firms, Account.Households, wageByClass[cl]);
+                else
+                    W.Ledger.Transfer(Account.OutsideWorld, Account.Households, wageByClass[cl]);
             }
             foreach (var f in W.Firms)
             {
@@ -229,11 +253,10 @@ namespace CS2Econ.Core
                 totalCaptured += spend * capShare;
                 totalLeaked += spend * (1 - capShare);
             }
-            W.Ledger.Transfer(Account.Households, Account.OutsideWorld, totalLeaked);
-            W.Ledger.Transfer(Account.Households, Account.Firms, totalCaptured);
-
             // Distribute captured spending to commercial firms pro-rata to their
-            // capture strength (mass × per-mass capture at their cluster).
+            // capture strength (mass × per-mass capture at their cluster). With no
+            // commercial firm alive the "captured" share leaks outward too —
+            // credited money must land on real entities (scrutiny finding #5).
             double weightSum = 0;
             foreach (var f in W.Firms)
             {
@@ -241,6 +264,9 @@ namespace CS2Econ.Core
                 int c = W.Parcels[f.Parcel].Cluster;
                 weightSum += f.JobSlots * Access.CaptureIncumbentPerMass[c];
             }
+            if (weightSum <= 1e-9) { totalLeaked += totalCaptured; totalCaptured = 0; }
+            W.Ledger.Transfer(Account.Households, Account.OutsideWorld, totalLeaked);
+            W.Ledger.Transfer(Account.Households, Account.Firms, totalCaptured);
             if (weightSum > 1e-9)
                 foreach (var f in W.Firms)
                 {
@@ -254,28 +280,28 @@ namespace CS2Econ.Core
 
         private void HousingPayments()
         {
-            if (!Flags.TierC_LandAccounting || Flags.ShadowAccountingOnly)
-            {
-                // Shadow mode: assessments are computed and logged, nothing levied.
-                return;
-            }
+            if (!Levying) return;   // shadow: assessed + logged, nothing levied
             foreach (var h in W.Households)
             {
                 if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
                 var pl = W.Parcels[h.HomeParcel];
                 double owed = h.ChargedAssessment;
                 double sOwed = LandAccounting.SPerUnit(pl.Level, pl.Condition, P);
+                double structTaxOwed = LandAccounting.StructureTaxPerUnit(pl, P);
                 pl.OwedTickS += sOwed;
                 double pay = Math.Min(Math.Max(0, h.Money), owed);
                 h.Money -= pay;
                 if (pay < owed - 1e-9) h.StressTicks++;
                 else if (h.StressTicks > 0 && h.Money > 0) h.StressTicks--;
 
-                // Split the payment: S first (condition funding), then land.
+                // Split the payment: S first (condition funding), then the
+                // structure tax (treasury — split-rate leg, §4.3), then land.
                 double sPaid = Math.Min(pay, sOwed);
                 pl.PaidTickS += sPaid;
-                double land = pay - sPaid;
+                double structPaid = Math.Min(pay - sPaid, structTaxOwed);
+                double land = pay - sPaid - structPaid;
                 RouteStructureCharge(pl, sPaid);
+                if (structPaid > 0) W.Ledger.Transfer(Account.Households, Account.Treasury, structPaid);
                 RouteLandCharge(pl, land);
             }
         }
@@ -435,17 +461,20 @@ namespace CS2Econ.Core
             {
                 if (f.Dead || f.Parcel < 0) continue;
                 var pl = W.Parcels[f.Parcel];
-                if (Flags.TierC_LandAccounting && !Flags.ShadowAccountingOnly)
+                if (Levying)
                 {
                     double owed = LandAccounting.UnitAssessment(pl, P) * pl.Units;
                     double sOwed = LandAccounting.SPerUnit(pl.Level, pl.Condition, P) * pl.Units;
+                    double structTaxOwed = LandAccounting.StructureTaxPerUnit(pl, P) * pl.Units;
                     pl.OwedTickS += sOwed;
                     double pay = Math.Min(Math.Max(0, f.Money), owed);
                     f.Money -= pay;
                     double sPaid = Math.Min(pay, sOwed);
                     pl.PaidTickS += sPaid;
+                    double structPaid = Math.Min(pay - sPaid, structTaxOwed);
                     RouteFirmStructureCharge(pl, sPaid);
-                    RouteLandCharge(pl, pay - sPaid, fromFirm: true);
+                    if (structPaid > 0) W.Ledger.Transfer(Account.Firms, Account.Treasury, structPaid);
+                    RouteLandCharge(pl, pay - sPaid - structPaid, fromFirm: true);
                 }
                 f.ProfitEma = MathUtil.Ema(f.ProfitEma, f.RevenueThisTick, 0.05);
                 f.RevenueThisTick = 0; f.InputNeedThisTick = 0; f.OutputThisTick = 0;
@@ -568,16 +597,20 @@ namespace CS2Econ.Core
                     W.Households.Add(h);
                     W.Ledger.Transfer(Account.OutsideWorld, Account.Households, savings);
                 }
-                // Departures: draw from the segment, preferring stressed/loose ties.
+                // Departures: draw uniformly from the ALIVE members of the
+                // segment (an append-only list with exited households would bias
+                // and truncate the flow as the run ages — scrutiny findings #13/#24).
                 int departures = LastFlows.DeparturesBySegment[s];
                 if (departures > 0)
                 {
+                    _aliveScratch.Clear();
+                    foreach (var h in W.Households)
+                        if (h.ExitedTick < 0 && h.Segment == s) _aliveScratch.Add(h.Id);
                     int attempts = 0;
-                    while (departures > 0 && attempts++ < 200)
+                    while (departures > 0 && _aliveScratch.Count > 0 && attempts++ < 40)
                     {
-                        int idx = W.Rng.NextInt(W.Households.Count);
-                        var h = W.Households[idx];
-                        if (h.ExitedTick >= 0 || h.Segment != s) continue;
+                        var h = W.Households[_aliveScratch[W.Rng.NextInt(_aliveScratch.Count)]];
+                        if (h.ExitedTick >= 0) continue;
                         if (h.StressTicks == 0 && W.Rng.NextDouble() < 0.6) continue; // attachment
                         Allocation.Vacate(W, h);
                         if (h.Stage == InsolvencyStage.Sheltered) ShelterOccupied = Math.Max(0, ShelterOccupied - 1);
@@ -591,6 +624,14 @@ namespace CS2Econ.Core
 
         private void AnniversariesAndRelocation()
         {
+            if (!Levying)
+            {
+                // Nothing is charged: assessments are computed and logged but must
+                // not drive consumption, stress, or displacement (stage-3 shadow
+                // contract; scrutiny findings #2/#7/#18).
+                foreach (var h in W.Households) h.ChargedAssessment = 0;
+                return;
+            }
             int period = P.AssessmentPeriod;
             int phaseNow = (int)(W.Tick % period);
             foreach (var h in W.Households)
@@ -636,7 +677,10 @@ namespace CS2Econ.Core
             {
                 if (pl.State != ParcelState.Built || pl.Units == 0) continue;
                 double owedFull = LandAccounting.SPerUnit(pl.Level, pl.Condition, P) * pl.Units;
-                double paidFrac = owedFull > 1e-9 ? MathUtil.Clamp(pl.PaidTickS / owedFull, 0, 1) : 1;
+                // When Tier C levies nothing, S is treated as implicitly funded
+                // (vanilla-analog behavior): no decay from unpaid charges.
+                double paidFrac = !Levying ? 1
+                    : owedFull > 1e-9 ? MathUtil.Clamp(pl.PaidTickS / owedFull, 0, 1) : 1;
                 // Paying S holds condition; underpayment decays it (§4.3). The
                 // sinking fund is continuous renewal, so full payment = no decay.
                 pl.Condition = Math.Max(0.05, pl.Condition
@@ -648,7 +692,7 @@ namespace CS2Econ.Core
                 double vacantShare = pl.IsResidential
                     ? (double)pl.Vacant / pl.Units
                     : (pl.OccupantFirm < 0 ? 1.0 : 0.0);
-                if (vacantShare > 0 && pl.Escrow > 0 && Flags.TierC_LandAccounting && !Flags.ShadowAccountingOnly)
+                if (vacantShare > 0 && pl.Escrow > 0 && Levying)
                 {
                     double drain = Math.Min(pl.Escrow,
                         P.CaptureFraction * pl.AssessedLR * vacantShare);

@@ -19,9 +19,9 @@ namespace CS2Econ.Core
 
         /// <summary>Predicted time-to-fill (ticks) for one more unit of a use at a
         /// cluster, from residual demand vs typical absorption pace.</summary>
-        public static double TimeToFill(ResidualDemand residuals, int cluster, ZoneKind use, int units)
+        public static double TimeToFill(WorldState w, ResidualDemand residuals, int cluster, ZoneKind use, int units)
         {
-            double r = residuals.Get(cluster, use);
+            double r = residuals.Get(cluster, use, w.Claims);
             if (r <= 0) return double.PositiveInfinity;
             return units / r * 30.0;   // residual replenishes on roughly a 30-tick horizon
         }
@@ -35,8 +35,8 @@ namespace CS2Econ.Core
             if (pl.TargetIsScrape)
             {
                 int newUnits = LandAccounting.UnitsFor(pl.TargetUse);
-                cost = p.DemolitionPerUnit * pl.Units + p.RC(pl.TargetLevel, newUnits)
-                       - p.SalvageFraction * pl.Condition * p.RC(pl.Level, pl.Units);
+                cost = Math.Max(0, p.DemolitionPerUnit * pl.Units + p.RC(pl.TargetLevel, newUnits)
+                       - p.SalvageFraction * pl.Condition * p.RC(pl.Level, pl.Units));
             }
             else cost = Math.Max(0, p.RC(pl.TargetLevel, pl.Units) - pl.Condition * p.RC(pl.Level, pl.Units));
             return (gap, cost > 0 ? MathUtil.Clamp(pl.Escrow / cost, 0, 1) : 0);

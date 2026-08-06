@@ -61,8 +61,8 @@ namespace CS2Econ.Core
                 {
                     double vNow = pl.Condition * p.RC(pl.Level, pl.Units);
                     int newUnits = LandAccounting.UnitsFor(pl.TargetUse);
-                    double cost = p.DemolitionPerUnit * pl.Units + p.RC(pl.TargetLevel, newUnits)
-                                  - p.SalvageFraction * vNow;
+                    double cost = Math.Max(0, p.DemolitionPerUnit * pl.Units + p.RC(pl.TargetLevel, newUnits)
+                                  - p.SalvageFraction * vNow);
                     bool pressure = pl.Wedge > 0.15 * Math.Max(1e-9, Math.Abs(pl.CurrentResidual) + pl.Wedge);
                     pl.ScrapePressure = pressure ? pl.ScrapePressure + 1 : 0;
 
@@ -72,7 +72,15 @@ namespace CS2Econ.Core
 
                     if (pl.Warehousing && pl.OccupantHouseholds.Count == 0 && pl.OccupantFirm < 0)
                     {
-                        if (pl.Escrow >= cost)
+                        if (pl.Escrow < cost)
+                        {
+                            // The redevelopment attempt failed to stay funded
+                            // (vacancy drain while empty): cancel rather than
+                            // deadlock an unlettable ruin (scrutiny finding #17).
+                            pl.Warehousing = false;
+                            pl.ScrapePressure = 0;
+                        }
+                        else
                         {
                             pl.Escrow -= cost;
                             w.Ledger.Transfer(Account.Escrow, Account.PhantomDeveloper, cost);

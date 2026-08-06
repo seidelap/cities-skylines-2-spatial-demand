@@ -15,15 +15,19 @@ namespace CS2Econ.Harness
         {
             string cmd = args.Length > 0 ? args[0] : "all";
             ulong seed = 20260806;
+            string? only = null;
             for (int i = 1; i + 1 < args.Length; i += 2)
+            {
                 if (args[i] == "--seed") seed = ulong.Parse(args[i + 1]);
+                if (args[i] == "--only") only = args[i + 1];
+            }
 
             switch (cmd)
             {
                 case "verify":
                     return TestRunner.RunAll(seed, out _);
                 case "scenarios":
-                    return Scenarios.RunAll(seed, out _);
+                    return Scenarios.RunAll(seed, out _, only);
                 case "all":
                 {
                     int v = TestRunner.RunAll(seed, out var verifyMd);
