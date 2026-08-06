@@ -235,91 +235,9 @@ namespace CS2Econ.Harness
                     w.Parcels.Add(pl);
                 }
 
-            // ---- firms in prebuilt firm parcels ------------------------------
-            // Extractors mine the best raw under their cluster; seeded industry
-            // takes the recipe of the raw with the best suitability-weighted
-            // proximity (a static proxy for the live Weber choice entrants make),
-            // with a slice of Machinery near the center (multi-input chain).
-            Res SeedRecipeOutput(int cluster, ref SplitMix64 rng2)
-            {
-                double bestScore = double.NegativeInfinity; int bestRaw = 0;
-                for (int raw = 0; raw < ResourceCatalog.RawCount; raw++)
-                {
-                    double score = 0;
-                    for (int c2 = 0; c2 < C; c2++)
-                    {
-                        double suit = w.Clusters[c2].ResourceSuitability[raw];
-                        if (suit <= 0.05) continue;
-                        score = Math.Max(score, suit * Math.Exp(-0.06 * access.Cost(cluster, c2, AccessPurpose.Freight)));
-                    }
-                    if (score > bestScore) { bestScore = score; bestRaw = raw; }
-                }
-                if (rng2.NextDouble() < 0.12) return Res.Machinery;
-                return ResourceCatalog.Recipes[bestRaw].Output;   // recipes[i] consumes raw i
-            }
-            double firmMoney = 0;
-            foreach (var pl in w.Parcels)
-            {
-                if (pl.State != ParcelState.Built || pl.IsResidential) continue;
-                if (w.Rng.NextDouble() < 0.8)
-                {
-                    Res output = pl.Use switch
-                    {
-                        ZoneKind.Extractor => BestRawAt(w, pl.Cluster),
-                        ZoneKind.Industrial => SeedRecipeOutput(pl.Cluster, ref w.Rng),
-                        ZoneKind.Office => Res.OfficeOutput,
-                        _ => Res.Services,
-                    };
-                    if (pl.Use == ZoneKind.Extractor && w.Clusters[pl.Cluster].ResourceSuitability[(int)output] < 0.1)
-                        continue;   // no geology, no mine
-                    var f = new Firm
-                    {
-                        Id = w.Firms.Count, Sector = pl.Use, Parcel = pl.Id, Output = output,
-                        Money = 300, JobSlots = pl.Units,
-                    };
-                    w.Firms.Add(f);
-                    pl.OccupantFirm = f.Id;
-                    firmMoney += f.Money;
-                }
-            }
-
-            // ---- households into prebuilt residential ------------------------
-            var vacancies = new List<int>();
-            for (int i = 0; i < w.Parcels.Count; i++)
-            {
-                var pl = w.Parcels[i];
-                if (pl.State == ParcelState.Built && pl.IsResidential)
-                    for (int u = 0; u < pl.Units; u++) vacancies.Add(i);
-            }
-            // Shuffle deterministically.
-            for (int i = vacancies.Count - 1; i > 0; i--)
-            {
-                int j = w.Rng.NextInt(i + 1);
-                (vacancies[i], vacancies[j]) = (vacancies[j], vacancies[i]);
-            }
-
-            double hhMoney = 0;
-            int nSeed = Math.Min(cfg.SeedHouseholds, (int)(vacancies.Count * 0.92));
-            // Segment mix: families 45%, singles 25%, students 12%, seniors 18%.
-            double[] segShare = { 0.12, 0.13, 0.12, 0.16, 0.16, 0.13, 0.10, 0.08 };
-            for (int i = 0; i < nSeed; i++)
-            {
-                double roll = w.Rng.NextDouble(), acc2 = 0;
-                int seg = 0;
-                for (int s = 0; s < segShare.Length; s++) { acc2 += segShare[s]; if (roll < acc2) { seg = s; break; } }
-                int parcelId = vacancies[i];
-                var pl = w.Parcels[parcelId];
-                var h = new Household
-                {
-                    Id = w.Households.Count, Segment = seg, Money = 40 + 40 * w.Rng.NextDouble(),
-                    HomeParcel = parcelId, TenureStart = 0,
-                    MovingCostDraw = p.MovingCostMean * (0.4 + 1.2 * w.Rng.NextDouble())
-                                     * (pl.OwnerOccupied ? p.OwnerMovingCostMult : 1.0),
-                };
-                pl.OccupantHouseholds.Add(h.Id);
-                w.Households.Add(h);
-                hhMoney += h.Money;
-            }
+            // ---- firms + households (shared with CityImport) -----------------
+            double firmMoney = Seeding.SeedFirms(w, access);
+            double hhMoney = Seeding.SeedHouseholds(w, p, cfg.SeedHouseholds);
 
             // ---- trade exits -------------------------------------------------
             void AddExit(ExitMode mode, int cluster, Res res, double anchor, double t, double d,
@@ -380,6 +298,107 @@ namespace CS2Econ.Harness
                     Rho = p.RegionSize / 400.0,
                 });
             }
+        }
+    }
+
+    /// <summary>Population/firm seeding shared by SyntheticCity and CityImport —
+    /// moved verbatim out of SyntheticCity.Build so both builders consume the
+    /// world RNG in exactly the same order (acceptance suite depends on it).</summary>
+    internal static class Seeding
+    {
+        /// <summary>Firms into prebuilt firm parcels (shared by SyntheticCity and
+        /// CityImport). Extractors mine the best raw under their cluster; seeded
+        /// industry takes the recipe of the raw with the best suitability-weighted
+        /// proximity (a static proxy for the live Weber choice entrants make),
+        /// with a slice of Machinery (multi-input chain). Returns total firm money.</summary>
+        public static double SeedFirms(WorldState w, IAccessCosts access)
+        {
+            int C = w.Clusters.Length;
+            Res SeedRecipeOutput(int cluster, ref SplitMix64 rng2)
+            {
+                double bestScore = double.NegativeInfinity; int bestRaw = 0;
+                for (int raw = 0; raw < ResourceCatalog.RawCount; raw++)
+                {
+                    double score = 0;
+                    for (int c2 = 0; c2 < C; c2++)
+                    {
+                        double suit = w.Clusters[c2].ResourceSuitability[raw];
+                        if (suit <= 0.05) continue;
+                        score = Math.Max(score, suit * Math.Exp(-0.06 * access.Cost(cluster, c2, AccessPurpose.Freight)));
+                    }
+                    if (score > bestScore) { bestScore = score; bestRaw = raw; }
+                }
+                if (rng2.NextDouble() < 0.12) return Res.Machinery;
+                return ResourceCatalog.Recipes[bestRaw].Output;   // recipes[i] consumes raw i
+            }
+            double firmMoney = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.IsResidential) continue;
+                if (w.Rng.NextDouble() < 0.8)
+                {
+                    Res output = pl.Use switch
+                    {
+                        ZoneKind.Extractor => SyntheticCity.BestRawAt(w, pl.Cluster),
+                        ZoneKind.Industrial => SeedRecipeOutput(pl.Cluster, ref w.Rng),
+                        ZoneKind.Office => Res.OfficeOutput,
+                        _ => Res.Services,
+                    };
+                    if (pl.Use == ZoneKind.Extractor && w.Clusters[pl.Cluster].ResourceSuitability[(int)output] < 0.1)
+                        continue;   // no geology, no mine
+                    var f = new Firm
+                    {
+                        Id = w.Firms.Count, Sector = pl.Use, Parcel = pl.Id, Output = output,
+                        Money = 300, JobSlots = pl.Units,
+                    };
+                    w.Firms.Add(f);
+                    pl.OccupantFirm = f.Id;
+                    firmMoney += f.Money;
+                }
+            }
+            return firmMoney;
+        }
+
+        /// <summary>Households into prebuilt residential. Returns total household money.</summary>
+        public static double SeedHouseholds(WorldState w, EconParams p, int seedHouseholds)
+        {
+            var vacancies = new List<int>();
+            for (int i = 0; i < w.Parcels.Count; i++)
+            {
+                var pl = w.Parcels[i];
+                if (pl.State == ParcelState.Built && pl.IsResidential)
+                    for (int u = 0; u < pl.Units; u++) vacancies.Add(i);
+            }
+            // Shuffle deterministically.
+            for (int i = vacancies.Count - 1; i > 0; i--)
+            {
+                int j = w.Rng.NextInt(i + 1);
+                (vacancies[i], vacancies[j]) = (vacancies[j], vacancies[i]);
+            }
+
+            double hhMoney = 0;
+            int nSeed = Math.Min(seedHouseholds, (int)(vacancies.Count * 0.92));
+            // Segment mix: families 45%, singles 25%, students 12%, seniors 18%.
+            double[] segShare = { 0.12, 0.13, 0.12, 0.16, 0.16, 0.13, 0.10, 0.08 };
+            for (int i = 0; i < nSeed; i++)
+            {
+                double roll = w.Rng.NextDouble(), acc2 = 0;
+                int seg = 0;
+                for (int s = 0; s < segShare.Length; s++) { acc2 += segShare[s]; if (roll < acc2) { seg = s; break; } }
+                int parcelId = vacancies[i];
+                var pl = w.Parcels[parcelId];
+                var h = new Household
+                {
+                    Id = w.Households.Count, Segment = seg, Money = 40 + 40 * w.Rng.NextDouble(),
+                    HomeParcel = parcelId, TenureStart = 0,
+                    MovingCostDraw = p.MovingCostMean * (0.4 + 1.2 * w.Rng.NextDouble())
+                                     * (pl.OwnerOccupied ? p.OwnerMovingCostMult : 1.0),
+                };
+                pl.OccupantHouseholds.Add(h.Id);
+                w.Households.Add(h);
+                hhMoney += h.Money;
+            }
+            return hhMoney;
         }
     }
 }

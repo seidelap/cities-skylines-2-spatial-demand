@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using CS2Econ.Core;
 
@@ -132,72 +133,133 @@ namespace CS2Econ.Harness
             {
                 sim.Step();
                 if (w.Tick % 100 != 0) continue;
-
-                int pop = 0, housed = 0, shel = 0, employed = 0;
-                foreach (var h in w.Households)
-                    if (h.ExitedTick < 0)
-                    {
-                        pop++;
-                        if (h.HomeParcel >= 0) housed++;
-                        if (h.Stage == InsolvencyStage.Sheltered) shel++;
-                        if (h.Employed) employed++;
-                    }
-                double hhMoney = w.Ledger.Balance(Account.Households);
-                double firmMoney = w.Ledger.Balance(Account.Firms);
-                double treasury = w.Ledger.Balance(Account.Treasury);
-                double escrow = w.Ledger.Balance(Account.Escrow);
-
-                int built = 0, uc = 0, empty = 0;
-                var levelHist = new int[6];
-                double wedgeSum = 0, lrSum = 0; int occupiedRes = 0; double assessSum = 0;
-                foreach (var pl in w.Parcels)
-                {
-                    if (pl.State == ParcelState.Built) { built++; levelHist[pl.Level]++; }
-                    else if (pl.State == ParcelState.UnderConstruction) uc++;
-                    else empty++;
-                    wedgeSum += pl.Wedge; lrSum += pl.AssessedLR;
-                    if (pl.State == ParcelState.Built && pl.IsResidential && pl.OccupantHouseholds.Count > 0)
-                    { occupiedRes++; assessSum += LandAccounting.UnitAssessment(pl, p); }
-                }
-
-                double rawExp = 0, rawImp = 0, goodsExp = 0, goodsImp = 0, rawSust = 0, goodsSust = 0;
-                foreach (var x in w.Exits)
-                {
-                    if (ResourceCatalog.IsRaw(x.Resource)) { rawSust += x.SustainedQ; rawExp += x.ExportedThisTick; rawImp += x.ImportedThisTick; }
-                    if (ResourceCatalog.IsProcessed(x.Resource)) { goodsSust += x.SustainedQ; goodsExp += x.ExportedThisTick; goodsImp += x.ImportedThisTick; }
-                }
-
-                var aliveBySector = w.Firms.Where(x => !x.Dead).GroupBy(x => x.Sector)
-                    .ToDictionary(g => g.Key, g => (n: g.Count(), fill: g.Average(x => x.WorkersFilled / Math.Max(1, x.JobSlots)), money: g.Sum(x => x.Money)));
-                string FirmS(ZoneKind k) => aliveBySector.TryGetValue(k, out var v) ? $"{v.n}({v.fill:F1},{v.money:F0})" : "0";
-                double renoReady = 0, renoDone = w.RenovationsTotal; int renoCand = 0;
-                foreach (var pl in w.Parcels)
-                    if (pl.State == ParcelState.Built && !pl.TargetIsScrape && pl.TargetUse == pl.Use && pl.TargetLevel > pl.Level)
-                    {
-                        renoCand++;
-                        double cost = Math.Max(1, p.RC(pl.TargetLevel, pl.Units) - pl.Condition * p.RC(pl.Level, pl.Units));
-                        renoReady += Math.Min(1.0, pl.Escrow / cost);
-                    }
-                Console.WriteLine(
-                    $"  firms: com={FirmS(ZoneKind.Commercial)} ind={FirmS(ZoneKind.Industrial)} off={FirmS(ZoneKind.Office)} ext={FirmS(ZoneKind.Extractor)} | " +
-                    $"renoCand={renoCand} meanFill={(renoCand > 0 ? renoReady / renoCand : 0):P0} renos={renoDone} scrapes={w.ScrapesTotal}");
-                Console.WriteLine(
-                    $"t={w.Tick,5} pop={pop,6} housed={housed,6} emp={100.0 * employed / Math.Max(1, pop):F0}% shel={shel,4} | " +
-                    $"$hh={hhMoney:F0} $firm={firmMoney:F0} $trs={treasury:F0} $esc={escrow:F0} | " +
-                    $"built={built} uc={uc} empty={empty} L={string.Join(",", levelHist.Skip(1))} | " +
-                    $"starts={sim.Engine.Construction.StartedTotal} aband={sim.Engine.Construction.AbandonedTotal} | " +
-                    $"raw sust={rawSust:F0} x={rawExp:F0}/i={rawImp:F0} goods sust={goodsSust:F0} x={goodsExp:F0}/i={goodsImp:F0} | " +
-                    $"pOre={sim.Engine.Trade.LocalPrice(Res.Ore):F2} pMetals={sim.Engine.Trade.LocalPrice(Res.Metals):F2} | " +
-                    $"wedgeΣ={wedgeSum:F0} LRΣ={lrSum:F0} avgAssess={assessSum / Math.Max(1, occupiedRes):F2} | " +
-                    $"displ={sim.Engine.DisplacementExits.Count} " +
-                    $"arr={sim.Engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0} dep={sim.Engine.LastFlows.DeparturesBySegment?.Sum() ?? 0} " +
-                    $"drift={w.Ledger.Drift():E1}");
+                PrintTickSummary(w, sim.Engine, p);
             }
 
-            // Level-by-access snapshot
+            PrintLevelByAccess(w, sim.Engine);
+            return 0;
+        }
+
+        /// <summary>`harness map` — the same instrumented run on an imported real
+        /// road topology (.cs2city). Converts the committed TNTP source on first
+        /// use if the binary file is missing.</summary>
+        public static int MapRun(ulong seed, int ticks, string file)
+        {
+            var p = new EconParams();
+            if (!System.IO.File.Exists(file))
+            {
+                string net = System.IO.Path.Combine("data", "chicago-regional", "ChicagoRegional_net.tntp");
+                string node = System.IO.Path.Combine("data", "chicago-regional", "ChicagoRegional_node.tntp");
+                if (!System.IO.File.Exists(net) || !System.IO.File.Exists(node))
+                {
+                    Console.WriteLine($"map file not found: {file} (and no TNTP source in data/ to convert)");
+                    return 2;
+                }
+                Console.WriteLine($"converting {net} + {node} -> {file}");
+                CityImport.ConvertTntp(net, node, file);
+            }
+
+            var cfg = new CityImport.Options { Seed = seed };
+            var (w, access) = CityImport.BuildWorld(file, cfg, p);
+            var engine = new EconomyEngine(w, access, p, new FeatureFlags());
+
+            Console.WriteLine($"map: {file} — real road topology, economy template layered by geometry");
+            Console.WriteLine($"graph: {access.NodeCount} nodes, {access.EdgeCount} directed edges");
+            Console.WriteLine($"city: {w.Clusters.Length} clusters, {w.Parcels.Count} parcels, " +
+                              $"{w.Households.Count} households, {w.Firms.Count} firms, {w.Exits.Count} exits");
+
+            // Cluster stats: parcel density and the commute cost matrix spread.
+            var offDiag = new List<double>();
+            for (int i = 0; i < access.ClusterCount; i++)
+                for (int j = 0; j < access.ClusterCount; j++)
+                    if (i != j) offDiag.Add(access.Cost(i, j, AccessPurpose.Commute));
+            offDiag.Sort();
+            double p50 = offDiag[offDiag.Count / 2];
+            double p95 = offDiag[(int)(offDiag.Count * 0.95)];
+            Console.WriteLine($"clusters: {access.ClusterCount}, mean parcels/cluster={(double)w.Parcels.Count / access.ClusterCount:F1}, " +
+                              $"cost matrix p50={p50:F1} min p95={p95:F1} min");
+
+            for (int t = 0; t < ticks; t++)
+            {
+                engine.Step();
+                if (w.Tick % 100 != 0) continue;
+                PrintTickSummary(w, engine, p);
+            }
+
+            PrintLevelByAccess(w, engine);
+            return 0;
+        }
+
+        /// <summary>The per-100-ticks status block shared by `debug` and `map`.</summary>
+        private static void PrintTickSummary(WorldState w, EconomyEngine engine, EconParams p)
+        {
+            int pop = 0, housed = 0, shel = 0, employed = 0;
+            foreach (var h in w.Households)
+                if (h.ExitedTick < 0)
+                {
+                    pop++;
+                    if (h.HomeParcel >= 0) housed++;
+                    if (h.Stage == InsolvencyStage.Sheltered) shel++;
+                    if (h.Employed) employed++;
+                }
+            double hhMoney = w.Ledger.Balance(Account.Households);
+            double firmMoney = w.Ledger.Balance(Account.Firms);
+            double treasury = w.Ledger.Balance(Account.Treasury);
+            double escrow = w.Ledger.Balance(Account.Escrow);
+
+            int built = 0, uc = 0, empty = 0;
+            var levelHist = new int[6];
+            double wedgeSum = 0, lrSum = 0; int occupiedRes = 0; double assessSum = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State == ParcelState.Built) { built++; levelHist[pl.Level]++; }
+                else if (pl.State == ParcelState.UnderConstruction) uc++;
+                else empty++;
+                wedgeSum += pl.Wedge; lrSum += pl.AssessedLR;
+                if (pl.State == ParcelState.Built && pl.IsResidential && pl.OccupantHouseholds.Count > 0)
+                { occupiedRes++; assessSum += LandAccounting.UnitAssessment(pl, p); }
+            }
+
+            double rawExp = 0, rawImp = 0, goodsExp = 0, goodsImp = 0, rawSust = 0, goodsSust = 0;
+            foreach (var x in w.Exits)
+            {
+                if (ResourceCatalog.IsRaw(x.Resource)) { rawSust += x.SustainedQ; rawExp += x.ExportedThisTick; rawImp += x.ImportedThisTick; }
+                if (ResourceCatalog.IsProcessed(x.Resource)) { goodsSust += x.SustainedQ; goodsExp += x.ExportedThisTick; goodsImp += x.ImportedThisTick; }
+            }
+
+            var aliveBySector = w.Firms.Where(x => !x.Dead).GroupBy(x => x.Sector)
+                .ToDictionary(g => g.Key, g => (n: g.Count(), fill: g.Average(x => x.WorkersFilled / Math.Max(1, x.JobSlots)), money: g.Sum(x => x.Money)));
+            string FirmS(ZoneKind k) => aliveBySector.TryGetValue(k, out var v) ? $"{v.n}({v.fill:F1},{v.money:F0})" : "0";
+            double renoReady = 0, renoDone = w.RenovationsTotal; int renoCand = 0;
+            foreach (var pl in w.Parcels)
+                if (pl.State == ParcelState.Built && !pl.TargetIsScrape && pl.TargetUse == pl.Use && pl.TargetLevel > pl.Level)
+                {
+                    renoCand++;
+                    double cost = Math.Max(1, p.RC(pl.TargetLevel, pl.Units) - pl.Condition * p.RC(pl.Level, pl.Units));
+                    renoReady += Math.Min(1.0, pl.Escrow / cost);
+                }
+            Console.WriteLine(
+                $"  firms: com={FirmS(ZoneKind.Commercial)} ind={FirmS(ZoneKind.Industrial)} off={FirmS(ZoneKind.Office)} ext={FirmS(ZoneKind.Extractor)} | " +
+                $"renoCand={renoCand} meanFill={(renoCand > 0 ? renoReady / renoCand : 0):P0} renos={renoDone} scrapes={w.ScrapesTotal}");
+            Console.WriteLine(
+                $"t={w.Tick,5} pop={pop,6} housed={housed,6} emp={100.0 * employed / Math.Max(1, pop):F0}% shel={shel,4} | " +
+                $"$hh={hhMoney:F0} $firm={firmMoney:F0} $trs={treasury:F0} $esc={escrow:F0} | " +
+                $"built={built} uc={uc} empty={empty} L={string.Join(",", levelHist.Skip(1))} | " +
+                $"starts={engine.Construction.StartedTotal} aband={engine.Construction.AbandonedTotal} | " +
+                $"raw sust={rawSust:F0} x={rawExp:F0}/i={rawImp:F0} goods sust={goodsSust:F0} x={goodsExp:F0}/i={goodsImp:F0} | " +
+                $"pOre={engine.Trade.LocalPrice(Res.Ore):F2} pMetals={engine.Trade.LocalPrice(Res.Metals):F2} | " +
+                $"wedgeΣ={wedgeSum:F0} LRΣ={lrSum:F0} avgAssess={assessSum / Math.Max(1, occupiedRes):F2} | " +
+                $"displ={engine.DisplacementExits.Count} " +
+                $"arr={engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0} dep={engine.LastFlows.DeparturesBySegment?.Sum() ?? 0} " +
+                $"drift={w.Ledger.Drift():E1}");
+        }
+
+        /// <summary>End-of-run snapshot shared by `debug` and `map`.</summary>
+        private static void PrintLevelByAccess(WorldState w, EconomyEngine engine)
+        {
             Console.WriteLine("\nlevel vs access-rank (built residential):");
             var rows = w.Parcels.Where(x => x.State == ParcelState.Built && x.IsResidential)
-                .Select(x => (x.Level, acc: Enumerable.Range(0, Segment.Count).Sum(s => sim.Engine.Access.AccessValue[s][x.Cluster])))
+                .Select(x => (x.Level, acc: Enumerable.Range(0, Segment.Count).Sum(s => engine.Access.AccessValue[s][x.Cluster])))
                 .OrderBy(x => x.acc).ToList();
             int q = Math.Max(1, rows.Count / 5);
             for (int i = 0; i < 5; i++)
@@ -206,7 +268,6 @@ namespace CS2Econ.Harness
                 if (slice.Count > 0)
                     Console.WriteLine($"  access quintile {i + 1}: mean level {slice.Average(x => x.Level):F2} (n={slice.Count})");
             }
-            return 0;
         }
     }
 }
