@@ -62,8 +62,22 @@ namespace CS2Econ.Harness
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.FirmDiag(seed, ticks);
                 }
+                case "map":
+                {
+                    // Real-map run: economy on an imported .cs2city road graph
+                    // (default: the committed Chicago Regional network, converted
+                    // from TNTP on first use).
+                    int ticks = 400;
+                    string file = Path.Combine("data", "chicago-regional.cs2city");
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                        if (args[i] == "--file") file = args[i + 1];
+                    }
+                    return Debugging.MapRun(seed, ticks, file);
+                }
                 default:
-                    Console.WriteLine("usage: harness [verify|scenarios|all|debug] [--seed N] [--ticks N]");
+                    Console.WriteLine("usage: harness [verify|scenarios|all|debug|map] [--seed N] [--ticks N] [--file path.cs2city]");
                     return 2;
             }
         }
