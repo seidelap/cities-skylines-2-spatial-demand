@@ -9,6 +9,102 @@ namespace CS2Econ.Harness
     /// the quantities the acceptance tests depend on. Tuning aid, not a test.</summary>
     public static class Debugging
     {
+        /// <summary>`harness vacprobe` — replicates the vacancy-localization
+        /// scenario's setup and prints the overhang's life cycle every 10
+        /// ticks: does the shock create persistent vacancies, does the kernel
+        /// drive residual negative in the shocked set, and what refills it
+        /// (arrivals vs internal chain moves)?</summary>
+        public static int VacProbe(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000, ParcelsPerCluster = 14 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(100);
+            var w = sim.W;
+            // Soft market: the reservation field at equilibrium (gap ≈ ε), the
+            // design's own §4.1 soft-landing state — desired inflow ≈ replacement.
+            for (int s = 0; s < Segment.Count; s++)
+                w.Migration.ReservationThreshold[s] = Math.Max(0,
+                    w.Migration.SegmentAttractEma[s] - Migration.BaseOutsideUtility - 0.02);
+
+            // Mirror the scenario's disk shock exactly.
+            double mx = 0, my = 0;
+            foreach (var ci in w.Clusters) { mx += ci.X; my += ci.Y; }
+            mx /= w.Clusters.Length; my /= w.Clusters.Length;
+            double sxq = mx + 2800.0 / w.MetersPerUnit;
+            var shocked = new HashSet<int>();
+            for (int c = 0; c < w.Clusters.Length; c++)
+            {
+                double dx = (w.Clusters[c].X - sxq) * w.MetersPerUnit;
+                double dy = (w.Clusters[c].Y - my) * w.MetersPerUnit;
+                if (Math.Sqrt(dx * dx + dy * dy) <= 2500.0) shocked.Add(c);
+            }
+            int evictedN = 0;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
+                var pl = w.Parcels[h.HomeParcel];
+                if (!shocked.Contains(pl.Cluster)) continue;
+                if (SplitMix64.Hash01((ulong)h.Id * 31 + seed) < 0.95)
+                {
+                    sim.Engine.Allocation.Vacate(w, h);
+                    w.Ledger.Transfer(Account.Households, Account.OutsideWorld, Math.Max(0, h.Money));
+                    h.Money = 0; h.ExitedTick = w.Tick;
+                    evictedN++;
+                }
+            }
+            Console.WriteLine($"shock applied: {evictedN} evicted over {shocked.Count} disk clusters");
+            var reported = new HashSet<int>();
+
+            long from = w.Tick;
+            int startsShocked = 0, startsFar = 0, arrivalsCum = 0;
+            sim.Run(ticks, s =>
+            {
+                arrivalsCum += s.Engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0;
+                // Forensics: report each in-disk residential start once, with
+                // the cluster residual at that moment.
+                foreach (var (tick, pid, cluster) in sim.Starts)
+                {
+                    if (tick <= from || !shocked.Contains(cluster) || !reported.Add(pid)) continue;
+                    var sp = s.W.Parcels[pid];
+                    if (sp.Use != ZoneKind.ResidentialLow && sp.Use != ZoneKind.ResidentialHigh) continue;
+                    double r = s.Engine.Residuals.Get(cluster, sp.Use, s.W.Claims);
+                    Console.WriteLine($"    START t+{tick - from} parcel={pid} cl={cluster} use={sp.Use} " +
+                                      $"lvl={sp.Level} units={sp.Units} resid({sp.Use})={r:F1}");
+                }
+                if ((s.W.Tick - from) % 10 != 0) return;
+                double vacShocked = 0, vacFar = 0;
+                foreach (var pl in s.W.Parcels)
+                    if (pl.State == ParcelState.Built && pl.IsResidential)
+                    { if (shocked.Contains(pl.Cluster)) vacShocked += pl.Vacant; else vacFar += pl.Vacant; }
+                double resShocked = 0, resFar = 0;
+                int nS = 0, nF = 0;
+                for (int c = 0; c < s.Engine.Access.C; c++)
+                {
+                    double r = s.Engine.Residuals.Get(c, ZoneKind.ResidentialLow, s.W.Claims)
+                             + s.Engine.Residuals.Get(c, ZoneKind.ResidentialHigh, s.W.Claims);
+                    if (shocked.Contains(c)) { resShocked += r; nS++; } else { resFar += r; nF++; }
+                }
+                startsShocked = 0; startsFar = 0;
+                foreach (var (tick, pid, cluster) in sim.Starts)
+                {
+                    if (tick <= from) continue;
+                    var pl = s.W.Parcels[pid];
+                    if (!pl.IsResidential && pl.Use != ZoneKind.ResidentialLow && pl.Use != ZoneKind.ResidentialHigh) continue;
+                    if (shocked.Contains(cluster)) startsShocked++; else startsFar++;
+                }
+                int unhoused = 0;
+                foreach (var h in s.W.Households) if (h.ExitedTick < 0 && h.HomeParcel < 0) unhoused++;
+                double desired = s.Engine.LastFlows.DesiredBySegment?.Sum() ?? 0;
+                Console.WriteLine(
+                    $"t+{s.W.Tick - from,4} vacS={vacShocked,5:F0} vacF={vacFar,5:F0} " +
+                    $"resS/cl={(nS > 0 ? resShocked / nS : 0),7:F1} resF/cl={(nF > 0 ? resFar / nF : 0),7:F1} " +
+                    $"unhoused={unhoused,4} desired={desired,6:F1}/t arrCum={arrivalsCum,5} " +
+                    $"startsS={startsShocked,3} startsF={startsFar,4}");
+            });
+            return 0;
+        }
+
         /// <summary>`harness firmdiag` — firm-level A/B: demand-informed siting
         /// (spatial) vs geography-blind spawning (vanilla) on identical seeds.
         /// Answers: do shops sit where demand is, are they meeting real demand

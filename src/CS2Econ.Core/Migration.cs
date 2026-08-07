@@ -52,6 +52,11 @@ namespace CS2Econ.Core
         {
             public int[] ArrivalsBySegment;
             public int[] DeparturesBySegment;
+            /// <summary>Pre-cap desired inflow RATE per segment (households/tick).
+            /// Arrivals the absorption budget deferred still queue as demand
+            /// pressure: residual demand reads THIS, so construction sees the
+            /// queue at the border — realized arrivals wait for units.</summary>
+            public double[] DesiredBySegment;
         }
 
         public static Flows Step(
@@ -64,6 +69,7 @@ namespace CS2Econ.Core
             {
                 ArrivalsBySegment = new int[nSeg],
                 DeparturesBySegment = new int[nSeg],
+                DesiredBySegment = new double[nSeg],
             };
 
             int cityPop = 0;
@@ -72,6 +78,19 @@ namespace CS2Econ.Core
             double prominence = endogenousOutside ? 1.0 + cityPop / p.ProminenceScale : 1.0;
             double netInflowThisTick = 0;
 
+            // Absorption budget (the vacancy field's volume integral × the fill
+            // hazard): arrivals per tick are capped by how fast the standing
+            // vacant stock can actually lease up — the kernel's V = 1 makes the
+            // citywide budget simply hazard × vacant units. One brake, both
+            // outside-world modes; replaces the old flat 1%/tick clamp.
+            double vacantUnits = 0;
+            foreach (var pl in w.Parcels)
+                if (pl.State == ParcelState.Built && pl.IsResidential && !pl.Warehousing)
+                    vacantUnits += pl.Vacant;
+            double arrivalBudget = p.VacancyFillHazard * vacantUnits;
+
+            // Pass 1: desired inflow per segment (uncapped Rosen–Roback gap).
+            double desiredTotal = 0;
             for (int s = 0; s < nSeg; s++)
             {
                 double attract = Attractiveness(w, acc, s, avgRentBySeg[s], homelessShare, p);
@@ -80,17 +99,21 @@ namespace CS2Econ.Core
                 double outsideU = BaseOutsideUtility + (endogenousOutside ? m.ReservationThreshold[s] : 0);
                 // The design's inflow is LAGGED: word travels before people move.
                 double gap = m.SegmentAttractEma[s] - outsideU;
+                double desired = p.MigInElasticity * Math.Max(0, gap) * popScale * prominence
+                                 * (1.0 + (endogenousOutside ? m.NetworkMemory : 0));
+                flows.DesiredBySegment[s] = desired;
+                desiredTotal += desired;
+            }
 
-                // In-migration: faster than outflow, widened by prominence,
-                // momentum from network memory (chain migration).
-                double inRate = p.MigInElasticity * Math.Max(0, gap) * popScale * prominence
-                                * (1.0 + (endogenousOutside ? m.NetworkMemory : 0));
-                // With the endogenous outside world OFF there is no reservation
-                // threshold to equilibrate, so a physical absorption cap (~1%/tick
-                // citywide) is the only brake. Tier A's own brake is the threshold.
-                if (!endogenousOutside)
-                    inRate = Math.Min(inRate, 0.01 * popScale / Segment.Count);
+            // Pass 2: ration the budget pro-rata; draw realized flows.
+            double scale = desiredTotal > arrivalBudget && desiredTotal > 1e-9
+                ? arrivalBudget / desiredTotal : 1.0;
+            for (int s = 0; s < nSeg; s++)
+            {
+                double inRate = flows.DesiredBySegment[s] * scale;
                 // Out-migration: responds to a LAGGED signal, lower elasticity.
+                double outsideU = BaseOutsideUtility + (endogenousOutside ? m.ReservationThreshold[s] : 0);
+                double gap = m.SegmentAttractEma[s] - outsideU;
                 m.OutSignalEma[s] = MathUtil.Ema(m.OutSignalEma[s], Math.Max(0, -gap), p.MigOutLagAlpha);
                 double outRate = p.MigOutElasticity * m.OutSignalEma[s] * popScale;
 
@@ -103,6 +126,7 @@ namespace CS2Econ.Core
                     // Reservation threshold: drawdown of the regional migration
                     // field by cumulative NET in-migration (§4.1 — return flow
                     // replenishes the field), decaying replenishment over time.
+                    // REALIZED net, not desired: only actual moves draw it down.
                     double net = flows.ArrivalsBySegment[s] - flows.DeparturesBySegment[s];
                     m.ReservationThreshold[s] += net / (p.RegionSize * p.MigFieldResponsiveness);
                     m.ReservationThreshold[s] = Math.Max(0, m.ReservationThreshold[s] * (1.0 - p.ReservationReplenish));

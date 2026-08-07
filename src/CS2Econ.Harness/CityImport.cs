@@ -457,7 +457,10 @@ namespace CS2Econ.Harness
         {
             var g = CityGraph.Read(path);
             var access = new ImportedAccess(g, cfg.TargetClustersLo, cfg.TargetClustersHi);
-            var w = new WorldState { Rng = new SplitMix64(cfg.Seed) };
+            // TNTP planar coordinates are state-plane FEET (Chicago Regional
+            // bbox ≈ 439k × 606k units ≈ 134 × 185 km) — the vacancy kernel's
+            // λ is in real meters.
+            var w = new WorldState { Rng = new SplitMix64(cfg.Seed), MetersPerUnit = 0.3048 };
             int C = access.ClusterCount;
 
             // Node-weighted city centroid + per-cluster normalized radius.

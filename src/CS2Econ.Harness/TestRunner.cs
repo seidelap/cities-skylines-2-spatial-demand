@@ -29,7 +29,8 @@ namespace CS2Econ.Harness
             InteriorOptimum();
             TradeLaws(seed);
             WeberRecipeChoice(seed);
-            Staggering();
+            VacancyKernelConservation(seed);
+            CoopInstantRerate(seed);
             CircularityGuard(seed);
             LedgerConservation(seed);
             ShadowMode(seed);
@@ -175,51 +176,60 @@ namespace CS2Econ.Harness
         {
             // Resource-level spatial economics: extraction follows geology, and
             // industry's recipe choice follows input sourcing costs (§4.2 Weber).
+            // Two sims, one per margin — each measured where its sector is
+            // economically viable (this check tests location-choice ALIGNMENT,
+            // not sector viability): extractors need the ExtractorHeavy ore
+            // region to survive absorption-paced growth; industry thrives on
+            // the plain config where extraction is marginal.
             var p = new EconParams();
-            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 6000 };
-            var sim = Sim.Create(cfg, p, new FeatureFlags());
-            sim.Run(300);
-            var w = sim.W;
+            var simInd = Sim.Create(new SyntheticCity.Config { Seed = seed, SeedHouseholds = 6000 },
+                                    p, new FeatureFlags());
+            simInd.Run(300);
+            var simExt = Sim.Create(new SyntheticCity.Config
+                                    { Seed = seed, SeedHouseholds = 6000, ExtractorHeavy = true, ExtractorPrebuilt = 0.25 },
+                                    p, new FeatureFlags());
+            simExt.Run(300);
 
             int extract = 0, extractRight = 0;
+            foreach (var f in simExt.W.Firms)
+            {
+                if (f.Dead || f.Parcel < 0 || f.Sector != ZoneKind.Extractor) continue;
+                int c = simExt.W.Parcels[f.Parcel].Cluster;
+                extract++;
+                // Geology oracle (seeds) or value-weighted geology oracle
+                // (entrants price the output too — mining the slightly less
+                // abundant but dearer raw is correct economics).
+                int bestBySuit = 0, bestByValue = 0; double bs = -1, bv = -1;
+                for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
+                {
+                    double suit = simExt.W.Clusters[c].ResourceSuitability[rr];
+                    if (suit > bs) { bs = suit; bestBySuit = rr; }
+                    double val = suit * Math.Max(simExt.Engine.Trade.LocalPrice((Res)rr),
+                                                 simExt.Engine.Trade.BestExportNet((Res)rr, c));
+                    if (val > bv) { bv = val; bestByValue = rr; }
+                }
+                if ((int)f.Output == bestBySuit || (int)f.Output == bestByValue) extractRight++;
+            }
+
             int ind = 0, indAligned = 0;
             var outputsSeen = new HashSet<Res>();
-            foreach (var f in w.Firms)
+            foreach (var f in simInd.W.Firms)
             {
-                if (f.Dead || f.Parcel < 0) continue;
-                int c = w.Parcels[f.Parcel].Cluster;
-                if (f.Sector == ZoneKind.Extractor)
-                {
-                    extract++;
-                    // Geology oracle (seeds) or value-weighted geology oracle
-                    // (entrants price the output too — mining the slightly less
-                    // abundant but dearer raw is correct economics).
-                    int bestBySuit = 0, bestByValue = 0; double bs = -1, bv = -1;
-                    for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
-                    {
-                        double suit = w.Clusters[c].ResourceSuitability[rr];
-                        if (suit > bs) { bs = suit; bestBySuit = rr; }
-                        double val = suit * Math.Max(sim.Engine.Trade.LocalPrice((Res)rr),
-                                                     sim.Engine.Trade.BestExportNet((Res)rr, c));
-                        if (val > bv) { bv = val; bestByValue = rr; }
-                    }
-                    if ((int)f.Output == bestBySuit || (int)f.Output == bestByValue) extractRight++;
-                }
-                else if (f.Sector == ZoneKind.Industrial)
-                {
-                    outputsSeen.Add(f.Output);
-                    if (f.Output == Res.Machinery) continue;   // multi-input: no single cheapest raw
-                    ind++;
-                    // The chosen recipe's raw should be the locally cheapest raw
-                    // to deliver (allowing a 15% tolerance band for ties).
-                    var recipe = ResourceCatalog.RecipeFor(f.Output);
-                    double own = sim.Engine.Trade.DeliveredCost(recipe.Inputs[0].res, c);
-                    double cheapest = double.PositiveInfinity;
-                    for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
-                        cheapest = Math.Min(cheapest, sim.Engine.Trade.DeliveredCost((Res)rr, c));
-                    if (own <= cheapest * 1.15 + 0.05) indAligned++;
-                }
+                if (f.Dead || f.Parcel < 0 || f.Sector != ZoneKind.Industrial) continue;
+                int c = simInd.W.Parcels[f.Parcel].Cluster;
+                outputsSeen.Add(f.Output);
+                if (f.Output == Res.Machinery) continue;   // multi-input: no single cheapest raw
+                ind++;
+                // The chosen recipe's raw should be the locally cheapest raw
+                // to deliver (allowing a 15% tolerance band for ties).
+                var recipe = ResourceCatalog.RecipeFor(f.Output);
+                double own = simInd.Engine.Trade.DeliveredCost(recipe.Inputs[0].res, c);
+                double cheapest = double.PositiveInfinity;
+                for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
+                    cheapest = Math.Min(cheapest, simInd.Engine.Trade.DeliveredCost((Res)rr, c));
+                if (own <= cheapest * 1.15 + 0.05) indAligned++;
             }
+
             double extractShare = extract > 0 ? (double)extractRight / extract : 0;
             double indShare = ind > 0 ? (double)indAligned / ind : 0;
             Check("Weber: extraction follows geology; recipes follow input sourcing",
@@ -228,22 +238,118 @@ namespace CS2Econ.Harness
                   $"({indShare:P0} on cheapest-sourced recipe); {outputsSeen.Count} distinct industrial outputs");
         }
 
-        private static void Staggering()
+        private static void VacancyKernelConservation(ulong seed)
         {
+            // The kernel's defining property: one vacant unit cancels EXACTLY
+            // one unit of residual demand citywide (V = 1), and the cancellation
+            // is nearer where the vacancy is. Refresh twice on identical demand
+            // inputs, differing only by evicting K households in one cluster.
             var p = new EconParams();
-            int period = p.AssessmentPeriod;
-            var buckets = new int[period];
-            int n = 20000;
-            for (int id = 0; id < n; id++)
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(80);
+            var w = sim.W;
+            var eng = sim.Engine;
+
+            var seekers = (double[])eng.SeekersEma.Clone();
+            var res = new ResidualDemand();
+            res.Refresh(w, eng.Access, eng.Trade, seekers, eng.SegmentPresence, p);
+            var before = new double[6][];
+            for (int u = 0; u < 6; u++) before[u] = (double[])res.ByUse[u].Clone();
+
+            // Evict from the DENSEST residential cluster (needs enough
+            // occupants to make a measurable shock).
+            var occByCluster = new int[eng.Access.C];
+            foreach (var pl in w.Parcels)
+                if (pl.State == ParcelState.Built && pl.IsResidential)
+                    occByCluster[pl.Cluster] += pl.OccupantHouseholds.Count;
+            int shockCluster = 0;
+            for (int c = 1; c < eng.Access.C; c++)
+                if (occByCluster[c] > occByCluster[shockCluster]) shockCluster = c;
+            int evicted = 0;
+            foreach (var pl in w.Parcels)
             {
-                var h = new Household { Id = id };
-                buckets[h.AnniversaryPhase(period)]++;
+                if (pl.Cluster != shockCluster || pl.State != ParcelState.Built || !pl.IsResidential) continue;
+                while (pl.OccupantHouseholds.Count > 0 && evicted < 60)
+                {
+                    int hid = pl.OccupantHouseholds[pl.OccupantHouseholds.Count - 1];
+                    pl.OccupantHouseholds.RemoveAt(pl.OccupantHouseholds.Count - 1);
+                    w.Households[hid].HomeParcel = -1;
+                    evicted++;
+                }
+                if (evicted >= 60) break;
             }
-            double mean = (double)n / period;
-            int max = buckets.Max(), min = buckets.Min();
-            Check("assessment anniversaries uniform, never synchronized (§3)",
-                  max < 1.35 * mean && min > 0.65 * mean,
-                  $"bucket range [{min},{max}] vs mean {mean:F0}");
+            res.Refresh(w, eng.Access, eng.Trade, seekers, eng.SegmentPresence, p);
+
+            // V=1: total suppression == evicted units exactly. Localization is
+            // a DENSITY statement (suppression per cluster falls with
+            // distance) — aggregates would compare ~8 near clusters against
+            // ~90 far ones and drown the gradient in the far tail's headcount.
+            double totalDiff = 0, nearDiff = 0, farDiff = 0;
+            int nearN = 0, farN = 0;
+            double sx = w.Clusters[shockCluster].X, sy = w.Clusters[shockCluster].Y;
+            for (int c = 0; c < eng.Access.C; c++)
+            {
+                double d = 0;
+                for (int u = 0; u < 6; u++) d += before[u][c] - res.ByUse[u][c];
+                totalDiff += d;
+                double dx = (w.Clusters[c].X - sx) * w.MetersPerUnit;
+                double dy = (w.Clusters[c].Y - sy) * w.MetersPerUnit;
+                double dist = Math.Sqrt(dx * dx + dy * dy);
+                if (dist <= 1.5 * p.VacancyKernelLambdaM) { nearDiff += d; nearN++; }
+                else { farDiff += d; farN++; }
+            }
+            double nearDensity = nearN > 0 ? nearDiff / nearN : 0;
+            double farDensity = farN > 0 ? farDiff / farN : 0;
+            Check("vacancy kernel: V=1 conservation, suppression density falls with distance",
+                  evicted >= 30 && Math.Abs(totalDiff - evicted) < 1e-6
+                  && nearDensity > 4.0 * Math.Max(1e-9, farDensity),
+                  $"evicted {evicted} → total suppression {totalDiff:F6}; per-cluster density " +
+                  $"within 1.5λ: {nearDensity:F3} (n={nearN}), beyond: {farDensity:F3} (n={farN})");
+        }
+
+        private static void CoopInstantRerate(ulong seed)
+        {
+            // Co-op assessment: every housed household is charged its parcel's
+            // CURRENT market unit assessment — uniform across co-tenants,
+            // no anniversaries, no phase-in lag.
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 8, Rows = 8, SeedHouseholds = 1500, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());   // all tiers live
+            sim.Run(90);
+            var w = sim.W;
+            // Two invariants: (a) co-tenants pay EXACTLY the same (one price
+            // per unit — the co-op property, bit-checkable because the whole
+            // parcel re-rates in one pass); (b) every charge tracks the live
+            // market assessment tightly (a ≤1-tick lag exists by construction:
+            // charges are set before the same tick's condition decay).
+            int housed = 0, uniformParcels = 0, parcelsWithMulti = 0;
+            double worstRel = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || !pl.IsResidential) continue;
+                double first = double.NaN; bool uniform = true;
+                foreach (int hid in pl.OccupantHouseholds)
+                {
+                    var h = w.Households[hid];
+                    housed++;
+                    if (double.IsNaN(first)) first = h.ChargedAssessment;
+                    else if (h.ChargedAssessment != first) uniform = false;
+                    double target = LandAccounting.UnitAssessment(pl, p);
+                    if (target > 1e-9)
+                        worstRel = Math.Max(worstRel, Math.Abs(h.ChargedAssessment - target) / target);
+                }
+                if (pl.OccupantHouseholds.Count >= 2)
+                {
+                    parcelsWithMulti++;
+                    if (uniform) uniformParcels++;
+                }
+            }
+            Check("co-op re-rate: one price per unit, tracking the live market assessment",
+                  housed > 200 && parcelsWithMulti > 20 && uniformParcels == parcelsWithMulti
+                  && worstRel < 0.01,
+                  $"{uniformParcels}/{parcelsWithMulti} multi-tenant parcels uniform; " +
+                  $"worst |charged − market|/market = {worstRel:E1}");
         }
 
         private static void CircularityGuard(ulong seed)

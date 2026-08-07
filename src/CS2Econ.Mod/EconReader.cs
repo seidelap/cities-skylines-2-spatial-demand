@@ -130,7 +130,8 @@ namespace CS2Econ.Mod
                 throw new InvalidOperationException(
                     "ClusterAccessProvider.RebuildClusters must run before EconReader.BuildInitial.");
 
-            var w = new WorldState { Rng = new SplitMix64(seed) };
+            // CS2 world units ARE meters — the vacancy kernel's λ needs no scale.
+            var w = new WorldState { Rng = new SplitMix64(seed), MetersPerUnit = 1.0 };
             BuildClusters(w);
             Verify_ReadResourceSuitability(em, w);
             ReadBuildingParcels(em, w, p);

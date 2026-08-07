@@ -135,7 +135,9 @@ namespace CS2Econ.Harness
         public static (WorldState w, GridAccess access) Build(Config cfg, EconParams p)
         {
             var access = new GridAccess(cfg.Cols, cfg.Rows);
-            var w = new WorldState { Rng = new SplitMix64(cfg.Seed) };
+            // Grid coordinates are cell indices; one cell ≈ one neighborhood
+            // (~700 m spacing) — the vacancy kernel's λ is in real meters.
+            var w = new WorldState { Rng = new SplitMix64(cfg.Seed), MetersPerUnit = 700.0 };
             int C = access.ClusterCount;
             double cx = (cfg.Cols - 1) / 2.0, cy = (cfg.Rows - 1) / 2.0;
             double maxR = Math.Sqrt(cx * cx + cy * cy);

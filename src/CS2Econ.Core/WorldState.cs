@@ -20,7 +20,6 @@ namespace CS2Econ.Core
         /// extraction output scales with it; zero elsewhere. The spatial anchor
         /// of the whole Weber structure.</summary>
         public double[] ResourceSuitability = new double[ResourceCatalog.RawCount];
-        public bool TenantProtection; // per-district policy, mirrored here per cluster
         public bool WedgeEarmark = true; // per-district: wedge → escrow vs general revenue
     }
 
@@ -91,10 +90,6 @@ namespace CS2Econ.Core
         public InsolvencyStage Stage;
         public long ArrivedTick;
         public long ExitedTick = -1;     // set on emigration/displacement (telemetry)
-
-        /// <summary>Assessment anniversary phase: stateless hash of id — uniform,
-        /// never synchronized (design §3).</summary>
-        public int AnniversaryPhase(int period) => (int)(SplitMix64.Hash((ulong)Id * 0x9E37UL + 17) % (ulong)period);
     }
 
     public sealed class Firm
@@ -195,6 +190,11 @@ namespace CS2Econ.Core
     /// (harness: SyntheticCity; game: ECS readers) and stepped by EconomyEngine.</summary>
     public sealed class WorldState
     {
+        /// <summary>Meters per ClusterInfo.X/Y coordinate unit, set by the
+        /// world builder: 1.0 in-game (CS2 world units are meters), ~700 for
+        /// the synthetic grid (neighborhood spacing), 0.3048 for TNTP imports
+        /// in state-plane feet. The vacancy kernel's λ is in real meters.</summary>
+        public double MetersPerUnit = 1.0;
         public ClusterInfo[] Clusters = Array.Empty<ClusterInfo>();
         public List<Parcel> Parcels = new List<Parcel>();
         public List<Household> Households = new List<Household>();

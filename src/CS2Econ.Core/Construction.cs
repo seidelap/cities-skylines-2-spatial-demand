@@ -12,6 +12,36 @@ namespace CS2Econ.Core
         private static readonly ZoneKind[] Uses =
             { ZoneKind.ResidentialLow, ZoneKind.ResidentialHigh, ZoneKind.Commercial, ZoneKind.Industrial, ZoneKind.Office, ZoneKind.Extractor };
 
+        // Vacancy kernel e^(−d/λ) over straight-line meters between cluster
+        // centroids (walking-distance proxy — deliberately NOT generalized
+        // travel cost). Geometry is fixed per run; rebuilt only if the cluster
+        // count or λ changes.
+        private double[] _kern = Array.Empty<double>();      // C×C flattened
+        private int _kernC = -1;
+        private double _kernLambda, _kernScale;
+
+        private void EnsureKernel(WorldState w, int C, EconParams p)
+        {
+            if (_kernC == C && _kernLambda == p.VacancyKernelLambdaM && _kernScale == w.MetersPerUnit)
+                return;
+            _kernC = C; _kernLambda = p.VacancyKernelLambdaM; _kernScale = w.MetersPerUnit;
+            _kern = new double[C * C];
+            double lam = Math.Max(1.0, p.VacancyKernelLambdaM);
+            for (int i = 0; i < C; i++)
+            {
+                var a = w.Clusters[i];
+                for (int j = i; j < C; j++)
+                {
+                    var b = w.Clusters[j];
+                    double dx = (a.X - b.X) * w.MetersPerUnit;
+                    double dy = (a.Y - b.Y) * w.MetersPerUnit;
+                    double k = Math.Exp(-Math.Sqrt(dx * dx + dy * dy) / lam);
+                    _kern[i * C + j] = k;
+                    _kern[j * C + i] = k;
+                }
+            }
+        }
+
         public static int UseIndex(ZoneKind k) => k switch
         {
             ZoneKind.ResidentialLow => 0, ZoneKind.ResidentialHigh => 1, ZoneKind.Commercial => 2,
@@ -100,22 +130,82 @@ namespace CS2Econ.Core
                         ByUse[3][c] += trade.InducedProcessingSlots * rawW[c] / totalRawW;
             }
 
-            // ---- net out incumbents' vacancies and the claims ledger ---------
+            // ---- net out incumbents' vacancies through the spatial kernel ----
+            // Each vacant unit's competitive weight is spread over nearby
+            // substitutable SUPPLY: K_ij ∝ e^(−d_ij/λ)·U_j, normalized per
+            // emitter so Σ_j K_ij = 1 — one vacancy cancels EXACTLY one unit
+            // of demand citywide (V = 1; a free amplitude would mint phantom
+            // over/under-supply), and λ only decides how it is smeared.
+            // Exposure U_j = built units PLUS the buildable margin (zoned-empty
+            // capacity and pipeline units) of the same use at j: a vacancy
+            // competes wherever substitutable supply exists OR COULD APPEAR —
+            // weighting by standing stock alone leaves a hole where a
+            // greenfield parcel 300 m from a sea of vacancies feels nothing
+            // (its cluster holds no stock) and happily starts construction.
+            EnsureKernel(w, C, p);
             var vacantByUse = new double[6][];
-            for (int u = 0; u < 6; u++) vacantByUse[u] = new double[C];
+            var stockByUse = new double[6][];
+            for (int u = 0; u < 6; u++) { vacantByUse[u] = new double[C]; stockByUse[u] = new double[C]; }
             foreach (var pl in w.Parcels)
             {
-                int u = UseIndex(pl.Use);
-                if (u < 0) continue;
                 if (pl.State == ParcelState.Built)
                 {
+                    int u = UseIndex(pl.Use);
+                    if (u < 0) continue;
+                    stockByUse[u][pl.Cluster] += pl.Units;
                     if (pl.IsResidential && !pl.Warehousing) vacantByUse[u][pl.Cluster] += pl.Vacant;
                     else if (!pl.IsResidential && pl.OccupantFirm < 0) vacantByUse[u][pl.Cluster] += pl.Units;
                 }
+                else
+                {
+                    // Buildable margin: zoned-empty capacity at its zone's unit
+                    // count; pipeline projects at their committed unit count.
+                    int u = UseIndex(pl.State == ParcelState.UnderConstruction ? pl.Use : pl.Zoned);
+                    if (u < 0) continue;
+                    stockByUse[u][pl.Cluster] += pl.State == ParcelState.UnderConstruction
+                        ? pl.Units : LandAccounting.UnitsFor(pl.Zoned);
+                }
             }
-            for (int u = 0; u < 6; u++)
-                for (int c = 0; c < C; c++)
-                    ByUse[u][c] -= vacantByUse[u][c];
+            // Residential channels are CROSS-SUBSTITUTABLE: a vacant tower
+            // unit competes for the same seekers a would-be duplex courts.
+            // The cross-shares are exactly the splits the seeker allocation
+            // above uses (0.85/0.15 low-preferring, 0.25/0.75 high-tolerant)
+            // — suppression must mirror the demand structure or tower
+            // vacancies never touch low-density residual and vice versa.
+            double[][] resCross = { new[] { 0.85, 0.15 }, new[] { 0.25, 0.75 } };
+            for (int u = 0; u < 2; u++)
+            {
+                var vac = vacantByUse[u];
+                var x = resCross[u];
+                for (int i = 0; i < C; i++)
+                {
+                    if (vac[i] <= 0) continue;
+                    double denom = 0;
+                    for (int k = 0; k < C; k++)
+                        denom += _kern[i * C + k] * (x[0] * stockByUse[0][k] + x[1] * stockByUse[1][k]);
+                    if (denom <= 1e-9) { ByUse[u][i] -= vac[i]; continue; }   // no stock anywhere: land at home
+                    for (int j = 0; j < C; j++)
+                    {
+                        double kij = _kern[i * C + j];
+                        ByUse[0][j] -= vac[i] * kij * x[0] * stockByUse[0][j] / denom;
+                        ByUse[1][j] -= vac[i] * kij * x[1] * stockByUse[1][j] / denom;
+                    }
+                }
+            }
+            for (int u = 2; u < 6; u++)
+            {
+                var vac = vacantByUse[u];
+                var stock = stockByUse[u];
+                for (int i = 0; i < C; i++)
+                {
+                    if (vac[i] <= 0) continue;
+                    double denom = 0;
+                    for (int k = 0; k < C; k++) denom += _kern[i * C + k] * stock[k];
+                    if (denom <= 1e-9) { ByUse[u][i] -= vac[i]; continue; }   // no stock anywhere: land at home
+                    for (int j = 0; j < C; j++)
+                        ByUse[u][j] -= vac[i] * _kern[i * C + j] * stock[j] / denom;
+                }
+            }
             // NOTE: claims are subtracted LIVE in Get(), not baked at refresh —
             // commits inside a refresh window must see each other immediately
             // (the §4.6 pipeline-not-mirage discipline; scrutiny finding #19).

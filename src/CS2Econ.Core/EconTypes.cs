@@ -157,8 +157,23 @@ namespace CS2Econ.Core
         public double CaptureFraction = 0.95;     // φ = τ_L/(r+τ_L); "full capture" default
         public double StructureTaxRate = 0.0;     // τ_S default zero (self-teaching slider)
         public bool WedgeEarmarkDefault = true;   // wedge → parcel escrow (TIF analog)
-        public int AssessmentPeriod = 30;         // ticks between a household's re-assessments
-        public double TenantProtectionRate = 0.05;// phase-in per assessment when district policy on
+        /// <summary>Mean ticks between a stressed household's relocation
+        /// searches (per-tick hazard 1/this — memoryless, so moves never
+        /// synchronize). Re-RATING itself is instant and uniform per parcel
+        /// (co-op assessment): search friction is the only lag left.</summary>
+        public int MoveSearchPeriod = 30;
+
+        // ---- vacancy field (submarket kernel) --------------------------------
+        /// <summary>e-folding radius, in METERS of straight-line (walking-
+        /// proxy) distance, of one vacant unit's competitive influence. The
+        /// kernel is normalized so each vacancy's total influence integrates
+        /// to exactly one unit of demand (V = 1 — vacancies neither mint nor
+        /// destroy aggregate demand); λ only shapes where it lands.</summary>
+        public double VacancyKernelLambdaM = 800.0;
+        /// <summary>Leases per tick per vacant unit — the absorption hazard
+        /// that paces in-migration (arrivals ≤ hazard × vacant stock). Its
+        /// inverse is mean time-to-fill in ticks (≈ days on market).</summary>
+        public double VacancyFillHazard = 1.0 / 60.0;
 
         // ---- access (design §4.2) -------------------------------------------
         public double ThetaCommute = 0.055;       // e^(−θc) decay, c in generalized minutes

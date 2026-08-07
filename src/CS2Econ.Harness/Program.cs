@@ -55,6 +55,13 @@ namespace CS2Econ.Harness
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.Run(seed, ticks);
                 }
+                case "vacprobe":
+                {
+                    int ticks = 150;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                    return Debugging.VacProbe(seed, ticks);
+                }
                 case "firmdiag":
                 {
                     int ticks = 800;

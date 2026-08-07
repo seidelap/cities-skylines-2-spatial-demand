@@ -67,7 +67,7 @@ namespace CS2Econ.Core
             FirmLifecycle();
             AllocationAndInsolvency();
             MigrationStep();
-            AnniversariesAndRelocation();
+            RerateAndRelocation();
             Construction.Step(W, Access, Trade, Residuals, SegmentPresence, P, Flags);
             Construction.ObserveCompletions(W, P);
             Leveling.Step(W, Access, Trade, P, Flags);
@@ -113,7 +113,11 @@ namespace CS2Econ.Core
                 if (h.ExitedTick < 0 && h.HomeParcel < 0) seekersNow[h.Segment]++;
             for (int s = 0; s < Segment.Count; s++)
             {
-                seekersNow[s] += LastFlows.ArrivalsBySegment != null ? LastFlows.ArrivalsBySegment[s] * P.RefreshInterval : 0;
+                // DESIRED (pre-cap) inflow, not realized: arrivals the
+                // absorption budget deferred still queue as construction
+                // pressure — otherwise no-vacancy → no-arrivals → no-seekers
+                // → no-construction deadlocks a young city.
+                seekersNow[s] += LastFlows.DesiredBySegment != null ? LastFlows.DesiredBySegment[s] * P.RefreshInterval : 0;
                 SeekersEma[s] = MathUtil.Ema(SeekersEma[s], seekersNow[s], 0.15);
             }
 
@@ -656,7 +660,7 @@ namespace CS2Econ.Core
             }
         }
 
-        private void AnniversariesAndRelocation()
+        private void RerateAndRelocation()
         {
             if (!Levying)
             {
@@ -666,32 +670,30 @@ namespace CS2Econ.Core
                 foreach (var h in W.Households) h.ChargedAssessment = 0;
                 return;
             }
-            int period = P.AssessmentPeriod;
-            int phaseNow = (int)(W.Tick % period);
+            // Co-op re-rate: EVERY housed household is charged its parcel's
+            // current market unit assessment, every tick — one price per unit,
+            // uniform across co-tenants, no anniversaries, no phase-in. The
+            // land residual (total value − structure value) moves instantly;
+            // §3's no-synchronized-shock property now rests on the assessment
+            // moving smoothly plus the two frictions below, not on staggering
+            // the re-rate itself.
+            double searchHazard = 1.0 / Math.Max(1, P.MoveSearchPeriod);
             foreach (var h in W.Households)
             {
                 if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
-                if (h.AnniversaryPhase(period) != phaseNow) continue;
-
                 var pl = W.Parcels[h.HomeParcel];
-                double target = LandAccounting.UnitAssessment(pl, P);
-                bool protectedTenant = W.Clusters[pl.Cluster].TenantProtection && W.Tick - h.TenureStart > period;
-                if (protectedTenant)
-                {
-                    // Phased assessment for sitting tenants; new leases clear at market.
-                    h.ChargedAssessment += (target - h.ChargedAssessment)
-                                           * MathUtil.Clamp(P.TenantProtectionRate * period / 30.0, 0.02, 0.5);
-                }
-                else h.ChargedAssessment = target;
+                h.ChargedAssessment = LandAccounting.UnitAssessment(pl, P);
 
-                // Exit timing: each household compares the converged assessment to
-                // its own affordability plus its heterogeneous moving margin —
-                // displacement is gradual by construction (§4.4).
+                // Exit timing: heterogeneous moving margins (draw at arrival)
+                // plus a memoryless search hazard keep displacement a
+                // distribution — you notice the re-rate instantly, you move
+                // when a search comes up AND finds somewhere cheaper (§4.4).
                 var seg = Segment.All[h.Segment];
                 double income = AccessState.EffectiveIncome(h, seg, P);
                 double affordable = seg.MaxRentShare * Math.Max(0.1, income);
                 double margin = 1.0 + h.MovingCostDraw / 150.0;
-                if (h.ChargedAssessment > affordable * margin)
+                if (h.ChargedAssessment > affordable * margin
+                    && W.Rng.NextDouble() < searchHazard)
                 {
                     int cheaper = Allocation.FindHome(W, Access, h, P, affordable, income);
                     if (cheaper >= 0 && cheaper != h.HomeParcel)
