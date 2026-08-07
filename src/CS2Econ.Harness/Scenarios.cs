@@ -352,9 +352,13 @@ namespace CS2Econ.Harness
         // ------------------------------------------------------------------
         private static void TradeBend(ulong seed)
         {
-            var p = new EconParams { ExtractorOutputPerSlot = 13.0 };   // engineered monoculture
+            // Engineered monoculture, cranked enough that NET road-group
+            // exports stay deep under absorption-paced population (the bend is
+            // a property of the sustained net position, and a thinner labor
+            // force plus local Ore-consuming industry both eat into it).
+            var p = new EconParams { ExtractorOutputPerSlot = 22.0 };
             var cfg = new SyntheticCity.Config
-            { Seed = seed, SeedHouseholds = 9000, ExtractorHeavy = true, ExtractorPrebuilt = 0.8 };
+            { Seed = seed, SeedHouseholds = 9000, ExtractorHeavy = true, ExtractorPrebuilt = 1.0 };
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             sim.Run(700);
 
