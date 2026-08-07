@@ -535,11 +535,48 @@ namespace CS2Econ.Harness
             var p = new EconParams();
             var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
             var sim = Sim.Create(cfg, p, new FeatureFlags());
-            sim.Run(400);
+            sim.Run(200);
+
+            // The experiment needs a LIVE PIPELINE to strand: bust into an empty
+            // pipeline and zero abandonments proves nothing. Under the clearing
+            // price developers price their own units into the supply they must
+            // fill, so they start fewer marginal projects and the pipeline is
+            // thinner and burstier than it was — wait for one rather than
+            // assuming a fixed tick has it.
+            // EARLY-stage: the abandon test fires at the ¼/½/¾ milestones
+            // against REMAINING cost, so a project past ¾ correctly finishes
+            // even in a collapse (little left to spend). Only projects with
+            // milestones still ahead of them are abandonable.
+            int EarlyStage()
+            {
+                int n = 0;
+                foreach (var pl in sim.W.Parcels)
+                    if (pl.State == ParcelState.UnderConstruction && pl.BuildTotal > 0
+                        && pl.BuildProgress < pl.BuildTotal / 4) n++;
+                return n;
+            }
+            int InFlight()
+            {
+                int n = 0;
+                foreach (var pl in sim.W.Parcels) if (pl.State == ParcelState.UnderConstruction) n++;
+                return n;
+            }
+            int waited = 0;
+            while (EarlyStage() == 0 && waited < 600) { sim.Run(5); waited += 5; }
+            int earlyAtBust = EarlyStage(), pipelineAtBust = InFlight();
 
             int abandonedBefore = sim.Engine.Construction.AbandonedTotal;
-            // Engineered bust: attractiveness collapses and a third of the city leaves.
+            // Engineered bust — an ECONOMY-WIDE collapse, not just a household
+            // exodus: amenity craters, a third of the city leaves, AND the
+            // office output price collapses. The last term matters because
+            // office towers price off a near-exogenous output price (the
+            // documented infinite-tap gap), so a pure population exodus leaves
+            // their expected flow almost untouched and the pipeline — which is
+            // office-heavy at this point in the run — sails through a "bust"
+            // that never reached it. Collapsing both channels is what makes the
+            // §6 claim testable on whatever happens to be in flight.
             foreach (var c in sim.W.Clusters) c.Amenity -= 1.6;
+            p.OfficeOutputPrice *= 0.25;
             foreach (var h in sim.W.Households)
             {
                 if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
@@ -552,10 +589,10 @@ namespace CS2Econ.Harness
             }
             sim.Run(200);
             int abandonedDuringBust = sim.Engine.Construction.AbandonedTotal - abandonedBefore;
-            bool pass = abandonedDuringBust > 0;
+            bool pass = earlyAtBust > 0 && abandonedDuringBust > 0;
             Record("stalled construction appears in engineered busts", pass,
-                $"{abandonedDuringBust} projects abandoned mid-build after demand collapse " +
-                $"({sim.Engine.Construction.StartedTotal} lifetime starts)");
+                $"{abandonedDuringBust} abandoned mid-build after demand collapse; at bust {pipelineAtBust} " +
+                $"in flight of which {earlyAtBust} early-stage ({sim.Engine.Construction.StartedTotal} lifetime starts)");
         }
 
         // ------------------------------------------------------------------

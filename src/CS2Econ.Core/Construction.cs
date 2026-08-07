@@ -286,6 +286,12 @@ namespace CS2Econ.Core
         public int StartedTotal, AbandonedTotal, CompletedTotal;
         public readonly List<(long tick, int parcel)> AbandonEvents = new List<(long, int)>();
 
+        /// <summary>CS2ECON_MILESTONE_DEBUG=1 traces every milestone
+        /// re-evaluation (flow vs abandon threshold). Read once — milestones
+        /// are rare, but the hot path should not touch the environment.</summary>
+        private static readonly bool MilestoneDebug =
+            Environment.GetEnvironmentVariable("CS2ECON_MILESTONE_DEBUG") == "1";
+
         private struct Candidate
         {
             public int ParcelId;
@@ -321,6 +327,10 @@ namespace CS2Econ.Core
                     double flow = ExpectedFlow(w, acc, trade, residuals, segmentPresence, pl, pl.Level, p,
                                                out _, out _);
                     double remaining = pl.CommittedCost * (1.0 - (double)pl.BuildProgress / pl.BuildTotal);
+                    if (MilestoneDebug)
+                        Console.WriteLine($"[MILESTONE] t={w.Tick} parcel={pl.Id} prog={pl.BuildProgress}/{pl.BuildTotal} "
+                            + $"flow={flow:F3} thresh={p.AbandonMarginFactor * p.HurdleRate * Math.Max(1, remaining):F3} "
+                            + $"committed={pl.CommittedCost:F0}");
                     if (flow < p.AbandonMarginFactor * p.HurdleRate * Math.Max(1, remaining))
                     {
                         w.Claims.Add(pl.Cluster, pl.Use, -pl.Units);
@@ -427,7 +437,10 @@ namespace CS2Econ.Core
         {
             ZoneKind use = pl.State == ParcelState.UnderConstruction ? pl.Use : pl.Zoned;
             int units = LandAccounting.UnitsFor(use);
-            double bid = LandAccounting.BidPerUnit(acc, trade, pl.Cluster, use, level, segmentPresence, p)
+            // Developer prices the project at the clearing price its OWN units
+            // would have to fill (supplyFloor = units) — the same discipline
+            // Assess uses for candidate configurations.
+            double bid = LandAccounting.BidPerUnit(acc, trade, pl.Cluster, use, level, segmentPresence, p, units)
                          * w.Calibration.Factor(use);
             double resid = residuals.Get(pl.Cluster, use, w.Claims);
             // A project under construction already sits in the claims ledger;

@@ -31,6 +31,7 @@ namespace CS2Econ.Harness
             WeberRecipeChoice(seed);
             VacancyKernelConservation(seed);
             ClaimVacancyWash(seed);
+            ClearingPrice(seed);
             CoopInstantRerate(seed);
             CircularityGuard(seed);
             LedgerConservation(seed);
@@ -307,6 +308,67 @@ namespace CS2Econ.Harness
                   && nearDensity > 4.0 * Math.Max(1e-9, farDensity),
                   $"evicted {evicted} → total suppression {totalDiff:F6}; per-cluster density " +
                   $"within 1.5λ: {nearDensity:F3} (n={nearN}), beyond: {farDensity:F3} (n={farN})");
+        }
+
+        private static void ClearingPrice(ulong seed)
+        {
+            // The price is the MARKET-CLEARING price: the marginal bidder's WTP
+            // at the quantity that fills the stock. Three properties, all of
+            // which the old presence-weighted mean failed (it had no quantity
+            // term at all): rent falls as supply grows against fixed demand,
+            // rent rises as demand grows against fixed supply, and — the gap
+            // this closes — a vacancy overhang SOFTENS rent instead of leaving
+            // it untouched.
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 8, Rows = 8, SeedHouseholds = 2500, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(80);
+            var acc = sim.Engine.Access;
+            var pres = sim.Engine.SegmentPresence;
+
+            // Pick a cluster with real stock and real demand.
+            int c0 = 0;
+            for (int c = 1; c < acc.C; c++)
+                if (acc.HousingStock[0][c] > acc.HousingStock[0][c0]) c0 = c;
+            double stock = acc.HousingStock[0][c0];
+
+            // (a) supply ladder at fixed demand: strictly non-increasing.
+            double pLow = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock * 0.5);
+            double pMid = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock * 2.0);
+            double pHigh = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock * 8.0);
+            bool supplyMonotone = pLow >= pMid - 1e-9 && pMid >= pHigh - 1e-9 && pLow > pHigh + 1e-6;
+
+            // (b) demand ladder at fixed supply: strictly non-decreasing.
+            var presHalf = new double[Segment.Count];
+            var presDouble = new double[Segment.Count];
+            for (int s = 0; s < Segment.Count; s++) { presHalf[s] = pres[s] * 0.5; presDouble[s] = pres[s] * 2.0; }
+            double dLow = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presHalf, p, stock);
+            double dMid = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock);
+            double dHigh = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presDouble, p, stock);
+            bool demandMonotone = dLow <= dMid + 1e-9 && dMid <= dHigh + 1e-9 && dHigh > dLow + 1e-6;
+
+            // (c) the closed gap: a real vacancy overhang lowers the assessed
+            // bid at that cluster. Evict most of one cluster's residents, re-run
+            // the access refresh (which recomputes stock and shares), re-price.
+            double before = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock);
+            int killed = 0;
+            foreach (var h in sim.W.Households)
+            {
+                if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
+                if (sim.W.Parcels[h.HomeParcel].Cluster == c0) continue;   // keep c0's own residents
+                if (SplitMix64.Hash01((ulong)h.Id * 977 + 5) < 0.6)
+                { h.ExitedTick = sim.W.Tick; killed++; }                   // citywide demand collapse
+            }
+            sim.Run(10);
+            double after = LandAccounting.ResidentialBidPerUnit(
+                sim.Engine.Access, c0, ZoneKind.ResidentialLow, 2, sim.Engine.SegmentPresence, p, stock);
+            bool softens = after < before * 0.98;
+
+            Check("clearing price: rent responds to quantity (supply ↓, demand ↑, overhang softens)",
+                  supplyMonotone && demandMonotone && killed > 100 && softens,
+                  $"supply×{{0.5,2,8}} → {pLow:F2}/{pMid:F2}/{pHigh:F2}; " +
+                  $"demand×{{0.5,1,2}} → {dLow:F2}/{dMid:F2}/{dHigh:F2}; " +
+                  $"after {killed} citywide exits bid {before:F2} → {after:F2}");
         }
 
         private static void ClaimVacancyWash(ulong seed)

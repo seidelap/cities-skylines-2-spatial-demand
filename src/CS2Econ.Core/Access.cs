@@ -35,6 +35,15 @@ namespace CS2Econ.Core
         public double[][] AccessValue = Array.Empty<double[]>();
         public double MeanAccess = 1;
 
+        /// <summary>[segment][cluster] → share of that segment that would CHOOSE
+        /// this cluster on access alone (logit, normalized over clusters).
+        /// Price-free by construction: it is one half of the market-clearing
+        /// condition, so letting affordability in would be circular.</summary>
+        public double[][] SegmentClusterShare = Array.Empty<double[]>();
+        /// <summary>[0=Low,1=High][cluster] → standing residential units. The
+        /// quantity the clearing price has to fill.</summary>
+        public double[][] HousingStock = Array.Empty<double[]>();
+
         // Commercial capture (Layer-3 phantom entrant machinery, §4.2)
         public double[] IncumbentShopWeight = Array.Empty<double>(); // per origin: Σ_j wShop·mass_j
         public double[] CaptureIncumbentPerMass = Array.Empty<double>(); // spending captured per unit mass at c
@@ -208,6 +217,39 @@ namespace CS2Econ.Core
                 }
             }
             MeanAccess = cnt > 0 ? Math.Max(0.5, sumAccess / cnt) : 1;
+
+            // ---- inputs to the market-clearing bid (design §4.3) -------------
+            // Where each segment WANTS to live (logit on access value,
+            // normalized over clusters — the SAME allocation Construction uses
+            // for seekers, minus the affordability factor, which must not enter
+            // here: price is what we are solving for).
+            if (SegmentClusterShare.Length != nc)
+            {
+                SegmentClusterShare = new double[nc][];
+                for (int s = 0; s < nc; s++) SegmentClusterShare[s] = new double[C];
+            }
+            for (int s = 0; s < nc; s++)
+            {
+                var row = SegmentClusterShare[s];
+                double tot = 0;
+                for (int c = 0; c < C; c++) { row[c] = Math.Exp(AccessValue[s][c] / 1.5); tot += row[c]; }
+                if (tot > 1e-12) for (int c = 0; c < C; c++) row[c] /= tot;
+            }
+
+            // Standing housing stock per density kind — the QUANTITY side of
+            // the clearing condition. [0] = ResidentialLow, [1] = ResidentialHigh.
+            if (HousingStock.Length != 2)
+            {
+                HousingStock = new double[2][];
+                for (int k = 0; k < 2; k++) HousingStock[k] = new double[C];
+            }
+            for (int k = 0; k < 2; k++) Array.Clear(HousingStock[k], 0, C);
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || !pl.IsResidential) continue;
+                if ((uint)pl.Cluster >= (uint)C) continue;
+                HousingStock[pl.Use == ZoneKind.ResidentialHigh ? 1 : 0][pl.Cluster] += pl.Units;
+            }
         }
 
         /// <summary>Phantom entrant (design §4.2): expected spending capture of a
