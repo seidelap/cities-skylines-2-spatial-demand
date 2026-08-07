@@ -52,8 +52,8 @@ revertible to vanilla behavior, plus the τ_S/τ_L sliders and per-district poli
 | §4.2 Tier B | `Access.cs` | w(p,q)=e^(−θc) weights; per-segment consumer access (jobs by tier, goods, schools, amenities, −pollution/noise); firm-side terms (commercial phantom-entrant capture, industrial exit-parity pricing + Weber input haul, office agglomeration A(p)^γ) |
 | §4.2 | `Balancing.cs` | Sinkhorn/IPF doubly-constrained balancing on cluster access matrices; **residual demand** per (cluster, type) net of incumbents *and pipeline ledger* |
 | §4.2 | `Insolvency.cs` | bottom-of-market pipeline: cut consumption → re-sort down price gradient → funded emigration → sheltered homeless with capacity; re-housing via the same allocation machinery |
-| §4.3 Tier C | `LandAccounting.cs` | S=(h+δ+m)·V with V=condition×RC; LR(p)=max over permitted configs of [Bid−S−a(h,L)·(transition cost−escrow)]; P_L=LR/(r+τ_L); split-rate taxes; wedge→escrow earmark (per-district toggle); the single annuity operator a(h,L); staggered per-household assessment anniversaries |
-| §4.4 Tier C′ | `Leveling.cs` | ℓ*=argmax_ℓ[Bid_ℓ−S_ℓ] with RC_ℓ=RC₁·γ^(ℓ−1); renovation escrow clock (fire at ΔRC, re-anchor, re-arm); downgrade = same mechanism sign-flipped (underfunded S → condition decay); scrape-and-rebuild warehousing; owner-tag consent gates, within-segment moving-cost distributions, tenant-protection phase-in |
+| §4.3 Tier C | `LandAccounting.cs` | S=(h+δ+m)·V with V=condition×RC; LR(p)=max over permitted configs of [Bid−S−a(h,L)·(transition cost−escrow)]; P_L=LR/(r+τ_L); split-rate taxes; wedge→escrow earmark (per-district toggle); the single annuity operator a(h,L); instant co-op re-rate (every occupant pays the parcel's live market unit assessment; see the deviation note below) |
+| §4.4 Tier C′ | `Leveling.cs` | ℓ*=argmax_ℓ[Bid_ℓ−S_ℓ] with RC_ℓ=RC₁·γ^(ℓ−1); renovation escrow clock (fire at ΔRC, re-anchor, re-arm); downgrade = same mechanism sign-flipped (underfunded S → condition decay); scrape-and-rebuild warehousing; owner-tag consent gates, within-segment moving-cost distributions |
 | §4.1 Tier A | `Migration.cs` | per-segment Rosen–Roback attractiveness (wages, rents, amenities); asymmetric lagged elasticity; outside-world scalars: reservation threshold (drawdown + replenish), prominence, network memory; firm entry on residual profit |
 | §4.5 Tier D | `Trade.cs` | per-(resource×exit) p(Q)=a+t·(Q/ρ)^(1/d) laws (road d=2, rail d=1 + terminal intercept, sea/air flat capped); sustained-Q EMA + transient impact layer + permanent parameter shifts; parity bands from routed transport cost; quantized offers → cheapest-first procurement (emergent multimodal split); adjacent-exit coupling; export-base feedback |
 | §4.6 | `Construction.cs` | developer return = predicted rent × predicted absorption − cost, hurdle-gated, softmax site selection; **claims ledger** (decrement residual at commitment); construction lag; milestone re-evaluation (abandon when E[return] < remaining cost); **calibration loop** (realized vs predicted-at-decision-time, shrunk correction factors) |
@@ -63,8 +63,8 @@ revertible to vanilla behavior, plus the τ_S/τ_L sliders and per-district poli
 | — | `Ledger.cs` | double-entry money accounting; every flow has a source and sink; the four sanctioned phantoms (developer, outside world, bank, national counterparty) are explicit accounts |
 
 **Tick structure** (`EconomyEngine`): a *fast tick* (trade transient decay, construction
-progress, escrow accrual, the 1/N slice of households whose assessment anniversary falls
-now, insolvency steps); a *refresh tick* driven by access dirty flags plus a slow staggered
+progress, escrow accrual, the 1/N slice of PARCELS whose assessment slice falls
+now, per-household re-rate against it, insolvency steps); a *refresh tick* driven by access dirty flags plus a slow staggered
 sweep (access matrices → IPF → residuals → ℓ* → LR for dirty clusters only); a *slow tick*
 (migration scalars, sustained-Q EMAs, calibration factors). No citywide synchronized event
 exists anywhere — the anti-synchronization constraint (design §3) is structural: per-entity
@@ -122,8 +122,10 @@ Unit-level invariants, all deterministic:
 6. **Trade law shapes** — road curve concave increasing no asymptote; rail linear with
    intercept; horizontal summation = cheapest-first offer selection (verified against
    brute-force marginal-cost merge); EMA + transient decay round-trip.
-7. **Assessment staggering** — anniversary phases uniform (chi-squared vs uniform);
-   no tick carries a synchronized reassessment.
+7. **Vacancy kernel + co-op re-rate** — one vacant unit cancels exactly one unit of
+   demand citywide (V=1) with suppression density falling with distance; pipeline claims
+   and completed-vacant units suppress identically (the claim↔vacancy wash); co-tenants
+   of a parcel pay a bit-identical charge tracking the live market assessment.
 8. **Insolvency pipeline** — each step fires only when the previous is exhausted; sheltered
    population bounded; re-housing occurs when vacancies exist at affordable S (no stuck
    states — the vanilla truncated-queue bug class regression).
@@ -152,6 +154,35 @@ multi-dimension review pass (economic-logic errors, conservation leaks, synchron
 channels, NaN/overflow paths, degenerate parameterizations), each finding verified before
 fixing, worst findings regression-tested.
 
+### 4.4 Deviations from the design document
+
+The design doc is the specification; where the implementation knowingly departs from it,
+the departure is recorded here rather than by editing the design.
+
+- **§4.3/§4.4 staggered assessment anniversaries and tenant-protection phase-in → instant
+  co-op re-rate.** The design set each household's assessment on a personal anniversary
+  (period 30) with an optional per-district tenant-protection phase-in. Implemented
+  instead: every housed household is charged its parcel's *current* market unit
+  assessment every tick — one price per unit, bit-identical across co-tenants, which is
+  the co-op semantics (rent = market rate; land value = total − structure). Staleness
+  moved from the household to the parcel (the 1/`AssessSlices` reassessment slice), which
+  is why co-tenant uniformity is exact.
+  *Anti-synchronization (§3) is preserved by different means:* the re-rate is smooth
+  (no step at a personal anniversary), relocation search is a memoryless per-tick hazard
+  (`MoveSearchPeriod`) rather than a calendar event, and moving-cost draws stay
+  heterogeneous. A one-time `GoLiveRampTicks` window, staggered per household, covers the
+  regime change when Tier C first starts levying so flipping the mod out of shadow mode
+  cannot re-rate a city in a single tick.
+  *Dropped with it:* the per-district `TenantProtection` dial (design §4.4's
+  preservation-vs-development lever). It has no implementation; reintroducing it would
+  mean a phase-in on top of the co-op price, which conflicts with one-price-per-unit.
+- **§4.2 vacancy netting → spatial kernel.** Vacancies were netted only within their own
+  cluster. Implemented instead: a normalized kernel e^(−d/λ) over straight-line metres
+  (`VacancyKernelLambdaM`, walking-distance proxy) with V = 1 conservation, applied
+  identically to standing vacancy and to pipeline claims. In-migration is paced by an
+  absorption budget (`VacancyFillHazard` × feasible vacant stock, per segment) instead of
+  a flat citywide clamp.
+
 ---
 
 ## 5. In-game phase (stage 7 — needs a machine with CS2)
@@ -161,8 +192,7 @@ is the dev loop. Ordered by architectural risk (research §9):
 
 1. **Save round-trip spike** — custom `ISerializable` component + singleton blob; verify
    load-without-mod does not corrupt. Negative result → sidecar fallback, decided before
-   any tier persists state. Mod-native state inventory is research §7 (escrow, anniversary
-   phase, owner tag, trade EMAs, migration scalars, claims ledger, calibration factors) —
+   any tier persists state. Mod-native state inventory is research §7 (escrow, owner tag, trade EMAs, migration scalars, claims ledger, calibration factors) —
    schema-versioned from day one.
 2. **Decompile diff** — confirm post-2.0 leveling lives in `BuildingUpkeepSystem`; enumerate
    `Game.UI.InGame.*` demand/budget binding names; enumerate `Demand|LandValue|Rent|Upkeep|Trade`

@@ -31,6 +31,9 @@ namespace CS2Econ.Core
         public double LandRevenueThisTick, IncomeTaxThisTick, ServiceCostThisTick;
         public double[] LandRevenueByCluster = Array.Empty<double>();
         public readonly List<(long tick, int household)> DisplacementExits = new List<(long, int)>();
+        /// <summary>Tick Tier C last STARTED levying (−1 while not levying) —
+        /// anchors the one-time go-live ramp in RerateAndRelocation.</summary>
+        private long _levyingSince = -1;
         public Migration.Flows LastFlows;
 
         private readonly List<int> _unhoused = new List<int>();
@@ -668,8 +671,11 @@ namespace CS2Econ.Core
                 // not drive consumption, stress, or displacement (stage-3 shadow
                 // contract; scrutiny findings #2/#7/#18).
                 foreach (var h in W.Households) h.ChargedAssessment = 0;
+                _levyingSince = -1;      // a later flip re-arms the go-live ramp
                 return;
             }
+            if (_levyingSince < 0) _levyingSince = W.Tick;
+            long sinceGoLive = W.Tick - _levyingSince;
             // Co-op re-rate: EVERY housed household is charged its parcel's
             // current market unit assessment, every tick — one price per unit,
             // uniform across co-tenants, no anniversaries, no phase-in. The
@@ -682,7 +688,16 @@ namespace CS2Econ.Core
             {
                 if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
                 var pl = W.Parcels[h.HomeParcel];
-                h.ChargedAssessment = LandAccounting.UnitAssessment(pl, P);
+                double market = LandAccounting.UnitAssessment(pl, P);
+                // Steady state: charge IS the live market assessment, exactly
+                // and uniformly per parcel. Only the one-time go-live window
+                // interpolates, staggered per household so the transition is
+                // not a citywide step (§3).
+                long window = (long)(P.GoLiveRampTicks * (0.5 + SplitMix64.Hash01((ulong)h.Id * 8563UL + 29)));
+                if (sinceGoLive >= window || h.ChargedAssessment <= 0)
+                    h.ChargedAssessment = market;
+                else
+                    h.ChargedAssessment += (market - h.ChargedAssessment) / Math.Max(1, window - sinceGoLive);
 
                 // Exit timing: heterogeneous moving margins (draw at arrival)
                 // plus a memoryless search hazard keep displacement a

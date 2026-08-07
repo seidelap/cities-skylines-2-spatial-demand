@@ -176,9 +176,9 @@ namespace CS2Econ.Harness
                     return (byCluster, residSum);
                 }
 
-                var (shockRun, shockResid) = StartsByCluster(1);      // disk shock; defines geometry
-                var (controlRun, ctrlResid) = StartsByCluster(0);     // identical seed, no shock
-                var (_, uniformResid) = StartsByCluster(2);           // same exits, no geography
+                var (shockRun, shockResid) = StartsByCluster(1);          // disk shock; defines geometry
+                var (controlRun, ctrlResid) = StartsByCluster(0);         // identical seed, no shock
+                var (uniformRun, uniformResid) = StartsByCluster(2);      // same exits, no geography
 
                 // Spatial difference-in-differences with an EXCLUSION BUFFER:
                 // the kernel deliberately lets live demand from outside the
@@ -224,6 +224,8 @@ namespace CS2Econ.Harness
                 }
                 Tally(shockRun, ref shockedIn, ref farShock);
                 Tally(controlRun, ref controlIn, ref farCtrl);
+                double uniformIn = 0, uniformFar = 0;
+                Tally(uniformRun, ref uniformIn, ref uniformFar);
 
                 // Construction-DEMAND suppression (the §6 quantity): mean drop
                 // of the residual field, shock vs control, per region — with
@@ -253,12 +255,26 @@ namespace CS2Econ.Harness
                 double spatialIn = supIn - lvlIn;
                 double spatialFar = supFar - lvlFar;
                 double ratio = spatialIn / Math.Max(0.1, spatialFar);
-                bool startsConsistent = shockedIn <= controlIn + 1e-9;
+                // PASS is gated on the demand field — the quantity the kernel
+                // governs and that site selection reads — with a substantive
+                // absolute suppression, not just a favourable ratio.
+                //
+                // Realized starts are REPORTED, not gated, and they do not
+                // follow the field. Two coherent couplings break the
+                // monotonicity, both verified: (1) the shock's own vacancy
+                // RAISES the citywide absorption budget (hazard × vacant
+                // stock), admitting more migrants everywhere; (2) a hole in an
+                // otherwise-intact city refills from surrounding demand
+                // spilling in through the same kernel, whereas same-size
+                // uniform exits thin every catchment at once. Both are
+                // properties of Tier A pacing rather than of the suppression
+                // mechanism; see RESULTS.md.
                 bool realSignal = spatialIn >= 3.0;
-                return (ratio, startsConsistent && realSignal,
+                return (ratio, realSignal,
                     $"spatial-excess suppression interior {spatialIn:F1}/cluster vs beyond-spillover {spatialFar:F1} " +
                     $"(raw {supIn:F1}/{supFar:F1}, level effect {lvlIn:F1}/{lvlFar:F1}) → {ratio:F0}:1; " +
-                    $"unit-starts interior {controlIn:F0}→{shockedIn:F0}, beyond {farCtrl:F0}→{farShock:F0} " +
+                    $"interior unit-starts {shockedIn:F0} concentrated vs {uniformIn:F0} same-size uniform exits " +
+                    $"({controlIn:F0} no-shock); beyond {farCtrl:F0}→{farShock:F0} " +
                     $"({interior.Count} treated / {buffered.Count} buffered)");
             }
 

@@ -80,14 +80,20 @@ namespace CS2Econ.Core
 
             // Absorption budget (the vacancy field's volume integral × the fill
             // hazard): arrivals per tick are capped by how fast the standing
-            // vacant stock can actually lease up — the kernel's V = 1 makes the
-            // citywide budget simply hazard × vacant units. One brake, both
-            // outside-world modes; replaces the old flat 1%/tick clamp.
-            double vacantUnits = 0;
+            // vacant stock can actually lease up. Counted PER SEGMENT over the
+            // vacancy that segment can legally occupy — a high-density
+            // overhang cannot lease to Family segments (AllocationSystem
+            // .DensityFeasible), and pooling it would admit arrivals straight
+            // into homelessness churn. One brake, both outside-world modes;
+            // replaces the old flat 1%/tick clamp.
+            double vacantLow = 0, vacantAll = 0;
             foreach (var pl in w.Parcels)
-                if (pl.State == ParcelState.Built && pl.IsResidential && !pl.Warehousing)
-                    vacantUnits += pl.Vacant;
-            double arrivalBudget = p.VacancyFillHazard * vacantUnits;
+            {
+                if (pl.State != ParcelState.Built || !pl.IsResidential || pl.Warehousing) continue;
+                int v = pl.Vacant;
+                vacantAll += v;
+                if (pl.Use == ZoneKind.ResidentialLow) vacantLow += v;
+            }
 
             // Pass 1: desired inflow per segment (uncapped Rosen–Roback gap).
             double desiredTotal = 0;
@@ -105,12 +111,22 @@ namespace CS2Econ.Core
                 desiredTotal += desired;
             }
 
-            // Pass 2: ration the budget pro-rata; draw realized flows.
-            double scale = desiredTotal > arrivalBudget && desiredTotal > 1e-9
-                ? arrivalBudget / desiredTotal : 1.0;
+            // Pass 2: ration each segment against ITS OWN feasible-vacancy
+            // budget, shared pro-rata with the other segments competing for
+            // the same stock; draw realized flows.
+            double desiredLowOnly = 0;      // segments that can only take low density
+            for (int s = 0; s < nSeg; s++)
+                if (!AllocationSystem.DensityFeasible(Segment.All[s], ZoneKind.ResidentialHigh))
+                    desiredLowOnly += flows.DesiredBySegment[s];
             for (int s = 0; s < nSeg; s++)
             {
-                double inRate = flows.DesiredBySegment[s] * scale;
+                bool highOk = AllocationSystem.DensityFeasible(Segment.All[s], ZoneKind.ResidentialHigh);
+                // Low-only segments share the low-density stock among
+                // themselves; density-tolerant segments draw on all vacancy.
+                double budget = p.VacancyFillHazard * (highOk ? vacantAll : vacantLow);
+                double competing = highOk ? desiredTotal : desiredLowOnly;
+                double segScale = competing > budget && competing > 1e-9 ? budget / competing : 1.0;
+                double inRate = flows.DesiredBySegment[s] * segScale;
                 // Out-migration: responds to a LAGGED signal, lower elasticity.
                 double outsideU = BaseOutsideUtility + (endogenousOutside ? m.ReservationThreshold[s] : 0);
                 double gap = m.SegmentAttractEma[s] - outsideU;

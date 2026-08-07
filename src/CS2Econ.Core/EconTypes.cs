@@ -162,6 +162,14 @@ namespace CS2Econ.Core
         /// synchronize). Re-RATING itself is instant and uniform per parcel
         /// (co-op assessment): search friction is the only lag left.</summary>
         public int MoveSearchPeriod = 30;
+        /// <summary>One-time transition window when Tier C first goes live:
+        /// charges converge from whatever they were (in-game: vanilla rents
+        /// mirrored by the reader) to the market assessment over this many
+        /// ticks, staggered per household. Steady state is untouched — pricing
+        /// is instant and uniform forever after. Without it, flipping the mod
+        /// out of shadow mode re-rates an entire city in ONE tick and writes
+        /// every renter's rent at once (adversarial review, confirmed).</summary>
+        public int GoLiveRampTicks = 30;
 
         // ---- vacancy field (submarket kernel) --------------------------------
         /// <summary>e-folding radius, in METERS of straight-line (walking-

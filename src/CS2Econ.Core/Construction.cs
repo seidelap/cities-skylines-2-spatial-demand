@@ -20,6 +20,48 @@ namespace CS2Econ.Core
         private int _kernC = -1;
         private double _kernLambda, _kernScale;
 
+        /// <summary>Residential cross-substitution shares — the SAME splits the
+        /// seeker allocation uses (0.85/0.15 low-preferring, 0.25/0.75
+        /// high-tolerant). A vacant tower unit competes for the seekers a
+        /// would-be duplex courts, so suppression must mirror the demand
+        /// structure or tower vacancies never touch low-density residual.</summary>
+        private static readonly double[][] ResCross = { new[] { 0.85, 0.15 }, new[] { 0.25, 0.75 } };
+        private double[][] _stockByUse = Array.Empty<double[]>();
+
+        /// <summary>Deposit `amount` units of competing supply emitted at
+        /// cluster i (use u) onto `target`, weighted by e^(−d/λ)·exposure and
+        /// normalized so the deposited total is EXACTLY `amount` (V = 1: one
+        /// unit of supply cancels one unit of demand citywide, and λ only
+        /// decides where). The single definition of the footprint — vacancies
+        /// and pipeline claims both route through here.</summary>
+        private void Spread(int u, int i, double amount, double[][] target)
+        {
+            int C = _kernC;
+            if (u < 2)
+            {
+                var x = ResCross[u];
+                double denom = 0;
+                for (int k = 0; k < C; k++)
+                    denom += _kern[i * C + k] * (x[0] * _stockByUse[0][k] + x[1] * _stockByUse[1][k]);
+                if (denom <= 1e-9) { target[u][i] += amount; return; }   // no stock anywhere: land at home
+                for (int j = 0; j < C; j++)
+                {
+                    double kij = _kern[i * C + j];
+                    target[0][j] += amount * kij * x[0] * _stockByUse[0][j] / denom;
+                    target[1][j] += amount * kij * x[1] * _stockByUse[1][j] / denom;
+                }
+            }
+            else
+            {
+                var stock = _stockByUse[u];
+                double denom = 0;
+                for (int k = 0; k < C; k++) denom += _kern[i * C + k] * stock[k];
+                if (denom <= 1e-9) { target[u][i] += amount; return; }
+                for (int j = 0; j < C; j++)
+                    target[u][j] += amount * _kern[i * C + j] * stock[j] / denom;
+            }
+        }
+
         private void EnsureKernel(WorldState w, int C, EconParams p)
         {
             if (_kernC == C && _kernLambda == p.VacancyKernelLambdaM && _kernScale == w.MetersPerUnit)
@@ -51,7 +93,55 @@ namespace CS2Econ.Core
         public double Get(int cluster, ZoneKind use, ClaimsLedger claims)
         {
             int u = UseIndex(use);
-            return u < 0 ? 0 : ByUse[u][cluster] - claims.Get(cluster, use);
+            if (u < 0) return 0;
+            return ByUse[u][cluster] - ClaimExposure(u, cluster, claims);
+        }
+
+        /// <summary>Pipeline claims seen at a cluster, smeared through the SAME
+        /// kernel as vacancies. This symmetry is load-bearing, not tidiness: a
+        /// unit under construction and a finished vacant unit are the same
+        /// competitive object, so they must have the same spatial footprint.
+        /// Subtracting claims 100% locally while smearing vacancy ~15% locally
+        /// made COMPLETING an empty building raise its own cluster's residual
+        /// demand by ~0.85×units — a ratchet that kept starting towers beside
+        /// standing empties on a ConstructionLag cycle (adversarial review,
+        /// confirmed HIGH). Recomputed lazily and invalidated by the ledger's
+        /// Version so commits inside a refresh window still see each other
+        /// immediately (§4.6 pipeline-not-mirage).</summary>
+        private double ClaimExposure(int u, int cluster, ClaimsLedger claims)
+        {
+            if (_kernC <= 0) return claims.Get(cluster, UseAt(u));
+            if (_claimVersion != claims.Version || _claimField.Length != 6) RebuildClaimField(claims);
+            return _claimField[u][cluster];
+        }
+
+        private static ZoneKind UseAt(int u) => Uses[u];
+
+        private double[][] _claimField = Array.Empty<double[]>();
+        private int _claimVersion = -1;
+
+        private void RebuildClaimField(ClaimsLedger claims)
+        {
+            int C = _kernC;
+            if (_claimField.Length != 6)
+            {
+                _claimField = new double[6][];
+                for (int u = 0; u < 6; u++) _claimField[u] = new double[C];
+            }
+            for (int u = 0; u < 6; u++)
+            {
+                if (_claimField[u].Length != C) _claimField[u] = new double[C];
+                else Array.Clear(_claimField[u], 0, C);
+            }
+            foreach (var kv in claims.Entries)
+            {
+                int u = UseIndex(kv.Key.use);
+                if (u < 0 || kv.Value <= 0) continue;
+                int i = kv.Key.cluster;
+                if ((uint)i >= (uint)C) continue;
+                Spread(u, i, kv.Value, _claimField);
+            }
+            _claimVersion = claims.Version;
         }
 
         /// <summary>seekersBySegment: households currently looking (unhoused +
@@ -166,49 +256,24 @@ namespace CS2Econ.Core
                         ? pl.Units : LandAccounting.UnitsFor(pl.Zoned);
                 }
             }
-            // Residential channels are CROSS-SUBSTITUTABLE: a vacant tower
-            // unit competes for the same seekers a would-be duplex courts.
-            // The cross-shares are exactly the splits the seeker allocation
-            // above uses (0.85/0.15 low-preferring, 0.25/0.75 high-tolerant)
-            // — suppression must mirror the demand structure or tower
-            // vacancies never touch low-density residual and vice versa.
-            double[][] resCross = { new[] { 0.85, 0.15 }, new[] { 0.25, 0.75 } };
-            for (int u = 0; u < 2; u++)
-            {
-                var vac = vacantByUse[u];
-                var x = resCross[u];
+            // Suppression is deposited by the SHARED Spread() used for claims,
+            // so a pipeline unit and a finished vacant unit have identical
+            // footprints (see ClaimExposure).
+            _stockByUse = stockByUse;
+            var supp = new double[6][];
+            for (int u = 0; u < 6; u++) supp[u] = new double[C];
+            for (int u = 0; u < 6; u++)
                 for (int i = 0; i < C; i++)
-                {
-                    if (vac[i] <= 0) continue;
-                    double denom = 0;
-                    for (int k = 0; k < C; k++)
-                        denom += _kern[i * C + k] * (x[0] * stockByUse[0][k] + x[1] * stockByUse[1][k]);
-                    if (denom <= 1e-9) { ByUse[u][i] -= vac[i]; continue; }   // no stock anywhere: land at home
-                    for (int j = 0; j < C; j++)
-                    {
-                        double kij = _kern[i * C + j];
-                        ByUse[0][j] -= vac[i] * kij * x[0] * stockByUse[0][j] / denom;
-                        ByUse[1][j] -= vac[i] * kij * x[1] * stockByUse[1][j] / denom;
-                    }
-                }
-            }
-            for (int u = 2; u < 6; u++)
-            {
-                var vac = vacantByUse[u];
-                var stock = stockByUse[u];
-                for (int i = 0; i < C; i++)
-                {
-                    if (vac[i] <= 0) continue;
-                    double denom = 0;
-                    for (int k = 0; k < C; k++) denom += _kern[i * C + k] * stock[k];
-                    if (denom <= 1e-9) { ByUse[u][i] -= vac[i]; continue; }   // no stock anywhere: land at home
-                    for (int j = 0; j < C; j++)
-                        ByUse[u][j] -= vac[i] * _kern[i * C + j] * stock[j] / denom;
-                }
-            }
-            // NOTE: claims are subtracted LIVE in Get(), not baked at refresh —
-            // commits inside a refresh window must see each other immediately
-            // (the §4.6 pipeline-not-mirage discipline; scrutiny finding #19).
+                    if (vacantByUse[u][i] > 0) Spread(u, i, vacantByUse[u][i], supp);
+            for (int u = 0; u < 6; u++)
+                for (int c = 0; c < C; c++)
+                    ByUse[u][c] -= supp[u][c];
+
+            // Stock moved, so the smeared-claim field's weights are stale.
+            // Claims themselves are still subtracted LIVE in Get() — commits
+            // inside a refresh window must see each other immediately (the
+            // §4.6 pipeline-not-mirage discipline; scrutiny finding #19).
+            _claimVersion = -1;
         }
     }
 

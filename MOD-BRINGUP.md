@@ -126,7 +126,7 @@ vanilla system group in `EconBridgeSystem`):
 |---|---|---|---|
 | 1 | `ShadowAccountingOnly` OFF with only **Tier B** live | demand scalars feed from residuals (`ResidentialDemandSystem` etc.) | demand bars move by district, not citywide; no rent changes yet |
 | 2 | **Tier D** | trade/price plumbing (`TradeSystem`, exporter/buyer prices) | import/export prices bend with volume; no flat-price teleporting |
-| 3 | **Tier C** | `LandValueSystem`, `RentAdjustSystem` (LandValueOverhaul precedent, §6) | rents re-assess gradually (staggered anniversaries — no citywide jump tick); `LandValue` on net edges tracks assessments |
+| 3 | **Tier C** | `LandValueSystem`, `RentAdjustSystem` (LandValueOverhaul precedent, §6) | rents converge to market over the `GoLiveRampTicks` window (staggered per household — no citywide jump tick), then track the parcel's live assessment; `LandValue` on net edges tracks assessments |
 | 4 | **ConstructionRewire** | `ZoneSpawnSystem` site selection | construction localizes to residual hotspots (vacancy-localization behavior from the harness) |
 | 5 | **Tier C2** | leveling/condition (`BuildingUpkeepSystem` seam) | levels drift toward access geography; condition decays only where S is unpaid |
 | 6 | **Tier A** | `HouseholdSpawnSystem` / `HouseholdMoveAwaySystem` | inflow/outflow asymmetry; no population cliff on flip |

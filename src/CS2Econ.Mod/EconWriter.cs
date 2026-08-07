@@ -78,7 +78,8 @@ namespace CS2Econ.Mod
     /// — the captured land flow φ·AssessedLR split over units plus the
     /// structure-tax leg τ_S on per-unit replacement cost (design §4.3). The
     /// ENGINE is the source of truth for household charges (ChargedAssessment,
-    /// set at assessment anniversaries); this mirror prices firm parcels and
+    /// re-rated to the parcel's live market assessment each tick); this
+    /// mirror prices firm parcels and
     /// sanity checks.</summary>
     public static class EconAssess
     {
@@ -112,6 +113,14 @@ namespace CS2Econ.Mod
         /// in shadow mode, so the units already agree; re-calibrate only if the
         /// stage-3 comparison shows a systematic offset.</summary>
         private const double RentScale = 1.0;
+        /// <summary>Rent-write deadband: a change must move at least one money
+        /// unit AND this share of the standing rent to be written through to
+        /// the ECS. The co-op re-rate makes ChargedAssessment drift on EVERY
+        /// household every tick (the old anniversary regime moved 1/30 of
+        /// them); without a band that is an unbounded per-tick write storm on
+        /// PropertyRenter. Sub-threshold drift is not lost — the engine holds
+        /// the true value and it lands on the first write that clears.</summary>
+        private const double RentDeadbandShare = 0.01;
         /// <summary>Inverse of EconReader.Cond01: core condition 0..1 →
         /// money-like m_Condition int (0.5 ↦ 0). KEEP IN LOCKSTEP with
         /// EconReader.ConditionMoneyRange; both are one calibration item
@@ -165,6 +174,16 @@ namespace CS2Econ.Mod
                 RecordConstructionRequests(w);
         }
 
+        /// <summary>Deadband test for rent writes (see RentDeadbandShare).
+        /// Always writes when either side is non-positive so going to/from
+        /// zero rent is never swallowed.</summary>
+        private static bool WorthWriting(int current, int target)
+        {
+            if (current == target) return false;
+            if (current <= 0 || target <= 0) return true;
+            return Math.Abs(target - current) >= Math.Max(1.0, RentDeadbandShare * current);
+        }
+
         private void EnsureQueries(EntityManager em)
         {
             if (_queriesCreated) return;
@@ -185,10 +204,16 @@ namespace CS2Econ.Mod
         // ------------------------------------------------------------------
         private void ApplyRents(EntityManager em, WorldState w, EconParams p)
         {
-            // Households: the engine's per-household charge (S + tax + wedge,
-            // staggered anniversaries — design §3: no citywide re-rate tick;
-            // ChargedAssessment only moves when a household's anniversary
-            // re-assesses it, so most writes below are no-ops).
+            // Households: the engine's per-household charge (S + tax + wedge).
+            // Under the co-op re-rate this tracks the parcel's live market
+            // assessment EVERY tick, so — unlike the old anniversary regime —
+            // the value genuinely drifts on every household continuously.
+            // RentDeadband is what keeps that from becoming an ECS write storm:
+            // only a move of at least one money unit AND RentDeadbandShare of
+            // the current rent is written through. Sub-threshold drift
+            // accumulates in the engine (the source of truth) and lands on the
+            // first write that clears the band, so nothing is lost — only the
+            // ECS traffic is thinned.
             // Pairing is entity-slot → engine id via the reader's id lists;
             // WorldState list position is NOT a valid key (the engine appends
             // its own arrivals/entrants there — EconReader header).
@@ -202,7 +227,7 @@ namespace CS2Econ.Mod
                 if (!em.Exists(e) || !em.HasComponent<Game.Buildings.PropertyRenter>(e)) continue;
                 var pr = em.GetComponentData<Game.Buildings.PropertyRenter>(e);
                 int rent = (int)Math.Round(Math.Max(0.0, h.ChargedAssessment) * RentScale);
-                if (pr.m_Rent != rent)
+                if (WorthWriting(pr.m_Rent, rent))
                 {
                     pr.m_Rent = rent;
                     em.SetComponentData(e, pr);

@@ -30,6 +30,7 @@ namespace CS2Econ.Harness
             TradeLaws(seed);
             WeberRecipeChoice(seed);
             VacancyKernelConservation(seed);
+            ClaimVacancyWash(seed);
             CoopInstantRerate(seed);
             CircularityGuard(seed);
             LedgerConservation(seed);
@@ -306,6 +307,99 @@ namespace CS2Econ.Harness
                   && nearDensity > 4.0 * Math.Max(1e-9, farDensity),
                   $"evicted {evicted} → total suppression {totalDiff:F6}; per-cluster density " +
                   $"within 1.5λ: {nearDensity:F3} (n={nearN}), beyond: {farDensity:F3} (n={farN})");
+        }
+
+        private static void ClaimVacancyWash(ulong seed)
+        {
+            // The claim↔vacancy wash: a unit UNDER CONSTRUCTION and the same
+            // unit COMPLETED-BUT-VACANT are the same competitive object, so
+            // they must suppress demand identically. When claims were netted
+            // 100% locally while vacancy smeared through the kernel (~15% local
+            // retention), COMPLETING an empty building RAISED its own cluster's
+            // residual by ~0.85×units — a ratchet that kept starting towers
+            // beside standing empties (adversarial review, confirmed HIGH).
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(80);
+            var w = sim.W;
+            var eng = sim.Engine;
+            int C = eng.Access.C;
+            var seekers = (double[])eng.SeekersEma.Clone();   // frozen: isolate the supply side
+            var res = new ResidualDemand();
+
+            // Pick the cluster with the most occupied ResidentialLow units.
+            var occ = new int[C];
+            foreach (var pl in w.Parcels)
+                if (pl.State == ParcelState.Built && pl.Use == ZoneKind.ResidentialLow)
+                    occ[pl.Cluster] += pl.OccupantHouseholds.Count;
+            int site = 0;
+            for (int c = 1; c < C; c++) if (occ[c] > occ[site]) site = c;
+
+            res.Refresh(w, eng.Access, eng.Trade, seekers, eng.SegmentPresence, p);
+            var baseline = new double[C];
+            for (int c = 0; c < C; c++) baseline[c] = res.Get(c, ZoneKind.ResidentialLow, w.Claims);
+
+            // (a) as PIPELINE: book a claim of K units at the site.
+            const int K = 20;
+            w.Claims.Add(site, ZoneKind.ResidentialLow, K);
+            var deltaClaim = new double[C];
+            for (int c = 0; c < C; c++)
+                deltaClaim[c] = baseline[c] - res.Get(c, ZoneKind.ResidentialLow, w.Claims);
+            w.Claims.Add(site, ZoneKind.ResidentialLow, -K);
+
+            // (b) as COMPLETED-VACANT: evict at the site and re-refresh on the
+            // SAME seekers. Normalize by the vacancy ACTUALLY created, not by
+            // evictions — warehoused parcels re-let nothing, so the two counts
+            // differ and the invariant under test is the PER-UNIT footprint.
+            double VacAt(int cluster)
+            {
+                double v = 0;
+                foreach (var pl in w.Parcels)
+                    if (pl.Cluster == cluster && pl.State == ParcelState.Built
+                        && pl.Use == ZoneKind.ResidentialLow && !pl.Warehousing) v += pl.Vacant;
+                return v;
+            }
+            double vacBefore = VacAt(site);
+            int evicted = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.Cluster != site || pl.State != ParcelState.Built
+                    || pl.Use != ZoneKind.ResidentialLow || pl.Warehousing) continue;
+                while (pl.OccupantHouseholds.Count > 0 && evicted < K)
+                {
+                    int hid = pl.OccupantHouseholds[pl.OccupantHouseholds.Count - 1];
+                    pl.OccupantHouseholds.RemoveAt(pl.OccupantHouseholds.Count - 1);
+                    w.Households[hid].HomeParcel = -1;
+                    evicted++;
+                }
+                if (evicted >= K) break;
+            }
+            double vacCreated = VacAt(site) - vacBefore;
+            res.Refresh(w, eng.Access, eng.Trade, seekers, eng.SegmentPresence, p);
+            var deltaVac = new double[C];
+            for (int c = 0; c < C; c++)
+                deltaVac[c] = baseline[c] - res.Get(c, ZoneKind.ResidentialLow, w.Claims);
+
+            // Compare PER-UNIT footprints: suppression(cluster) / units emitted.
+            double sumClaim = 0, sumVac = 0, worstGap = 0;
+            for (int c = 0; c < C; c++)
+            {
+                double perClaim = deltaClaim[c] / K;
+                double perVac = vacCreated > 0 ? deltaVac[c] / vacCreated : 0;
+                sumClaim += perClaim;
+                sumVac += perVac;
+                worstGap = Math.Max(worstGap, Math.Abs(perClaim - perVac));
+            }
+            // Local retention must match too — the exact quantity that broke.
+            double localClaim = deltaClaim[site] / K;
+            double localVac = vacCreated > 0 ? deltaVac[site] / vacCreated : 0;
+            Check("claim↔vacancy wash: pipeline and completed-vacant suppress identically",
+                  vacCreated > 5 && worstGap < 0.02
+                  && Math.Abs(localClaim - localVac) < 0.02 && localClaim < 0.9,
+                  $"{K} claimed vs {vacCreated:F0} vacated: worst per-unit gap {worstGap:E1}; " +
+                  $"local retention claim {localClaim:P0} vs vacancy {localVac:P0}; " +
+                  $"low-channel share claim {sumClaim:P0} vs vacancy {sumVac:P0}");
         }
 
         private static void CoopInstantRerate(ulong seed)

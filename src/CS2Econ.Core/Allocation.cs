@@ -33,7 +33,12 @@ namespace CS2Econ.Core
             }
         }
 
-        private static bool DensityFeasible(Segment seg, ZoneKind kind)
+        /// <summary>Can this segment live in this density? Public because the
+        /// migration absorption budget must count only the vacancy an arriving
+        /// segment can LEGALLY occupy — a tower overhang cannot lease to
+        /// Family segments, so admitting arrivals against it is admitting them
+        /// into guaranteed homelessness (adversarial review, confirmed).</summary>
+        public static bool DensityFeasible(Segment seg, ZoneKind kind)
             => kind == ZoneKind.ResidentialLow || seg.DensityTolerance >= 0.5;
 
         /// <summary>Find a home: logit over clusters on (access value − rent

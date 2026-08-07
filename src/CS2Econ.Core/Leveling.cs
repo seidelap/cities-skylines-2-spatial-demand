@@ -45,9 +45,11 @@ namespace CS2Econ.Core
                         w.Ledger.Transfer(Account.PhantomDeveloper, Account.OutsideWorld, cost);
                         pl.Level = pl.TargetLevel;
                         pl.Condition = 1.0;
-                        // Everyone re-anchors at the new cost basis (§4.4); the
-                        // tenant-protection phase-in applies from here via
-                        // anniversaries, not as an exemption from the new basis.
+                        // Everyone re-anchors at the new cost basis (§4.4)
+                        // immediately. Redundant with the co-op re-rate later
+                        // this tick, but keeps the renovation self-contained:
+                        // the new basis is visible to anything reading charges
+                        // between here and RerateAndRelocation.
                         double a = LandAccounting.UnitAssessment(pl, p);
                         foreach (int hid in pl.OccupantHouseholds)
                             w.Households[hid].ChargedAssessment = a;

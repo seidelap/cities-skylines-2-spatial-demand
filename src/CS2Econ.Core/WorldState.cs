@@ -157,11 +157,23 @@ namespace CS2Econ.Core
         private readonly Dictionary<(int cluster, ZoneKind use), double> _claims
             = new Dictionary<(int, ZoneKind), double>();
 
+        /// <summary>Raw claim booked AT a cluster (the site's own pipeline).</summary>
         public double Get(int cluster, ZoneKind use) => _claims.TryGetValue((cluster, use), out var v) ? v : 0;
+
+        /// <summary>Every (cluster, use) carrying a live claim — the emitter set
+        /// ResidualDemand smears through the vacancy kernel.</summary>
+        public IEnumerable<KeyValuePair<(int cluster, ZoneKind use), double>> Entries => _claims;
+
+        /// <summary>Bumped on every mutation so the smeared-claim field can
+        /// invalidate: commits inside a refresh window MUST be visible to later
+        /// deciders in the same window (§4.6 pipeline-not-mirage).</summary>
+        public int Version { get; private set; }
+
         public void Add(int cluster, ZoneKind use, double units)
         {
             _claims.TryGetValue((cluster, use), out var v);
             _claims[(cluster, use)] = Math.Max(0, v + units);
+            Version++;
         }
     }
 
