@@ -472,10 +472,24 @@ namespace CS2Econ.Harness
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             sim.Run(300);
 
+            // Measured on the migration MARGIN (desired inflow), with realized
+            // arrivals reported alongside. Tier A's claim is about how fast the
+            // migration decision responds; realized arrivals are that decision
+            // ANDed with housing absorption, and whenever the absorption budget
+            // binds — which it does in any housing-tight city — realized inflow
+            // is supply-limited and cannot move at all, however attractive the
+            // city becomes. Reporting only the realized number would credit the
+            // absorption constraint with a failure of the migration margin, or
+            // vice versa. Both are printed so the distinction is visible.
+            double realizedIn = 0;
             double ArrivalsOver(int ticks)
             {
                 double n = 0;
-                sim.Run(ticks, s => n += s.Engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0);
+                sim.Run(ticks, s =>
+                {
+                    n += s.Engine.LastFlows.DesiredBySegment?.Sum() ?? 0;
+                    realizedIn += s.Engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0;
+                });
                 return n;
             }
             double DeparturesOver(int ticks)
@@ -499,7 +513,8 @@ namespace CS2Econ.Harness
             double outResponse = Math.Max(1, bustOut - baseOut);
             bool pass = inResponse > 1.5 * outResponse;
             Record("boom/bust asymmetry: inflow reacts faster than outflow", pass,
-                $"arrival response +{inResponse:F0} vs departure response +{outResponse:F0} over equal windows/pulse");
+                $"migration-margin response +{inResponse:F0} vs departure response +{outResponse:F0} " +
+                $"over equal windows/pulse ({realizedIn:F0} arrivals realized after absorption)");
         }
 
         // ------------------------------------------------------------------

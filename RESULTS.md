@@ -99,3 +99,31 @@ occupancy term — so a cluster emptying out at fixed citywide population does n
 by itself soften its rent. The price responds to **population** and to **stock**,
 which is a real and useful quantity channel, but the occupancy channel remains
 an open gap (see Known gaps).
+
+## Experiment: is the vacancy kernel redundant once prices clear?
+
+The clearing price and the vacancy kernel are two spatial mechanisms, and the
+kernel adds a second decay parameter (λ, in metres) on top of the one the choice
+model already carries (θ, in the access weights). If clearing prices did the
+spatial work, λ could be raised toward irrelevance and the kernel retired.
+`harness lambdasweep` runs the disk-shock experiment across λ:
+
+| λ (m) | interior suppression | beyond spillover | localization |
+|---|---|---|---|
+| 200 | 15.71 | 0.00 | **314:1** |
+| 800 (default) | 16.57 | 0.15 | **110:1** |
+| 3,200 | 9.44 | 0.80 | **12:1** |
+| 12,800 | 6.32 | 1.70 | **3.7:1** |
+| ∞ (no kernel) | 5.07 | 2.15 | **2.4:1** |
+
+**The kernel is not redundant.** Localization degrades monotonically with λ and
+collapses to 2.4:1 without it — far below the §6 target of 10:1. Prices carry
+part of the spatial signal (2.4:1 is not 1:1) but nothing like the whole of it.
+At λ → ∞ the suppression is smeared so uniformly that interior starts fall to 0
+against 108 in the control: a citywide vacancy signal stops construction
+*everywhere* rather than where the vacancy is.
+
+This refutes the hypothesis that motivated the experiment. Recorded because a
+negative result on one's own conjecture is the useful kind: λ = 800 m stays, and
+the two decays are doing different jobs — θ governs where people *look*, λ
+governs which units *compete*.

@@ -87,13 +87,30 @@ namespace CS2Econ.Core
             // a tower overhang is worth little to a family but not nothing, so
             // it neither fully counts toward their absorption budget nor is
             // excluded from it.
-            double vacantLow = 0, vacantHigh = 0;
+            double vacantLow = 0, vacantHigh = 0, occupiedLow = 0, occupiedHigh = 0;
+            double pipelineLow = 0, pipelineHigh = 0;
             foreach (var pl in w.Parcels)
             {
+                bool high = pl.Use == ZoneKind.ResidentialHigh;
+                if (pl.State == ParcelState.UnderConstruction && pl.IsResidential)
+                {
+                    // Units completing shortly are absorbable supply: a mover
+                    // signs for a home before it is finished.
+                    if (high) pipelineHigh += pl.Units; else pipelineLow += pl.Units;
+                    continue;
+                }
                 if (pl.State != ParcelState.Built || !pl.IsResidential || pl.Warehousing) continue;
                 int v = pl.Vacant;
-                if (pl.Use == ZoneKind.ResidentialHigh) vacantHigh += v; else vacantLow += v;
+                double occ = Math.Max(0, pl.Units - v);
+                if (high) { vacantHigh += v; occupiedHigh += occ; }
+                else { vacantLow += v; occupiedLow += occ; }
             }
+            // Available-unit FLOW, not vacancy stock: standing vacancy leasing
+            // up, plus the pipeline, plus ordinary churn out of occupied stock.
+            double flowLow = p.VacancyFillHazard * (vacantLow + pipelineLow)
+                             + p.HousingTurnoverRate * occupiedLow;
+            double flowHigh = p.VacancyFillHazard * (vacantHigh + pipelineHigh)
+                              + p.HousingTurnoverRate * occupiedHigh;
 
             // Pass 1: desired inflow per segment (uncapped Rosen–Roback gap).
             double desiredTotal = 0;
@@ -116,10 +133,10 @@ namespace CS2Econ.Core
             // the same stock; draw realized flows.
             for (int s = 0; s < nSeg; s++)
             {
-                // Effective vacancy for THIS segment: low-density stock in full
-                // plus high-density stock discounted by its appeal.
+                // Absorbable flow for THIS segment: low-density supply in full
+                // plus high-density supply discounted by its appeal.
                 double appealHigh = Segment.All[s].DensityAppeal(ZoneKind.ResidentialHigh);
-                double budget = p.VacancyFillHazard * (vacantLow + appealHigh * vacantHigh);
+                double budget = flowLow + appealHigh * flowHigh;
                 double segScale = desiredTotal > budget && desiredTotal > 1e-9
                     ? budget / desiredTotal : 1.0;
                 double inRate = flows.DesiredBySegment[s] * segScale;

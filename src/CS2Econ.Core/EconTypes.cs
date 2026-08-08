@@ -218,6 +218,15 @@ namespace CS2Econ.Core
         /// that paces in-migration (arrivals ≤ hazard × vacant stock). Its
         /// inverse is mean time-to-fill in ticks (≈ days on market).</summary>
         public double VacancyFillHazard = 1.0 / 60.0;
+        /// <summary>Share of OCCUPIED units that come back on the market each
+        /// tick through ordinary churn — deaths, departures, households moving
+        /// within the city. Absorption is a FLOW of units becoming available,
+        /// not a stock of standing vacancy: a city at ~100% occupancy still
+        /// re-lets homes continuously, and budgeting arrivals against standing
+        /// vacancy alone froze the economy the moment allocation got efficient
+        /// enough to fill everything (arrivals → 0 → no growth → no
+        /// construction → no leveling).</summary>
+        public double HousingTurnoverRate = 0.004;
 
         // ---- access (design §4.2) -------------------------------------------
         public double ThetaCommute = 0.055;       // e^(−θc) decay, c in generalized minutes
@@ -229,7 +238,19 @@ namespace CS2Econ.Core
 
         // ---- bids -----------------------------------------------------------
         public double PremiumExponent = 2.2;      // convexity of the location premium
-        public double BidAccessScale = 0.47;      // rent willingness below the WTP cap: occupants keep surplus
+        /// <summary>Scale from a segment's rent CAP to the bid it actually
+        /// makes. Under the old presence-weighted MEAN bid this stood in for
+        /// "occupants keep surplus" — the average bidder pays less than their
+        /// ceiling. Under marginal-bidder clearing that adjustment is already
+        /// in the mechanism: the price IS the marginal bidder's willingness to
+        /// pay, and the marginal bidder by construction retains no surplus,
+        /// while everyone above them retains theirs automatically. Keeping the
+        /// old 0.47 therefore discounted the competitive price a second time,
+        /// pushing bids below structure cost across most of the map, flattening
+        /// ℓ* and thinning land rent. Raised to 1.0 so the clearing price is the
+        /// competitive price; heterogeneity and surplus now come from where
+        /// they belong — the queue.</summary>
+        public double BidAccessScale = 1.0;
         public double CommercialMarkup = 0.35;    // gross margin on captured spending
         public double OfficeOutputPrice = 3.1;    // near-exogenous (design §4.2)
 
