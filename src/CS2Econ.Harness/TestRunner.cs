@@ -381,7 +381,48 @@ namespace CS2Econ.Harness
             bool demandMonotone = dLow <= dMid + 1e-9 && dMid <= dHigh + 1e-9 && dHigh > dLow + 1e-6
                 && (dLow < dMid - 1e-9 || fdLow < fdMid - 1e-9);
 
-            // (c) population collapse: with the flat-tail excess price the
+            // (c) the excess price is pinned to the DEMAND CURVE, not to any
+            // constant or marked-up level. In a single-segment market the
+            // demand curve is one flat tranche, so the cleared read (small
+            // stock) and the flat-tail excess anchor (huge stock) must be
+            // EQUAL — a glut priced even a few percent above its own
+            // scarcity price re-opens the reverted inversion — and the level
+            // must differ across segments of different means. Both mutants
+            // that survived the previous suite ('return 1.0' and
+            // 'wtp[n-1] * 1.05') die on these two assertions. Runs BEFORE
+            // the population-collapse leg: the cull halves presence, and a
+            // typical single segment's mass at c0 then no longer covers even
+            // the stock-1 read, so every probe would be skipped as vacuous.
+            bool tailPinned = true; int tailChecked = 0;
+            double tailRich = 0, tailPoor = double.MaxValue;
+            var presOne = new double[Segment.Count];
+            for (int s = 0; s < Segment.Count; s++)
+            {
+                if (pres[s] < 50) continue;
+                Array.Clear(presOne, 0, presOne.Length);
+                presOne[s] = pres[s];
+                double savedStock = acc.HousingStock[0][c0];
+                acc.HousingStock[0][c0] = 1;            // scarce: cleared inside the flat tranche
+                double cleared1 = LandAccounting.ResidentialBidPerUnit(
+                    acc, c0, ZoneKind.ResidentialLow, 2, presOne, p, out double fillC);
+                acc.HousingStock[0][c0] = 1e6;          // glut: flat-tail anchor, same tranche
+                double excess1 = LandAccounting.ResidentialBidPerUnit(
+                    acc, c0, ZoneKind.ResidentialLow, 2, presOne, p, out double fillOne);
+                acc.HousingStock[0][c0] = savedStock;
+                // Only segments that produce a GENUINE contrast count: the
+                // scarce read must actually clear and the glut read must
+                // actually be excess, else the equality is vacuous (both
+                // sides through the same branch would hide a uniform markup).
+                if (cleared1 <= 0 || fillC < 1.0 - 1e-9 || fillOne >= 0.5) continue;
+                tailChecked++;
+                if (Math.Abs(excess1 - cleared1) > 1e-9 * Math.Max(1, cleared1))
+                    tailPinned = false;
+                tailRich = Math.Max(tailRich, excess1);
+                tailPoor = Math.Min(tailPoor, excess1);
+            }
+            bool tailDiffers = tailChecked >= 2 && tailRich > tailPoor * 1.05;
+
+            // (d) population collapse: with the flat-tail excess price the
             // response is regime-dependent — price falls while the submarket
             // clears, expected fill falls once it does not. Composition drift
             // (WHO remains changes the tail tranche's value) may nudge the
@@ -403,10 +444,13 @@ namespace CS2Econ.Harness
                            || (fillAfter < fillBefore - 0.02 && after < before * 1.10);
 
             Check("clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)",
-                  supplyMonotone && demandMonotone && killed > 100 && softens,
+                  supplyMonotone && demandMonotone && killed > 100 && softens && tailPinned && tailDiffers,
                   $"supply×{{0.5,2,8}} → {pLow:F2}/{pMid:F2}/{pHigh:F2} (fill {fMid:F2}→{fHigh:F2}); " +
                   $"demand×{{0.5,1,2}} → {dLow:F2}/{dMid:F2}/{dHigh:F2} (fill {fdLow:F2}→{fdMid:F2}); " +
-                  $"after {killed} citywide exits bid {before:F2} → {after:F2}, fill {fillBefore:F2} → {fillAfter:F2}");
+                  $"after {killed} citywide exits bid {before:F2} → {after:F2}, fill {fillBefore:F2} → {fillAfter:F2}; " +
+                  $"single-segment glut == scarcity price on {tailChecked} segments " +
+                  $"({(tailPinned ? "pinned" : "NOT pinned")}" +
+                  $"{(tailChecked >= 2 ? $", tail spans {tailPoor:F2}–{tailRich:F2}" : "")})");
         }
 
         private static void OccupiedStockCarriesRent(ulong seed)
@@ -546,6 +590,7 @@ namespace CS2Econ.Harness
                     if (f0 >= 1.0 - 1e-9) c0 = c;
                 }
             }
+            bool clearedSelected = c0 >= 0;
             if (c0 < 0) c0 = cBig;
             double stock = acc.HousingStock[0][c0];
             double[] saved = { acc.FillEma[0][c0], acc.FillEma[1][c0] };
@@ -569,17 +614,25 @@ namespace CS2Econ.Harness
             // Once demand exhausts, the price floors flat at the deepest
             // positive bidder (cutting below them buys no tenant that
             // exists) and the channel's response moves to expected FILL —
-            // the vacancy deepens instead. Either margin must respond.
+            // the vacancy deepens instead. On a CLEARED-selected cluster the
+            // price leg is REQUIRED: the vacancy leg's fill response is
+            // mass-proportional by construction, so letting it rescue a
+            // failed price leg there let a constant-price mutant through
+            // (adversarial review, measured). The vacancy leg is only a
+            // valid outcome on the fallback cluster, where no cleared
+            // submarket existed to probe.
             bool priceLeg = bidEmpty < bidFull * 0.95;
             bool vacancyLeg = bidEmpty <= bidFull * 1.001 && fillEmpty < fillFull * 0.8;
+            bool channelResponds = clearedSelected ? priceLeg : (priceLeg || vacancyLeg);
 
             double meanErr = compared > 0 ? sumErr / compared : 1;
             Check("occupancy channel: realized vacancy softens rent (price while cleared, deeper vacancy once floored)",
-                  compared >= 10 && meanErr < 0.06 && worstErr < 0.5 && (priceLeg || vacancyLeg),
+                  compared >= 10 && meanErr < 0.06 && worstErr < 0.5 && channelResponds,
                   $"FillEma tracks measured occupancy on {compared} submarkets " +
                   $"(mean err {meanErr:F3}, worst {worstErr:F2}); " +
-                  $"cluster {c0} bid {bidFull:F3} (fill {fillFull:F2}) at full occupancy → " +
-                  $"{bidEmpty:F3} (fill {fillEmpty:F2}) at 20 % ({(priceLeg ? "price leg" : "vacancy leg")})");
+                  $"cluster {c0} ({(clearedSelected ? "cleared" : "fallback")}) bid {bidFull:F3} (fill {fillFull:F2}) " +
+                  $"at full occupancy → {bidEmpty:F3} (fill {fillEmpty:F2}) at 20 % " +
+                  $"({(priceLeg ? "price leg" : vacancyLeg ? "vacancy leg" : "NO response")})");
         }
 
         private static void ClaimVacancyWash(ulong seed)

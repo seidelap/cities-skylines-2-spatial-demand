@@ -15,35 +15,35 @@ Seed: 20260806.
 - ✅ **road export law concave (d=2), rail linear (d=1)**: road drops 0.5368>0.4119; rail drops 0.216000≈0.216000
 - ✅ **multimodal composition = horizontal summation (vs brute force)**: clear 2502.35 vs brute 2502.35 (clear/brute per exit: e0:150/150 e1:175/175 e2:275/275)
 - ✅ **transient impact layer decays at resilience rate**: burst 490.0 -> 416.5
-- ✅ **Weber: extraction follows geology; recipes follow input sourcing**: 10 extractors (100 % on best raw); 15 single-input industrials (80 % on cheapest-sourced recipe); 3 distinct industrial outputs
+- ✅ **Weber: extraction follows geology; recipes follow input sourcing**: 11 extractors (100 % on best raw); 13 single-input industrials (100 % on cheapest-sourced recipe); 3 distinct industrial outputs
 - ✅ **vacancy kernel: V=1 conservation, suppression density falls with distance**: evicted 60 → total suppression 60.000000; per-cluster density within 1.5λ: 4.382 (n=9), beyond: 0.226 (n=91)
 - ✅ **claim↔vacancy wash: pipeline and completed-vacant suppress identically**: 20 claimed vs 14 vacated: worst per-unit gap 1.8E-016; local retention claim 27 % vs vacancy 27 %; low-channel share claim 83 % vs vacancy 83 %
-- ✅ **occupancy channel: realized vacancy softens rent (price while cleared, deeper vacancy once floored)**: FillEma tracks measured occupancy on 89 submarkets (mean err 0.001, worst 0.03); cluster 50 bid 0.808 (fill 0.50) at full occupancy → 0.808 (fill 0.20) at 20 % (vacancy leg)
-- ✅ **clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)**: supply×{0.5,2,8} → 2.33/1.24/1.24 (fill 0.30→0.07); demand×{0.5,1,2} → 1.24/1.24/2.33 (fill 0.30→0.59); after 420 citywide exits bid 1.24 → 1.30, fill 0.59 → 0.31
-- ✅ **occupied stock carries land rent in BOTH densities (per-kind commensurability)**: high: best-access quartile 50/50 with LR>0, ΣLR 3994.4, 196/203 overall at 99 % occupancy; low: quartile 94/96, ΣLR 327.1, 306/384 overall at 100 %
-- ✅ **co-op re-rate: one price per unit, tracking the live market assessment**: 133/133 multi-tenant parcels uniform; worst |charged − market|/market = 2.7E-004
-- ✅ **circularity guard: assessment blind to own realized rent**: LR 35.9090 (> 0) unchanged under 17.5× realized-rent perturbation
-- ✅ **ledger conservation: money neither created nor destroyed**: max |drift| over 300 ticks = 5.10E-007
+- ✅ **occupancy channel: realized vacancy softens rent (price while cleared, deeper vacancy once floored)**: FillEma tracks measured occupancy on 89 submarkets (mean err 0.004, worst 0.14); cluster 32 (cleared) bid 1.271 (fill 1.00) at full occupancy → 1.006 (fill 0.48) at 20 % (price leg)
+- ✅ **clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)**: supply×{0.5,2,8} → 2.71/1.36/1.36 (fill 0.31→0.08); demand×{0.5,1,2} → 1.36/1.36/2.71 (fill 0.31→0.61); after 420 citywide exits bid 1.36 → 1.34, fill 0.61 → 0.31; single-segment glut == scarcity price on 2 segments (pinned, tail spans 3.26–5.41)
+- ✅ **occupied stock carries land rent in BOTH densities (per-kind commensurability)**: high: best-access quartile 48/48 with LR>0, ΣLR 4232.1, 185/192 overall at 99 % occupancy; low: quartile 94/96, ΣLR 323.0, 320/387 overall at 100 %
+- ✅ **co-op re-rate: one price per unit, tracking the live market assessment**: 133/133 multi-tenant parcels uniform; worst |charged − market|/market = 0.0E+000
+- ✅ **circularity guard: assessment blind to own realized rent**: LR 33.8236 (> 0) unchanged under 17.5× realized-rent perturbation
+- ✅ **ledger conservation: money neither created nor destroyed**: max |drift| over 300 ticks = 3.90E-007
 - ✅ **shadow accounting: assessed + logged, nothing levied (stage 3)**: assessments computed: True, escrow balance: 0.00
 - ✅ **insolvency pipeline: staged, ordered, terminates**: stages: Solvent→CutConsumption→SortDown→Sheltered
-- ✅ **no stuck homeless population (vanilla bug-class regression)**: longest non-decreasing shelter streak 3 ticks
-- ✅ **feature flags: vanilla-mode fallback runs (every tier revertible)**: pop 1699 (sane bounds), drift -1.8E-006
-- ✅ **determinism: same seed → identical telemetry hash**: h(seed)=56D326255265C9BA twice, h(seed+1)=A6EBC104F59E17D2
+- ✅ **no stuck homeless population (vanilla bug-class regression)**: longest non-decreasing shelter streak 27 ticks
+- ✅ **feature flags: vanilla-mode fallback runs (every tier revertible)**: pop 1704 (sane bounds), drift -1.8E-006
+- ✅ **determinism: same seed → identical telemetry hash**: h(seed)=CE3ADC3242E02858 twice, h(seed+1)=99950CD3A2A2F215
 
 ## Acceptance scenarios (10 targets, 9 passing)
 
 | §6 target | result | measured |
 |---|---|---|
-| vacancy suppression concentrates at the shock (vanilla: uniform) | ❌ | spatial: spatial-excess suppression interior 2.1/cluster vs beyond-spillover -0.9 → contrast 2.1 units/cluster (raw 4.2/0.9, level 2.1/1.7); interior unit-starts 0 concentrated vs 0 same-size uniform exits (37 no-shock); beyond 60→1 (26 treated / 64 buffered); vanilla: spatial-excess suppression interior 3.2/cluster vs beyond-spillover -1.2 → contrast 3.2 units/cluster (raw 2.0/-0.3, level -1.2/0.9); interior unit-starts 14 concentrated vs 58 same-size uniform exits (246 no-shock); beyond 470→142 (26 treated / 64 buffered) |
+| vacancy suppression concentrates at the shock (vanilla: uniform) | ❌ | spatial: spatial-excess suppression interior 1.9/cluster vs beyond-spillover -0.4 → contrast 1.9 units/cluster (raw 2.6/1.0, level 0.6/1.4); interior unit-starts 26 concentrated vs 18 same-size uniform exits (67 no-shock); beyond 26→27 (26 treated / 64 buffered); vanilla: spatial-excess suppression interior 3.8/cluster vs beyond-spillover -0.9 → contrast 3.8 units/cluster (raw 3.1/-0.9, level -0.7/-0.0); interior unit-starts 60 concentrated vs 36 same-size uniform exits (168 no-shock); beyond 474→114 (26 treated / 64 buffered) |
 | level map correlates with access (rank corr vs ℓ*, not grind) | ✅ | Spearman(realized level, ℓ*) spatial 0.51 vs vanilla 0.03 |
-| fiscal loop: transit raises LR revenue along its corridor | ✅ | corridor +90.7% vs control -33.5% within 60 ticks |
-| monoculture export bends marginal price ≥30% below flat | ✅ | sustained 126/tick, marginal 1.75 vs flat 2.60 → bend 33 % |
+| fiscal loop: transit raises LR revenue along its corridor | ✅ | corridor +86.2% vs control -31.9% within 60 ticks |
+| monoculture export bends marginal price ≥30% below flat | ✅ | sustained 141/tick, marginal 1.54 vs flat 2.60 → bend 41 % |
 | truck→rail→backstop progression by volume; concurrent marginals equalize | ✅ | export ramp 8→950/tick: road 72 % at <60 (n=50) → 22 % at ≥600; rail 28 %→59 % at mid (n=172); sea 30 % at top (n=336); concurrent marginal gap 0.0 % |
-| boom/bust asymmetry: inflow reacts faster than outflow | ✅ | migration-margin response +1156 vs departure response +1 over equal windows/pulse (2184 arrivals realized after absorption) |
-| no synchronized displacement: exit times form a distribution | ✅ | 8991 exits (141 housed displaced, 8641 failed arrivals, 209 relocations), worst single tick 0.3 % (cliff would be ≫5%) |
-| stalled construction appears in engineered busts | ✅ | 36 abandoned mid-build after demand collapse; at bust 29 in flight of which 5 early-stage (163 lifetime starts) |
-| overlay honesty: correction factors bounded and settling | ✅ | 124 realized-vs-predicted observations; factor range [0.95,1.09], late swing 0.00 |
-| Tier B refresh scales with clusters, not parcel count | ✅ | refresh 3.7 ms at 8 parcels/cluster vs 4.3 ms at 16 → ratio 1.16 (cluster count fixed) |
+| boom/bust asymmetry: inflow reacts faster than outflow | ✅ | migration-margin response +1008 vs departure response +1 over equal windows/pulse (2185 arrivals realized after absorption) |
+| no synchronized displacement: exit times form a distribution | ✅ | 9114 exits (131 housed displaced, 8716 failed arrivals, 267 relocations), worst single tick 0.3 % (cliff would be ≫5%) |
+| stalled construction appears in engineered busts | ✅ | 14 abandoned mid-build after demand collapse; at bust 24 in flight of which 15 early-stage (140 lifetime starts) |
+| overlay honesty: correction factors bounded and settling | ✅ | 122 realized-vs-predicted observations; factor range [0.99,1.07], late swing 0.05 |
+| Tier B refresh scales with clusters, not parcel count | ✅ | refresh 3.8 ms at 8 parcels/cluster vs 4.3 ms at 16 → ratio 1.13 (cluster count fixed) |
 
 ## What the audit changed (and what it caught)
 
@@ -128,33 +128,16 @@ reverted once churnprobe disproved its justification.)
 
 ## The one open target
 
-**Vacancy localization** remains unmet, and the honest reading changed
-with the audit. The instrument is degenerate on this build: the shock
-arms build zero interior starts in the measurement window, so the
-triple-difference has no baseline to difference against and the level
-correction dominates the contrast. (The monoculture bend, which briefly
-failed the ≥30% inequality at the fourth decimal under the interim
-calibration, reads 33% again.) The direct dose-response experiment
-(`harness lambdasweep` — same disk shock, only the kernel reach λ varies)
-on the corrected economy:
-
-| λ (m) | interior suppression | beyond spillover | localization |
-|---|---|---|---|
-| 200 | 3.36 | 0.84 | 4.0:1 |
-| 800 (shipped) | 3.45 | 0.83 | 4.2:1 |
-| 3,200 | 2.73 | 0.84 | 3.3:1 |
-| 12,800 | 2.87 | 1.20 | 2.4:1 |
-| ∞ (no kernel) | 2.80 | 1.07 | 2.6:1 |
-
-The kernel still contributes — localization falls ~1.6× when it is
-removed, and the gradient is monotone through map scale — but the
-dramatic ratios measured before the audit (314:1 at λ=200) were partly
-artifacts of the pricing bugs this pass fixed. Under honest prices the
-mechanism is real and modest, and the §6 "≥10:1" bar is not met on this
-instrument. Both the bar and the instrument deserve a redesign
-(suppression measured against a construction-active baseline, not a
-built-out one) before the number is treated as a verdict on the
-mechanism.
+**Vacancy localization** remains unmet, and the instrument is the
+suspect: the shock arms build almost no interior starts in the
+measurement window, so the triple-difference has little baseline to
+difference against and the level correction dominates the contrast.
+The kernel's direct dose-response evidence is discussed under the
+λ-sweep section below — under the final pricing, single-seed variance
+dominates and a multi-seed design is needed before the §6 "≥10:1" bar
+can be treated as a verdict on the mechanism. Both the bar and the
+instrument need a redesign (suppression measured against a
+construction-active baseline, not a built-out one).
 
 ## Excess-supply pricing: the revenue-max rule, measured to its stable form
 
@@ -206,3 +189,73 @@ Measured consequences of the shipped rule (same seeds as above):
   its zero-anchor pathology are gone; an emptied submarket now bottoms
   out at its poorest real bidder's WTP instead of zero, which is also a
   saner refill incentive.
+
+## Second adversarial review: the flat tail, hardened
+
+A fresh review pass (three lenses, independent refuters, mutation
+testing) on the flat-tail pricing confirmed six findings; all are fixed
+or documented:
+
+- **The presence≥1 gate broke the monotonicity story** (HIGH, measured):
+  scaling presence down, the excess price sat flat for three orders of
+  magnitude of demand mass, then jumped 1.08 → 2.69 → 4.30 → 7.34 →
+  21.96 as segments crossed the gate — demand falling, price rising
+  20×. The tail anchor was a pure VALUE with no mass requirement.
+  Fixed: the anchor now requires a small minimum of cumulative mass
+  behind it (`MinTailMass` = 0.05, a dust guard), so a segment's last
+  remnant near the gate cannot anchor and its disappearance moves
+  nothing. A first attempt at 0.5 was itself caught by the suite —
+  real thin tranches carry mass 0.1–1, and the bigger floor skipped
+  them, breaking boundary continuity and the demand ladder — which is
+  why the guard is calibrated to dust, not to robustness.
+- **Zero-mass tranches could anchor** (MEDIUM, measured): a
+  zero-capacity cluster (every share exactly 0) still priced at 3.49
+  and assessed paper LR 4.88 on a market with no demand at all. Fixed:
+  zero-mass entries are filtered from the queue, and a curve with less
+  than the dust threshold of total mass prices at 0.
+- **Two mutants survived the previous suite** (HIGH): replacing the
+  tail with `return 1.0` (price decoupled from every bidder) and with
+  `wtp[n-1] * 1.05` (the reverted glut-above-scarcity inversion, in
+  miniature) both passed 21/21 — the restated checks accepted a
+  fill-only response wherever the price was flat. Fixed with a
+  single-segment probe: in a one-segment market the demand curve is one
+  flat tranche, so the cleared read and the excess anchor must be
+  EXACTLY equal (kills the markup) and must differ across segments of
+  different means (kills the constant). Shipped: pinned on 2 segments,
+  tail spanning 3.26–5.41.
+- **The occupancy check's leg preference lived only in cluster
+  selection** (HIGH): the vacancy leg could still rescue a failed price
+  leg on the preferred cleared cluster — the constant mutant passed
+  that way. Fixed: on a cleared-selected cluster the price leg is
+  required; the vacancy leg is valid only on the fallback. Shipped
+  margin is now real: cluster 32 prices 1.271 → 1.006 (−21%) as
+  occupancy collapses.
+- **`addUnits` is a no-op in the excess regime** (MEDIUM): the flat
+  tail is supply-invariant, so adding units into a glut does not lower
+  the candidate's price — only its expected fill. Currently harmless
+  (tail bids sit below structure cost, and construction has a separate
+  absorption gate); documented as a caveat where the addUnits doc
+  overstated the discipline.
+- One finding was refuted by its verifier (the softens-leg tolerance
+  being half-consumed at baseline) and left as-is.
+
+Remaining known property, documented rather than engineered away: with
+8 discrete segments the excess price is the WTP surface of the poorest
+segment with real mass, so extinction of such a segment still re-rates
+excess submarkets together (measured tranche gaps: +3% to +107%), and
+the instant co-op re-rate delivers that in one tick. The structural fix
+would be intra-segment WTP dispersion (each tranche a declining line,
+making the demand curve strictly decreasing and the anchor move
+continuously) — a design upgrade consistent with the
+MarginalIncomeQuantile story, deliberately not bolted on in this pass.
+
+## λ-sweep under the final pricing: variance now dominates
+
+Re-run on the shipped build (single seed): 2.3:1 (λ=200m), 5.4:1
+(800m, shipped), 3.3:1 (3.2km), 3.5:1 (12.8km), 3.3:1 (no kernel).
+Shipped-vs-none still reads ~1.6×, but λ=200 reads BELOW no-kernel —
+per-seed noise now swamps the gradient that looked monotone on earlier
+builds. The honest statement: the kernel's contribution is real but
+modest, and establishing (or refuting) the dose-response now requires a
+multi-seed design; the single-seed table is no longer evidence of a
+monotone gradient.

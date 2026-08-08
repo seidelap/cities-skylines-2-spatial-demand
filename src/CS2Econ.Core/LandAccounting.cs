@@ -72,15 +72,18 @@ namespace CS2Econ.Core
         /// affordability gate stops bidders below P from taking units, so
         /// fill settles near the curve's depth without explicit rationing.
         ///
-        /// The zero-WTP filter guards both regimes: a segment with zero
-        /// expected income contributes no demand, so its mass must not fake
-        /// a cleared market, and its worthless tranche must not become the
-        /// flat tail's anchor. KNOWN SENSITIVITY: because the logit shares
-        /// are strictly positive, the tail tranche is in practice the
-        /// POOREST segment with citywide presence — the excess price is
-        /// that segment's WTP surface, and a poor segment's presence
-        /// crossing the ≥1 gate re-rates excess submarkets together. The
-        /// filter bounds this from below; it does not remove it.
+        /// Two filters guard both regimes: zero-WTP entries (a segment with
+        /// zero expected income contributes no demand) and zero-MASS entries
+        /// (a positive WTP with no mass behind it is not a bid) are excluded
+        /// from the queue, and the flat tail additionally requires its
+        /// anchor tranche to carry a small minimum of cumulative mass
+        /// (MinTailMass, a dust guard) — so a segment's last remnant near
+        /// the presence gate or a zero-capacity cluster's empty shares can
+        /// neither fake market depth nor set the price. KNOWN PROPERTY:
+        /// the excess price is the WTP surface of the poorest segment with
+        /// REAL mass here — extinction of such a segment still re-rates
+        /// excess submarkets together, which is the market changing, not an
+        /// artifact; the instant co-op re-rate delivers it in one tick.
         ///
         /// Neither regime is the max bidder (one rich eccentric re-rating a
         /// building — the affordability spiral this replaced) nor the
@@ -101,7 +104,12 @@ namespace CS2Econ.Core
         /// units displaced existing ones, overstating land rent exactly where
         /// stock already stands. minSupply: floor for configurations whose
         /// units are ALREADY in the stock count (the standing building itself)
-        /// but may not have been seen by the last refresh.
+        /// but may not have been seen by the last refresh. CAVEAT: in the
+        /// excess regime the flat tail is supply-invariant, so addUnits does
+        /// not lower the PRICE of adding units into a glut (only fillRatio
+        /// falls); the discipline against overbuilding there comes from the
+        /// tail sitting below structure cost on current calibration and from
+        /// construction's separate absorption gate, not from this term.
         ///
         /// Density appeal enters HERE, on the WTP leg, and only here. An
         /// earlier build also weighted the demand share by appeal (the
@@ -156,19 +164,25 @@ namespace CS2Econ.Core
                 // A zero-WTP entry is not a bidder: it demands no unit at any
                 // positive price, so its mass must neither fake market depth
                 // (pulling the cleared-regime read into worthless tranches)
-                // nor pad the queue. The excess regime would ignore it anyway
-                // (the revenue argmax never prices into n × 0).
+                // nor pad the queue.
                 if (wtp[n] <= 1e-12) continue;
                 // How many of this segment want THIS (kind, cluster) — the
                 // share is normalized over kind AND cluster, so it is
                 // commensurate with the per-kind stock below. A per-cluster
                 // share here double-counts every density-tolerant household
-                // across both queues.
+                // across both queues. A zero-MASS entry is not a bidder
+                // either: a cluster with no capacity of this kind has every
+                // share at exactly 0, and an entry with WTP but no mass used
+                // to anchor the flat tail with a price nobody was actually
+                // bidding — paper land rent on a market with no demand mass
+                // (adversarial review, measured: bid 3.49 / LR 4.88 on a
+                // capacity-0 cluster, fillRatio 0).
                 int ki = highDensity ? 1 : 0;
                 double share = acc.SegmentKindShare.Length > s
                                && acc.SegmentKindShare[s][ki].Length > cluster
                     ? acc.SegmentKindShare[s][ki][cluster] : 0;
                 mass[n] = pres * share;
+                if (mass[n] <= 1e-12) continue;
                 n++;
             }
             if (n == 0) return 0;
@@ -210,25 +224,60 @@ namespace CS2Econ.Core
             }
 
             // EXCESS-SUPPLY regime: demand exhausts before the stock fills.
-            // Price FLAT at the deepest positive bidder — cutting further
-            // gains no tenant that exists, so it is pure revenue loss (the
-            // revenue-max argument at the only point it binds monotonically).
-            // The shortfall surfaces as VACANCY, reported via fillRatio.
-            // NOTE the old proportional decay was ALSO continuous at the
-            // regime boundary and weakly monotone in supply and demand; what
-            // distinguishes the flat tail is the no-pointless-discount
-            // principle above, plus the jump the unconstrained revenue-max
-            // showed it must not have (supply×2 read 2.71 vs 1.77 at ×0.5,
-            // rents rising as population fled — measured, reverted).
-            // Monotonicity here is with respect to SCALING a fixed
-            // composition; a poor segment entering or leaving citywide
-            // presence still moves the tail's VALUE (see the header note).
+            // Price FLAT at the deepest positive bidder BACKED BY REAL MASS —
+            // cutting below the last real bidder gains no tenant that exists,
+            // so it is pure revenue loss (the revenue-max argument at the
+            // only point it binds monotonically). The shortfall surfaces as
+            // VACANCY, reported via fillRatio.
+            //
+            // The anchor walks back from the curve's end accumulating mass
+            // and stops at the deepest tranche with at least MinTailMass
+            // behind it. Without this, the anchor was a pure VALUE with no
+            // mass requirement, and the review measured two pathologies:
+            // (a) a segment's citywide presence crossing the ≥1 gate removed
+            // its tranche and jumped every excess submarket's price to the
+            // next tranche up — 1.08 → 2.69 → 4.30 → 7.34 → 21.96 as a
+            // shrinking population crossed successive gates, i.e. demand
+            // falling and price rising 20×; (b) a tranche with positive WTP
+            // but exactly zero mass could anchor a positive price on a
+            // market with no demand at all.
+            //
+            // MinTailMass is a DUST guard, deliberately small: real thin
+            // tranches in emptied submarkets carry mass ~0.1–1, and a floor
+            // of 0.5 skipped them — measured: the anchor jumped OVER the
+            // thin tail, the price ROSE as occupancy collapsed (boundary
+            // continuity broken) and the demand ladder went non-monotone.
+            // At 0.05 the floor excludes zero-mass tranches and most gate
+            // remnants while real bidders, however thin, still anchor —
+            // and where the tail tranche is real the price is bit-identical
+            // to the plain deepest-bidder rule, preserving continuity at
+            // the regime boundary. Composition remains a real margin:
+            // extinction of a segment with REAL mass still re-rates the
+            // tail — that is the market actually changing, not an artifact.
+            //
+            // The old proportional decay was ALSO continuous at the regime
+            // boundary and weakly monotone under mass scaling; the flat tail
+            // is distinguished by the no-pointless-discount principle, plus
+            // the jump the unconstrained revenue-max showed it must not have
+            // (supply×2 read 2.71 vs 1.77 at ×0.5 — measured, reverted).
             // fillRatio uses the same challenger convention as the read
             // (n × band positions), so in the sliver where cum lies between
             // supply and supply×band it understates realizable fill by up
             // to the band width — a documented convention, not a bug.
-            fillRatio = MathUtil.Clamp(cum / band / supply, 0, 1);
-            return wtp[n - 1];
+            const double MinTailMass = 0.05;
+            double accMass = 0;
+            for (int i = n - 1; i >= 0; i--)
+            {
+                accMass += mass[i];
+                if (accMass >= MinTailMass)
+                {
+                    fillRatio = MathUtil.Clamp(cum / band / supply, 0, 1);
+                    return wtp[i];
+                }
+            }
+            // Less than half a real bidder routed here: no market, no price.
+            fillRatio = 0;
+            return 0;
         }
 
         /// <summary>Firm bid per job slot for a hypothetical occupant of (cluster,
