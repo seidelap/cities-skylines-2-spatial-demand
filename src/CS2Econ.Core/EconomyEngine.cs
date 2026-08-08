@@ -24,13 +24,20 @@ namespace CS2Econ.Core
         public double[] MeanExpectedIncome = new double[Segment.Count];
         public double[] SeekersEma = new double[Segment.Count];
         public double[] AvgRentBySeg = new double[Segment.Count];
+        /// <summary>[0=Low,1=High] EMA of residential units actually freed per
+        /// tick (Allocation.Vacate) — the measured churn flow the migration
+        /// absorption budget reads instead of an assumed turnover constant.</summary>
+        public double[] TurnoverEma = new double[2];
         public int ShelterOccupied;
         public int ShelterCapacity;
 
         // Telemetry (per tick)
         public double LandRevenueThisTick, IncomeTaxThisTick, ServiceCostThisTick;
         public double[] LandRevenueByCluster = Array.Empty<double>();
-        public readonly List<(long tick, int household)> DisplacementExits = new List<(long, int)>();
+        /// <summary>(tick, household, reason): reason 0 = voluntary cost-driven
+        /// relocation within the city, 1 = insolvency-pipeline emigration.</summary>
+        public readonly List<(long tick, int household, int reason)> DisplacementExits
+            = new List<(long, int, int)>();
         /// <summary>Tick Tier C last STARTED levying (−1 while not levying) —
         /// anchors the one-time go-live ramp in RerateAndRelocation.</summary>
         private long _levyingSince = -1;
@@ -92,8 +99,22 @@ namespace CS2Econ.Core
             foreach (var h in W.Households)
                 if (h.ExitedTick < 0) SegmentPresence[h.Segment]++;
 
-            // Employment materialization: fixed per-household draw against the
-            // balanced rate — persistent identity, smooth response to rate moves.
+            // Employment materialization: a per-household MARKOV chain, not an
+            // i.i.d. lottery. The old form redrew Employed against the balanced
+            // rate every 60-tick epoch, which put 1−rate of the WHOLE city —
+            // tenured incumbents included — into a fresh 60-tick unemployment
+            // spell each epoch, i.i.d. At market-clearing rents a spell that
+            // long is insolvency, so the lottery ran an emigration conveyor
+            // (churnprobe: ~85% of the population exited per 300 ticks, every
+            // exit an unemployed household). Real separations are rare for the
+            // employed and search is the unemployed's problem: with separation
+            // hazard s per epoch and finding hazard f = s·r/(1−r), the chain's
+            // stationary employment share is exactly the balanced rate r while
+            // incumbents keep their jobs. A NEW arrival draws once at r (some
+            // arrive with a job lined up) and thereafter faces f — and r is
+            // matched/supply, so when the city saturates it is the marginal
+            // arrival's draw that sours, not the tenured resident's job.
+            const double SeparationPerEpoch = 0.06;
             foreach (var h in W.Households)
             {
                 if (h.ExitedTick >= 0) continue;
@@ -101,13 +122,27 @@ namespace CS2Econ.Core
                 if (h.HomeParcel < 0 || seg.Participation <= 0) { h.Employed = false; continue; }
                 int c = W.Parcels[h.HomeParcel].Cluster;
                 double rate = Access.EmploymentRate[(int)seg.Labor][c] * seg.Participation;
-                // Epoch-hashed draw: employment persists ~60 ticks, then the job
-                // search re-rolls — a bad draw is a spell, not a life sentence.
-                // The epoch boundary is offset per household (hashed), so there is
-                // no citywide re-roll tick (design §3; scrutiny finding #21).
+                // Epoch boundaries offset per household (hashed): no citywide
+                // re-roll tick (design §3; scrutiny finding #21). Draws are
+                // epoch-hashed, so the chain is deterministic given the seed.
                 long offset = (long)(SplitMix64.Hash((ulong)h.Id * 13UL) % 60UL);
-                ulong epoch = (ulong)((W.Tick + offset) / 60);
-                h.Employed = SplitMix64.Hash01((ulong)h.Id * 7919UL + epoch * 104729UL + 3) < rate;
+                ulong epoch = 1UL + (ulong)((W.Tick + offset) / 60);
+                if (epoch == h.EmpEpoch) continue;          // within current spell
+                double u = SplitMix64.Hash01((ulong)h.Id * 7919UL + epoch * 104729UL + 3);
+                if (h.EmpEpoch == 0)
+                {
+                    // First materialization (seeded city or new arrival housed
+                    // for the first time): draw at the balanced rate — some
+                    // arrive with a job lined up, some search.
+                    h.Employed = u < rate;
+                }
+                else
+                {
+                    double find = rate < 0.999
+                        ? Math.Min(1.0, SeparationPerEpoch * rate / (1.0 - rate)) : 1.0;
+                    h.Employed = h.Employed ? u >= SeparationPerEpoch : u < find;
+                }
+                h.EmpEpoch = epoch;
             }
 
             // Seekers = unhoused + sheltered now, EMA-smoothed (expected near-term demand).
@@ -597,8 +632,13 @@ namespace CS2Econ.Core
                     h.Stage = InsolvencyStage.Solvent;   // recovered
                 if (h.StressTicks > 0 && h.Stage != InsolvencyStage.Sheltered)
                 {
+                    // Reason 1 = a HOUSED resident driven out by insolvency
+                    // (true displacement); reason 2 = an unhoused arrival that
+                    // never landed a unit and gave up (a failed arrival, not a
+                    // displacement — the distinction churnprobe reports).
+                    bool housedAtExit = h.HomeParcel >= 0;
                     if (Allocation.InsolvencyStep(W, Access, h, P, ref ShelterOccupied, ShelterCapacity))
-                        DisplacementExits.Add((W.Tick, h.Id));
+                        DisplacementExits.Add((W.Tick, h.Id, housedAtExit ? 1 : 2));
                 }
                 else if (h.Stage == InsolvencyStage.Sheltered
                          && W.Tick - h.ArrivedTick > 90 && h.Money >= P.EmigrationMoveCost
@@ -614,12 +654,35 @@ namespace CS2Econ.Core
 
         private void MigrationStep()
         {
-            int pop = 0, sheltered = 0;
+            // Distress signal for migration, not just literal homelessness:
+            // solvent-but-stressed households take the FUNDED-emigration exit
+            // in InsolvencyStep before they ever reach Sheltered, so a city
+            // running an insolvency conveyor (churnprobe: 2631/2631 exits
+            // were emigrations of unemployed households, 0 sheltered) showed
+            // homelessShare ≈ 0 and migration kept refilling the vacated
+            // units — a turnstile. Households in any insolvency stage count
+            // at half weight: word of economic distress travels even when
+            // the distressed leave under their own steam.
+            int pop = 0, sheltered = 0, stressed = 0;
             foreach (var h in W.Households)
-                if (h.ExitedTick < 0) { pop++; if (h.Stage == InsolvencyStage.Sheltered) sheltered++; }
-            double homelessShare = pop > 0 ? (double)sheltered / pop : 0;
+                if (h.ExitedTick < 0)
+                {
+                    pop++;
+                    if (h.Stage == InsolvencyStage.Sheltered) sheltered++;
+                    else if (h.Stage != InsolvencyStage.Solvent) stressed++;
+                }
+            double distressShare = pop > 0 ? (sheltered + 0.5 * stressed) / pop : 0;
 
-            LastFlows = Migration.Step(W, Access, AvgRentBySeg, homelessShare, P, Flags.TierA_Migration);
+            // Measured turnover: EMA of units actually freed per tick (raw
+            // signal accumulated in Allocation.Vacate). This is the churn term
+            // of the absorption budget — see Migration.Step.
+            for (int k = 0; k < 2; k++)
+            {
+                TurnoverEma[k] = MathUtil.Ema(TurnoverEma[k], W.FreedUnitsThisTick[k], 0.05);
+                W.FreedUnitsThisTick[k] = 0;
+            }
+
+            LastFlows = Migration.Step(W, Access, AvgRentBySeg, distressShare, TurnoverEma, P, Flags.TierA_Migration);
 
             for (int s = 0; s < Segment.Count; s++)
             {
@@ -708,6 +771,7 @@ namespace CS2Econ.Core
                 double affordable = seg.MaxRentShare * Math.Max(0.1, income);
                 double margin = 1.0 + h.MovingCostDraw / 150.0;
                 if (h.ChargedAssessment > affordable * margin
+                    && W.Tick - h.TenureStart >= P.MinLeaseTicks
                     && W.Rng.NextDouble() < searchHazard)
                 {
                     int cheaper = Allocation.FindHome(W, Access, h, P, affordable, income);
@@ -715,7 +779,7 @@ namespace CS2Econ.Core
                     {
                         Allocation.Vacate(W, h);
                         Allocation.MoveIn(W, h, cheaper, P);
-                        DisplacementExits.Add((W.Tick, h.Id));
+                        DisplacementExits.Add((W.Tick, h.Id, 0));
                     }
                     else h.StressTicks++;
                 }

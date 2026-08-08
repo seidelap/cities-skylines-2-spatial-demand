@@ -70,12 +70,27 @@ namespace CS2Econ.Core
         /// cheaper), i.e. stabilizing tâtonnement, not the self-reinforcing loop
         /// the guard exists to forbid.
         ///
-        /// supplyFloor: units the candidate configuration would itself add, so
-        /// the first tower in a neighborhood is priced to fill ITSELF rather
-        /// than dividing by an empty stock.</summary>
+        /// addUnits: units the candidate configuration would ADD to this
+        /// kind's stock (greenfield, scrape-to-other-use, a project in the
+        /// pipeline, an overlay hypothetical). They join the supply the price
+        /// must clear — max(stock, units) would price the candidate as if its
+        /// units displaced existing ones, overstating land rent exactly where
+        /// stock already stands. minSupply: floor for configurations whose
+        /// units are ALREADY in the stock count (the standing building itself)
+        /// but may not have been seen by the last refresh.
+        ///
+        /// Density appeal enters HERE, on the WTP leg, and only here. An
+        /// earlier build also weighted the demand share by appeal (the
+        /// discrete-choice "consideration × conditional bid" story), but the
+        /// share is normalized jointly over kind AND cluster, so shrinking
+        /// the high-density rows renormalized that mass INTO the low-density
+        /// rows: the apartment discount doubled as a +40% house subsidy, and
+        /// the single calibrated haircut (Segment.DensityFloor) was applied
+        /// roughly twice. One parameter, one channel: appeal prices the bid;
+        /// the share stays kind-neutral (adversarial review, measured A/B).</summary>
         public static double ResidentialBidPerUnit(
             AccessState acc, int cluster, ZoneKind kind, int level,
-            double[] segmentPresence, EconParams p, double supplyFloor = 0)
+            double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0)
         {
             Span<double> wtp = stackalloc double[Segment.Count];
             Span<double> mass = stackalloc double[Segment.Count];
@@ -98,7 +113,17 @@ namespace CS2Econ.Core
                 // produce level geography (ℓ* gradients), not a flat ±20% band.
                 double rel = acc.AccessValue[s][cluster] / acc.MeanAccess;
                 double premium = MathUtil.Clamp(Math.Pow(Math.Max(0.05, rel), p.PremiumExponent), 0.2, 4.0);
-                wtp[n] = seg.MaxRentShare * income * premium * p.BidAccessScale * quality * appeal;
+                // MarginalIncomeQuantile: the marginal member of a segment
+                // earns below its mean; see the EconParams doc.
+                wtp[n] = seg.MaxRentShare * income * p.MarginalIncomeQuantile
+                         * premium * p.BidAccessScale * quality * appeal;
+                // A zero-WTP entry is not a bidder: a segment whose expected
+                // income here is zero demands no unit at any positive price,
+                // so it must set neither the price nor the queue depth. The
+                // excess-supply branch below anchors on the DEEPEST queued
+                // bidder — letting a zero-income segment in pinned 41 fully
+                // occupied submarkets at exactly zero land rent (review).
+                if (wtp[n] <= 1e-12) continue;
                 // How many of this segment want THIS (kind, cluster) — the
                 // share is normalized over kind AND cluster, so it is
                 // commensurate with the per-kind stock below. A per-cluster
@@ -124,27 +149,33 @@ namespace CS2Econ.Core
 
             double stock = acc.HousingStock.Length == 2 && acc.HousingStock[highDensity ? 1 : 0].Length > cluster
                 ? acc.HousingStock[highDensity ? 1 : 0][cluster] : 0;
-            double supply = Math.Max(stock, supplyFloor);
+            double supply = Math.Max(stock, minSupply) + Math.Max(0, addUnits);
             if (supply <= 1e-9) return wtp[0];        // nothing to fill: top bidder
+
+            // Read the demand curve at the first EXCLUDED tranche, not the
+            // last admitted bidder (EconParams.ClearingBand): the price is
+            // what the challenger who did NOT get a unit would pay, so every
+            // sitting tenant keeps strictly positive surplus.
+            double readAt = supply * (1.0 + Math.Max(0, p.ClearingBand));
 
             double cum = 0;
             for (int i = 0; i < n; i++)
             {
                 double prev = cum;
                 cum += mass[i];
-                if (cum >= supply)
+                if (cum >= readAt)
                 {
-                    // Marginal bidder lies inside segment i's mass; interpolate
-                    // from the segment above so the curve is continuous.
-                    double frac = mass[i] > 1e-12 ? (supply - prev) / mass[i] : 1.0;
+                    // Position lies inside segment i's mass; interpolate from
+                    // the segment above so the curve is continuous.
+                    double frac = mass[i] > 1e-12 ? (readAt - prev) / mass[i] : 1.0;
                     double above = i > 0 ? wtp[i - 1] : wtp[0];
                     return above + (wtp[i] - above) * MathUtil.Clamp(frac, 0, 1);
                 }
             }
-            // Excess supply: demand runs out before the stock fills. Price falls
-            // below the deepest bidder in proportion to how far short it fell —
-            // continuous, and → 0 as demand → 0.
-            return wtp[n - 1] * MathUtil.Clamp(cum / supply, 0, 1);
+            // Demand exhausts before the read position. Price falls below the
+            // deepest bidder in proportion to the shortfall — continuous, and
+            // → 0 as demand → 0.
+            return wtp[n - 1] * MathUtil.Clamp(cum / readAt, 0, 1);
         }
 
         /// <summary>Firm bid per job slot for a hypothetical occupant of (cluster,
@@ -254,9 +285,9 @@ namespace CS2Econ.Core
 
         public static double BidPerUnit(
             AccessState acc, IPriceContext prices, int cluster, ZoneKind use, int level,
-            double[] segmentPresence, EconParams p, double supplyFloor = 0)
+            double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0)
             => use == ZoneKind.ResidentialLow || use == ZoneKind.ResidentialHigh
-                ? ResidentialBidPerUnit(acc, cluster, use, level, segmentPresence, p, supplyFloor)
+                ? ResidentialBidPerUnit(acc, cluster, use, level, segmentPresence, p, addUnits, minSupply)
                 : FirmBidPerSlot(acc, prices, cluster, use, level, p);
 
         /// <summary>Permitted configurations for a parcel: its zoned kind at any
@@ -277,10 +308,11 @@ namespace CS2Econ.Core
             {
                 // Condition scales the bid (decayed stock commands less) AND the
                 // charge base V — decay makes stock cheap on both sides (§4.3).
-                // supplyFloor = this parcel's own units: a standing building is
-                // part of the stock its price has to clear.
+                // The standing building's units are already IN the stock count
+                // (it is Built); minSupply only guards the one refresh window
+                // where a just-completed building has not been counted yet.
                 double bidCur = BidPerUnit(acc, prices, c, parcel.Use, parcel.Level, segmentPresence, p,
-                                           parcel.Units)
+                                           addUnits: 0, minSupply: parcel.Units)
                                 * p.CondFactor(parcel.Condition);
                 currentResidual = (bidCur - SPerUnit(parcel.Level, parcel.Condition, p)) * parcel.Units;
             }
@@ -297,11 +329,16 @@ namespace CS2Econ.Core
 
             for (int lvl = 1; lvl <= p.MaxLevel; lvl++)
             {
-                // A candidate configuration must be priced to fill ITSELF: the
-                // proposed units join the stock the clearing price has to
-                // absorb, so a tower proposed into a thin market prices as a
-                // tower, not as the neighborhood's scarcest unit.
-                double bid = BidPerUnit(acc, prices, c, zonedUse, lvl, segmentPresence, p, units);
+                // A candidate configuration must be priced to fill ITSELF.
+                // If its units are already part of this kind's standing stock
+                // (in-place renovation: same use, same unit count) they must
+                // not be added again; a greenfield build or a scrape into a
+                // different use ADDS its units to the supply the price clears.
+                bool alreadyInStock = parcel.State == ParcelState.Built
+                                      && zonedUse == parcel.Use && units == parcel.Units;
+                double bid = alreadyInStock
+                    ? BidPerUnit(acc, prices, c, zonedUse, lvl, segmentPresence, p, addUnits: 0, minSupply: units)
+                    : BidPerUnit(acc, prices, c, zonedUse, lvl, segmentPresence, p, addUnits: units);
                 double flow = (bid - SPerUnit(lvl, 1.0, p)) * units;
                 if (flow <= 0) continue;
 

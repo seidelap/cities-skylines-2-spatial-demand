@@ -198,6 +198,16 @@ namespace CS2Econ.Core
         /// synchronize). Re-RATING itself is instant and uniform per parcel
         /// (co-op assessment): search friction is the only lag left.</summary>
         public int MoveSearchPeriod = 30;
+        /// <summary>Minimum tenure before a housed household will consider a
+        /// voluntary cost-driven move — a lease term. The co-op re-rate still
+        /// moves the CHARGE instantly (prices are always market); this limits
+        /// how often a household re-solves its location problem. Without it,
+        /// pricing at the marginal bidder's expected-income WTP leaves the
+        /// below-average half of every marginal segment permanently over its
+        /// REALIZED-income margin, and they hop between similar units forever
+        /// (~2 moves/household/run measured). The insolvency pipeline is NOT
+        /// gated by this — genuine distress still moves immediately.</summary>
+        public int MinLeaseTicks = 30;
         /// <summary>One-time transition window when Tier C first goes live:
         /// charges converge from whatever they were (in-game: vanilla rents
         /// mirrored by the reader) to the market assessment over this many
@@ -218,14 +228,14 @@ namespace CS2Econ.Core
         /// that paces in-migration (arrivals ≤ hazard × vacant stock). Its
         /// inverse is mean time-to-fill in ticks (≈ days on market).</summary>
         public double VacancyFillHazard = 1.0 / 60.0;
-        /// <summary>Share of OCCUPIED units that come back on the market each
-        /// tick through ordinary churn — deaths, departures, households moving
-        /// within the city. Absorption is a FLOW of units becoming available,
-        /// not a stock of standing vacancy: a city at ~100% occupancy still
-        /// re-lets homes continuously, and budgeting arrivals against standing
-        /// vacancy alone froze the economy the moment allocation got efficient
-        /// enough to fill everything (arrivals → 0 → no growth → no
-        /// construction → no leveling).</summary>
+        /// <summary>RETIRED from the absorption budget. This was an assumed
+        /// share of occupied units re-let per tick; the budget now reads the
+        /// MEASURED turnover flow instead (EMA of units actually freed via
+        /// Allocation.Vacate — see EconomyEngine.TurnoverEma). The forecast
+        /// admitted ~50× more arrivals than units actually freed, and 98% of
+        /// "displacement" exits turned out to be arrivals that never found a
+        /// unit (churnprobe). Kept only as documentation of the old value; no
+        /// engine code reads it.</summary>
         public double HousingTurnoverRate = 0.004;
 
         // ---- access (design §4.2) -------------------------------------------
@@ -251,6 +261,38 @@ namespace CS2Econ.Core
         /// competitive price; heterogeneity and surplus now come from where
         /// they belong — the queue.</summary>
         public double BidAccessScale = 1.0;
+        /// <summary>How far PAST the last filled unit the clearing walk reads
+        /// the demand curve: price = WTP at queue position supply×(1+band) —
+        /// the first EXCLUDED tranche of bidders, not the last admitted one.
+        ///
+        /// This is the buyer-optimal end of the assignment-market equilibrium
+        /// band, and it is the rule as originally specified: "rent equal to
+        /// the maximum another person would pay to move here" — the excluded
+        /// challenger sets the price. Pricing at the marginal ADMITTED
+        /// bidder's own WTP (band = 0) extracts that tenant's entire surplus,
+        /// and under the instant co-op re-rate that pins every marginal
+        /// household at exactly zero surplus every tick: any perturbation
+        /// displaces them, the price re-clears at the next bidder, who then
+        /// sits on the same knife edge — measured as a ~50× displacement-churn
+        /// explosion. With the band, every admitted tenant strictly prefers
+        /// staying by at least the WTP gap down to the excluded tranche.</summary>
+        public double ClearingBand = 0.10;
+        /// <summary>Income of the MARGINAL renter within a segment, as a
+        /// fraction of the segment's expected income. ExpectedIncome averages
+        /// employed and unemployed members (rate×wage + transfer), but the
+        /// clearing price is paid by a PERSON, and the person on the margin of
+        /// a segment earns less than its mean — person-level pricing would
+        /// produce this dispersion automatically; the segment aggregation
+        /// hides it. This is NOT the old BidAccessScale double discount (that
+        /// scaled the whole bid for surplus the clearing mechanism already
+        /// provides). Calibration honesty: 0.55 keeps the effective price
+        /// level (MaxRentShare × this) near the historically validated
+        /// calibration after the double discount was removed. An earlier note
+        /// here credited the value with stopping an emigration "turnstile";
+        /// churnprobe later showed 98% of those exits were arrivals that never
+        /// found a unit — an absorption-budget bug (see HousingTurnoverRate),
+        /// not a price-level effect.</summary>
+        public double MarginalIncomeQuantile = 0.55;
         public double CommercialMarkup = 0.35;    // gross margin on captured spending
         public double OfficeOutputPrice = 3.1;    // near-exogenous (design §4.2)
 

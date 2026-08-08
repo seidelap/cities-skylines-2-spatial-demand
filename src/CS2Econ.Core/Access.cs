@@ -73,14 +73,22 @@ namespace CS2Econ.Core
         /// forbids. Neutral (1.0) where no stock stands.</summary>
         public double[][] FillEma = Array.Empty<double[]>();
         /// <summary>Floor under the fill weight: a fully empty submarket keeps
-        /// this share of its attraction, so its price falls hard but never to
-        /// zero — otherwise a cluster that empties could never attract the
-        /// demand that refills it.</summary>
+        /// this share of its attraction. NOTE the clearing price responds
+        /// SUPERLINEARLY to a multiplier on demand mass — shrinking the mass
+        /// both walks the marginal bidder down the WTP ladder and can cross
+        /// into the excess-supply branch (measured elasticity ~1.3–1.8, not
+        /// 1.0; adversarial review). So this floors the ATTRACTION at 0.25,
+        /// which floors the price nearer ~0.10 of its full-weight level —
+        /// still a hard fall with a nonzero floor, which is the intent; do
+        /// not read the value as a price floor when recalibrating.</summary>
         public const double OccupancyFloor = 0.25;
         /// <summary>Smoothing on FillEma (per refresh).</summary>
         public const double FillEmaAlpha = 0.25;
         /// <summary>Weight of zoned-but-empty capacity in the attraction term,
-        /// relative to standing stock. See the use site.</summary>
+        /// relative to standing stock. See the use site. Same superlinearity
+        /// caveat as OccupancyFloor: 0.15 on attraction cuts a virgin
+        /// cluster's clearing bid to roughly 5–20% of full weight, not 15% —
+        /// the value is chosen for the measured price response.</summary>
         public const double ZonedEmptyAttraction = 0.15;
 
         // Commercial capture (Layer-3 phantom entrant machinery, §4.2)
@@ -349,10 +357,14 @@ namespace CS2Econ.Core
                     if (SegmentKindShare[s][k] == null || SegmentKindShare[s][k].Length != C)
                         SegmentKindShare[s][k] = new double[C];
                     var row = SegmentKindShare[s][k];
-                    var kind = k == 1 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
-                    // Density is a preference weight on how much of the segment
-                    // routes to this kind, not a permission (Segment.DensityAppeal).
-                    double appeal = seg.DensityAppeal(kind);
+                    // Density appeal deliberately does NOT weight the share:
+                    // it lives on the WTP leg of ResidentialBidPerUnit only.
+                    // With the joint (kind × cluster) normalization, an appeal
+                    // weight here renormalizes the discounted high-density mass
+                    // INTO the low-density rows — the apartment haircut becomes
+                    // a house subsidy and the calibrated discount applies twice
+                    // (adversarial review, measured A/B: low bids +40% from the
+                    // renormalization alone).
                     for (int c = 0; c < C; c++)
                     {
                         // Fill-weighted capacity: demand follows housing that is
@@ -364,7 +376,7 @@ namespace CS2Econ.Core
                         double fill = FillEma[k][c];
                         double attract = HousingCapacity[k][c]
                                          * (OccupancyFloor + (1 - OccupancyFloor) * fill);
-                        row[c] = Math.Exp(AccessValue[s][c] / 1.5) * attract * appeal;
+                        row[c] = Math.Exp(AccessValue[s][c] / 1.5) * attract;
                         tot += row[c];
                     }
                 }

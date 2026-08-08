@@ -132,6 +132,13 @@ namespace CS2Econ.Core
             pl.OccupantHouseholds.Remove(h.Id);
             w.HouseholdCountByCluster[pl.Cluster]--;
             h.HomeParcel = -1;
+            // Every unit actually freed passes through here — the measured
+            // turnover flow the migration absorption budget reads (an EMA in
+            // the engine), replacing the assumed-constant turnover forecast
+            // that admitted ~50× more arrivals than real slots (churnprobe:
+            // 98% of exits were arrivals that never found a unit).
+            if (pl.IsResidential)
+                w.FreedUnitsThisTick[pl.Use == ZoneKind.ResidentialHigh ? 1 : 0] += 1;
         }
 
         /// <summary>One insolvency-pipeline step for a stressed household

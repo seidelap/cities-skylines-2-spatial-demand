@@ -166,8 +166,12 @@ namespace CS2Econ.Core
                 if (seekers <= 0) continue;
                 var seg = Segment.All[s];
                 // Which density this segment leans toward — a lean, not a
-                // permission (Segment.DensityAppeal).
-                ZoneKind kind = seg.DensityAppeal(ZoneKind.ResidentialHigh) >= 0.5
+                // permission. Gate on the RAW tolerance: DensityAppeal is
+                // floored at DensityFloor=0.6, so `appeal >= 0.5` is true for
+                // every segment — the old form routed ALL seeker mass through
+                // the high-density branch (75% of citywide construction
+                // demand to towers; adversarial review, measured A/B).
+                ZoneKind kind = seg.DensityTolerance >= 0.5
                     ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
                 double sum = 0;
                 for (int c = 0; c < C; c++)
@@ -185,8 +189,10 @@ namespace CS2Econ.Core
                 for (int c = 0; c < C; c++)
                 {
                     double mass = seekers * share[c] / sum;
-                    double aHigh = seg.DensityAppeal(ZoneKind.ResidentialHigh);
-                    if (aHigh >= 0.5) { ByUse[1][c] += mass * 0.75; ByUse[0][c] += mass * 0.25; }
+                    // Same raw-tolerance gate as the lean above (appeal's
+                    // floor makes it vacuously high for all segments).
+                    if (seg.DensityTolerance >= 0.5)
+                    { ByUse[1][c] += mass * 0.75; ByUse[0][c] += mass * 0.25; }
                     else { ByUse[0][c] += mass * 0.85; ByUse[1][c] += mass * 0.15; }
                 }
             }
@@ -441,10 +447,11 @@ namespace CS2Econ.Core
         {
             ZoneKind use = pl.State == ParcelState.UnderConstruction ? pl.Use : pl.Zoned;
             int units = LandAccounting.UnitsFor(use);
-            // Developer prices the project at the clearing price its OWN units
-            // would have to fill (supplyFloor = units) — the same discipline
-            // Assess uses for candidate configurations.
-            double bid = LandAccounting.BidPerUnit(acc, trade, pl.Cluster, use, level, segmentPresence, p, units)
+            // Developer prices the project at the clearing price with its OWN
+            // units ADDED to the stock (they are not yet in it — stock counts
+            // Built only), the same discipline Assess uses for candidates.
+            double bid = LandAccounting.BidPerUnit(acc, trade, pl.Cluster, use, level, segmentPresence, p,
+                                                   addUnits: units)
                          * w.Calibration.Factor(use);
             double resid = residuals.Get(pl.Cluster, use, w.Claims);
             // A project under construction already sits in the claims ledger;

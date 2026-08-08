@@ -16,9 +16,13 @@ namespace CS2Econ.Core
 
         /// <summary>Per-segment Rosen–Roback attractiveness: wages, rents,
         /// amenities — with the rent term damping arrivals under housing stress
-        /// (the principled version of vanilla's homelessness rule).</summary>
+        /// (the principled version of vanilla's homelessness rule).
+        /// distressShare counts sheltered households in full and households in
+        /// any insolvency stage at half weight: funded emigration removes the
+        /// distressed before they shelter, so a pure homeless share was blind
+        /// to an insolvency conveyor and kept arrivals flowing (turnstile).</summary>
         public static double Attractiveness(
-            WorldState w, AccessState acc, int segment, double avgRentBySeg, double homelessShare, EconParams p)
+            WorldState w, AccessState acc, int segment, double avgRentBySeg, double distressShare, EconParams p)
         {
             var seg = Segment.All[segment];
             // Population-weighted mean access value for the segment.
@@ -45,7 +49,7 @@ namespace CS2Econ.Core
             return meanAccess / 4.0
                    + 0.35 * meanIncome / p.WageBasic
                    - 0.55 * rentBurden
-                   - 2.0 * homelessShare;
+                   - 2.0 * distressShare;
         }
 
         public struct Flows
@@ -60,8 +64,8 @@ namespace CS2Econ.Core
         }
 
         public static Flows Step(
-            WorldState w, AccessState acc, double[] avgRentBySeg, double homelessShare,
-            EconParams p, bool endogenousOutside)
+            WorldState w, AccessState acc, double[] avgRentBySeg, double distressShare,
+            double[] measuredTurnover, EconParams p, bool endogenousOutside)
         {
             var m = w.Migration;
             int nSeg = Segment.Count;
@@ -106,17 +110,41 @@ namespace CS2Econ.Core
                 else { vacantLow += v; occupiedLow += occ; }
             }
             // Available-unit FLOW, not vacancy stock: standing vacancy leasing
-            // up, plus the pipeline, plus ordinary churn out of occupied stock.
+            // up, plus the pipeline, plus MEASURED churn out of occupied stock
+            // (an EMA of units actually freed via Vacate, kept by the engine).
+            // An assumed-constant turnover forecast here admitted ~50× more
+            // arrivals than units actually freed — churnprobe showed 98% of
+            // exits were arrivals that waited ~54 ticks and never found a
+            // unit. Measured flow self-corrects in both directions: a frozen
+            // market admits almost nobody; a churning one reopens.
             double flowLow = p.VacancyFillHazard * (vacantLow + pipelineLow)
-                             + p.HousingTurnoverRate * occupiedLow;
+                             + measuredTurnover[0];
             double flowHigh = p.VacancyFillHazard * (vacantHigh + pipelineHigh)
-                              + p.HousingTurnoverRate * occupiedHigh;
+                              + measuredTurnover[1];
+
+            // Queue congestion: the flow above is claimed FIRST by households
+            // already inside waiting for a unit. An arrival admitted while the
+            // standing queue needs the whole flow just times out (stress ticks
+            // outrun the wait; Little's law: queue/flow > patience) and exits
+            // as a failed arrival — the door revolves without anyone landing.
+            // Admit only the flow the queue does not need to drain within one
+            // patience window.
+            int unhousedQueue = 0;
+            foreach (var h in w.Households)
+                if (h.ExitedTick < 0 && h.HomeParcel < 0) unhousedQueue++;
+            double patience = Math.Max(1, 3 * p.InsolvencyGraceTicks);
+            double queueDrain = unhousedQueue / patience;
+            double totalFlow = flowLow + flowHigh;
+            double congestion = totalFlow > 1e-9
+                ? MathUtil.Clamp(1.0 - queueDrain / totalFlow, 0, 1) : 0;
+            flowLow *= congestion;
+            flowHigh *= congestion;
 
             // Pass 1: desired inflow per segment (uncapped Rosen–Roback gap).
             double desiredTotal = 0;
             for (int s = 0; s < nSeg; s++)
             {
-                double attract = Attractiveness(w, acc, s, avgRentBySeg[s], homelessShare, p);
+                double attract = Attractiveness(w, acc, s, avgRentBySeg[s], distressShare, p);
                 m.SegmentAttractEma[s] = MathUtil.Ema(m.SegmentAttractEma[s], attract, 0.05);
 
                 double outsideU = BaseOutsideUtility + (endogenousOutside ? m.ReservationThreshold[s] : 0);

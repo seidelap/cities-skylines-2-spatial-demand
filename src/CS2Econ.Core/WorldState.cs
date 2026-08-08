@@ -83,6 +83,10 @@ namespace CS2Econ.Core
         public double Money;
         public int HomeParcel = -1;      // -1 = unhoused (arriving or sheltered)
         public bool Employed;
+        /// <summary>Last job-search epoch this household transitioned in
+        /// (see EconomyEngine's Markov employment step). 0 = never drawn:
+        /// the first refresh seeds the state at the balanced rate.</summary>
+        public ulong EmpEpoch;
         public double ChargedAssessment; // per-tick S+tax+wedge currently being charged
         public double MovingCostDraw;    // within-segment heterogeneity draw (§4.4)
         public long TenureStart;
@@ -219,6 +223,10 @@ namespace CS2Econ.Core
         public long Tick;
         public SplitMix64 Rng;
         public int RenovationsTotal, ScrapesTotal;
+        /// <summary>[0=Low,1=High] residential units freed this tick via
+        /// Allocation.Vacate — the raw signal behind the engine's measured
+        /// turnover EMA (see EconomyEngine.MigrationStep). Reset each tick.</summary>
+        public double[] FreedUnitsThisTick = new double[2];
 
         // Scratch indices rebuilt by the engine each refresh
         public List<int>[] ParcelsByCluster = Array.Empty<List<int>>();

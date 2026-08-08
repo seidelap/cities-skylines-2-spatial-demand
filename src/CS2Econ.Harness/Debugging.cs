@@ -9,6 +9,51 @@ namespace CS2Econ.Harness
     /// the quantities the acceptance tests depend on. Tuning aid, not a test.</summary>
     public static class Debugging
     {
+        /// <summary>`harness churnprobe` — decompose DisplacementExits: reason
+        /// (relocation vs insolvency emigration), distinct households, repeat
+        /// offenders, segment mix, and employment/stage at exit. Answers "who
+        /// is churning and why" instead of theorizing about it.</summary>
+        public static int ChurnProbe(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 9000 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(300);
+            long from = sim.W.Tick;
+            sim.Run(ticks);
+            var exits = sim.Engine.DisplacementExits.Where(e => e.tick > from).ToList();
+            int reloc = exits.Count(e => e.reason == 0), emig = exits.Count(e => e.reason == 1);
+            int failedArr = exits.Count(e => e.reason == 2);
+            var byHh = exits.GroupBy(e => e.household).ToList();
+            int repeat = byHh.Count(g => g.Count() > 1);
+            var bySeg = exits.GroupBy(e => sim.W.Households[e.household].Segment)
+                             .OrderByDescending(g => g.Count());
+            int pop = sim.W.Households.Count(h => h.ExitedTick < 0);
+            Console.WriteLine($"window {ticks} ticks, pop {pop}: {exits.Count} exits = "
+                + $"{reloc} relocations + {emig} housed-insolvency emigrations + "
+                + $"{failedArr} failed arrivals (never housed); {byHh.Count} distinct households, {repeat} repeat");
+            double vacL = 0, vacH = 0, pipeL = 0, pipeH = 0;
+            foreach (var pl in sim.W.Parcels)
+            {
+                if (pl.State == ParcelState.UnderConstruction && pl.IsResidential)
+                { if (pl.Use == ZoneKind.ResidentialHigh) pipeH += pl.Units; else pipeL += pl.Units; }
+                else if (pl.State == ParcelState.Built && pl.IsResidential && !pl.Warehousing)
+                { if (pl.Use == ZoneKind.ResidentialHigh) vacH += pl.Vacant; else vacL += pl.Vacant; }
+            }
+            int unhoused = sim.W.Households.Count(h => h.ExitedTick < 0 && h.HomeParcel < 0);
+            Console.WriteLine($"  at probe end: vacant L/H {vacL}/{vacH}, pipeline L/H {pipeL}/{pipeH}, "
+                + $"unhoused {unhoused}, turnoverEma L/H {sim.Engine.TurnoverEma[0]:F2}/{sim.Engine.TurnoverEma[1]:F2}");
+            foreach (var g in bySeg)
+            {
+                var seg = Segment.All[g.Key];
+                int emp = g.Count(e => sim.W.Households[e.household].Employed);
+                Console.WriteLine($"  {seg.Name,-12} {g.Count(),5} exits "
+                    + $"({g.Count(e => e.reason == 1),4} housed-emig, {g.Count(e => e.reason == 2),4} failed-arrival) "
+                    + $"presence {sim.Engine.SegmentPresence[g.Key],6:F0} employedAtProbe {emp}");
+            }
+            return 0;
+        }
+
         /// <summary>`harness lambdasweep` — is the vacancy kernel still doing
         /// work now that prices clear? The kernel adds a SECOND spatial decay
         /// (λ, Euclidean metres) on top of the one the choice model already has
@@ -139,7 +184,7 @@ namespace CS2Econ.Harness
                         double wtp = seg.MaxRentShare * income * prem * p.BidAccessScale * seg.DensityAppeal(kind);
                         if (m > 1e-9) { wtpTop = Math.Max(wtpTop, wtp); wtpBot = Math.Min(wtpBot, wtp); }
                     }
-                    double bid = LandAccounting.ResidentialBidPerUnit(acc, c, kind, 1, pres, p, stock);
+                    double bid = LandAccounting.ResidentialBidPerUnit(acc, c, kind, 1, pres, p);
                     double filled = 0;
                     foreach (var pl in w.Parcels)
                         if (pl.State == ParcelState.Built && pl.Use == kind && pl.Cluster == c)

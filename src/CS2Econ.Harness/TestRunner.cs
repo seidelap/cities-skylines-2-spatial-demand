@@ -335,18 +335,28 @@ namespace CS2Econ.Harness
             double stock = acc.HousingStock[0][c0];
 
             // (a) supply ladder at fixed demand: strictly non-increasing.
-            double pLow = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock * 0.5);
-            double pMid = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock * 2.0);
-            double pHigh = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock * 8.0);
+            // Supply is varied through the PRODUCTION stock array (and
+            // restored), so the check exercises the same read path Assess uses.
+            double PriceAtStock(double units)
+            {
+                double saved0 = acc.HousingStock[0][c0];
+                acc.HousingStock[0][c0] = units;
+                double v = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p);
+                acc.HousingStock[0][c0] = saved0;
+                return v;
+            }
+            double pLow = PriceAtStock(stock * 0.5);
+            double pMid = PriceAtStock(stock * 2.0);
+            double pHigh = PriceAtStock(stock * 8.0);
             bool supplyMonotone = pLow >= pMid - 1e-9 && pMid >= pHigh - 1e-9 && pLow > pHigh + 1e-6;
 
             // (b) demand ladder at fixed supply: strictly non-decreasing.
             var presHalf = new double[Segment.Count];
             var presDouble = new double[Segment.Count];
             for (int s = 0; s < Segment.Count; s++) { presHalf[s] = pres[s] * 0.5; presDouble[s] = pres[s] * 2.0; }
-            double dLow = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presHalf, p, stock);
-            double dMid = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock);
-            double dHigh = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presDouble, p, stock);
+            double dLow = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presHalf, p);
+            double dMid = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p);
+            double dHigh = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presDouble, p);
             bool demandMonotone = dLow <= dMid + 1e-9 && dMid <= dHigh + 1e-9 && dHigh > dLow + 1e-6;
 
             // (c) population collapse lowers the price. NOTE this is a
@@ -358,7 +368,7 @@ namespace CS2Econ.Harness
             // and did exactly this; adversarial review showed it merely
             // re-measured (b). Labelled honestly now, and the real occupancy
             // question is tracked as an open gap in RESULTS.md.
-            double before = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock);
+            double before = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p);
             int killed = 0;
             foreach (var h in sim.W.Households)
             {
@@ -369,7 +379,7 @@ namespace CS2Econ.Harness
             }
             sim.Run(10);
             double after = LandAccounting.ResidentialBidPerUnit(
-                sim.Engine.Access, c0, ZoneKind.ResidentialLow, 2, sim.Engine.SegmentPresence, p, stock);
+                sim.Engine.Access, c0, ZoneKind.ResidentialLow, 2, sim.Engine.SegmentPresence, p);
             bool softens = after < before * 0.98;
 
             Check("clearing price: rent responds to quantity (supply ↓, demand ↑, population ↓)",
@@ -432,7 +442,7 @@ namespace CS2Econ.Harness
             double AccessOf(int cluster)
             {
                 double v = 0;
-                for (int s = 0; s < Segment.Count; s++) v += sim.Engine.Access.AccessValue[s][cluster];
+                for (int s = 0; s < Segment.Count; s++) v += sim.Engine!.Access!.AccessValue[s][cluster];
                 return v / Segment.Count;
             }
             (int n, int pos) BestQuartile(ZoneKind kind)
@@ -509,9 +519,9 @@ namespace CS2Econ.Harness
                 acc.RebuildDemandShares();      // same recompute the refresh does
             }
             Reprice(1.0);
-            double bidFull = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock);
+            double bidFull = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p);
             Reprice(0.2);
-            double bidEmpty = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock);
+            double bidEmpty = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p);
             acc.FillEma[0][c0] = saved[0]; acc.FillEma[1][c0] = saved[1];
             acc.RebuildDemandShares();
 
@@ -667,8 +677,16 @@ namespace CS2Econ.Harness
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             sim.Run(60);
 
-            var parcel = sim.W.Parcels.First(x => x.State == ParcelState.Built
-                                                  && x.IsResidential && x.OccupantHouseholds.Count > 0);
+            // Pick the occupied parcel with the LARGEST assessed rent, and
+            // require it to be positive: on a marginal parcel LR and wedge are
+            // both floored at 0, so the assertion below degenerates to 0 == 0
+            // and the guard is green no matter what assessment reads
+            // (adversarial review: First() landed on a zero-LR parcel in 55
+            // of 133 occupied cases at the check's own seed).
+            var parcel = sim.W.Parcels
+                .Where(x => x.State == ParcelState.Built
+                            && x.IsResidential && x.OccupantHouseholds.Count > 0)
+                .OrderByDescending(x => x.AssessedLR).First();
             LandAccounting.Assess(sim.W, sim.Engine.Access, sim.Engine.Trade, parcel,
                                   sim.Engine.SegmentPresence, p);
             double lr1 = parcel.AssessedLR, wedge1 = parcel.Wedge;
@@ -683,8 +701,8 @@ namespace CS2Econ.Harness
             LandAccounting.Assess(sim.W, sim.Engine.Access, sim.Engine.Trade, parcel,
                                   sim.Engine.SegmentPresence, p);
             Check("circularity guard: assessment blind to own realized rent",
-                  parcel.AssessedLR == lr1 && parcel.Wedge == wedge1,
-                  $"LR {lr1:F4} unchanged under 17.5× realized-rent perturbation");
+                  lr1 > 1e-9 && parcel.AssessedLR == lr1 && parcel.Wedge == wedge1,
+                  $"LR {lr1:F4} (> 0) unchanged under 17.5× realized-rent perturbation");
         }
 
         private static void LedgerConservation(ulong seed)
