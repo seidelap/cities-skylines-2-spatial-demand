@@ -439,10 +439,11 @@ namespace CS2Econ.Harness
             // zero, ΣLR == 0). So the invariant is stated on the land that is
             // NOT marginal: rank each kind's parcels by their cluster's access
             // and require the best quartile to earn rent, plus ΣLR > 0.
+            var accessState = sim.Engine!.Access!;
             double AccessOf(int cluster)
             {
                 double v = 0;
-                for (int s = 0; s < Segment.Count; s++) v += sim.Engine!.Access!.AccessValue[s][cluster];
+                for (int s = 0; s < Segment.Count; s++) v += accessState!.AccessValue[s][cluster];
                 return v / Segment.Count;
             }
             (int n, int pos) BestQuartile(ZoneKind kind)

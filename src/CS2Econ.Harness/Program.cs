@@ -69,6 +69,13 @@ namespace CS2Econ.Harness
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.LambdaSweep(seed, ticks);
                 }
+                case "indprobe":
+                {
+                    int ticks = 300;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                    return Debugging.IndProbe(seed, ticks);
+                }
                 case "priceprobe":
                 {
                     int ticks = 300;

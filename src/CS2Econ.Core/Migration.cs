@@ -110,35 +110,35 @@ namespace CS2Econ.Core
                 else { vacantLow += v; occupiedLow += occ; }
             }
             // Available-unit FLOW, not vacancy stock: standing vacancy leasing
-            // up, plus the pipeline, plus MEASURED churn out of occupied stock
-            // (an EMA of units actually freed via Vacate, kept by the engine).
-            // An assumed-constant turnover forecast here admitted ~50× more
-            // arrivals than units actually freed — churnprobe showed 98% of
-            // exits were arrivals that waited ~54 ticks and never found a
-            // unit. Measured flow self-corrects in both directions: a frozen
-            // market admits almost nobody; a churning one reopens.
+            // up, plus the pipeline, plus churn out of occupied stock. The
+            // churn term is the MEASURED flow (EMA of units actually freed
+            // via Vacate, kept by the engine) floored by the turnover prior
+            // (`HousingTurnoverRate` × occupied). Neither alone works: the
+            // bare prior admitted ~50× more arrivals than units actually
+            // freed (churnprobe: 98% of exits were arrivals that waited out
+            // their patience and never found a unit), while the bare
+            // measurement deadlocks a saturated no-churn city (no churn → no
+            // arrivals → no churn; the debug fixture froze at 40 starts /
+            // zero industry). The prior keeps the door ajar; the queue-
+            // congestion gate below is what now stops over-admission from
+            // piling up a doomed queue.
             double flowLow = p.VacancyFillHazard * (vacantLow + pipelineLow)
-                             + measuredTurnover[0];
+                             + Math.Max(measuredTurnover[0], p.HousingTurnoverRate * occupiedLow);
             double flowHigh = p.VacancyFillHazard * (vacantHigh + pipelineHigh)
-                              + measuredTurnover[1];
+                              + Math.Max(measuredTurnover[1], p.HousingTurnoverRate * occupiedHigh);
 
-            // Queue congestion: the flow above is claimed FIRST by households
-            // already inside waiting for a unit. An arrival admitted while the
-            // standing queue needs the whole flow just times out (stress ticks
-            // outrun the wait; Little's law: queue/flow > patience) and exits
-            // as a failed arrival — the door revolves without anyone landing.
-            // Admit only the flow the queue does not need to drain within one
-            // patience window.
-            int unhousedQueue = 0;
-            foreach (var h in w.Households)
-                if (h.ExitedTick < 0 && h.HomeParcel < 0) unhousedQueue++;
-            double patience = Math.Max(1, 3 * p.InsolvencyGraceTicks);
-            double queueDrain = unhousedQueue / patience;
-            double totalFlow = flowLow + flowHigh;
-            double congestion = totalFlow > 1e-9
-                ? MathUtil.Clamp(1.0 - queueDrain / totalFlow, 0, 1) : 0;
-            flowLow *= congestion;
-            flowHigh *= congestion;
+            // NOTE on the standing unhoused queue: arrivals the budget admits
+            // can wait up to one patience window (3 × InsolvencyGraceTicks)
+            // before giving up, so a queue of roughly budget × patience stands
+            // at the door in steady state, and arrivals beyond its service
+            // rate bounce ("failed arrivals" in the exit telemetry, distinct
+            // from displacement). An experiment gated admissions by the
+            // queue's Little's-law drain rate; it eliminated most bouncing
+            // but froze the city: the standing queue is load-bearing — it is
+            // counted in SegmentPresence, where it holds clearing prices up
+            // and feeds the residual demand that makes construction pencil.
+            // Bouncing is the honest cost of a queue the market can see; it
+            // damps further arrivals through the distress term above.
 
             // Pass 1: desired inflow per segment (uncapped Rosen–Roback gap).
             double desiredTotal = 0;

@@ -83,10 +83,6 @@ namespace CS2Econ.Core
         public double Money;
         public int HomeParcel = -1;      // -1 = unhoused (arriving or sheltered)
         public bool Employed;
-        /// <summary>Last job-search epoch this household transitioned in
-        /// (see EconomyEngine's Markov employment step). 0 = never drawn:
-        /// the first refresh seeds the state at the balanced rate.</summary>
-        public ulong EmpEpoch;
         public double ChargedAssessment; // per-tick S+tax+wedge currently being charged
         public double MovingCostDraw;    // within-segment heterogeneity draw (§4.4)
         public long TenureStart;

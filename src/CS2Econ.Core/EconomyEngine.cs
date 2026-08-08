@@ -99,22 +99,18 @@ namespace CS2Econ.Core
             foreach (var h in W.Households)
                 if (h.ExitedTick < 0) SegmentPresence[h.Segment]++;
 
-            // Employment materialization: a per-household MARKOV chain, not an
-            // i.i.d. lottery. The old form redrew Employed against the balanced
-            // rate every 60-tick epoch, which put 1−rate of the WHOLE city —
-            // tenured incumbents included — into a fresh 60-tick unemployment
-            // spell each epoch, i.i.d. At market-clearing rents a spell that
-            // long is insolvency, so the lottery ran an emigration conveyor
-            // (churnprobe: ~85% of the population exited per 300 ticks, every
-            // exit an unemployed household). Real separations are rare for the
-            // employed and search is the unemployed's problem: with separation
-            // hazard s per epoch and finding hazard f = s·r/(1−r), the chain's
-            // stationary employment share is exactly the balanced rate r while
-            // incumbents keep their jobs. A NEW arrival draws once at r (some
-            // arrive with a job lined up) and thereafter faces f — and r is
-            // matched/supply, so when the city saturates it is the marginal
-            // arrival's draw that sours, not the tenured resident's job.
-            const double SeparationPerEpoch = 0.06;
+            // Employment materialization: fixed per-household draw against the
+            // balanced rate — persistent identity, smooth response to rate moves.
+            // NOTE a Markov chain (separation/finding hazards with the balanced
+            // rate as stationary point) was tried here and REVERTED: seeded at
+            // the cold-start rate it converged at only ~0.3/epoch, so for the
+            // first ~180 ticks employment lagged far below the warming-up
+            // balanced rate, firms ran unstaffed (industrial revenue/firm 19
+            // vs 171 at t=50, A/B), and every seeded industrial firm died —
+            // while the churn the chain was meant to stop turned out to be
+            // failed ARRIVALS (see churnprobe), not spell-bankrupted tenants.
+            // The i.i.d. epoch draw tracks the current rate immediately, which
+            // is what a young or recovering labor market needs.
             foreach (var h in W.Households)
             {
                 if (h.ExitedTick >= 0) continue;
@@ -122,27 +118,13 @@ namespace CS2Econ.Core
                 if (h.HomeParcel < 0 || seg.Participation <= 0) { h.Employed = false; continue; }
                 int c = W.Parcels[h.HomeParcel].Cluster;
                 double rate = Access.EmploymentRate[(int)seg.Labor][c] * seg.Participation;
-                // Epoch boundaries offset per household (hashed): no citywide
-                // re-roll tick (design §3; scrutiny finding #21). Draws are
-                // epoch-hashed, so the chain is deterministic given the seed.
+                // Epoch-hashed draw: employment persists ~60 ticks, then the job
+                // search re-rolls — a bad draw is a spell, not a life sentence.
+                // The epoch boundary is offset per household (hashed), so there is
+                // no citywide re-roll tick (design §3; scrutiny finding #21).
                 long offset = (long)(SplitMix64.Hash((ulong)h.Id * 13UL) % 60UL);
-                ulong epoch = 1UL + (ulong)((W.Tick + offset) / 60);
-                if (epoch == h.EmpEpoch) continue;          // within current spell
-                double u = SplitMix64.Hash01((ulong)h.Id * 7919UL + epoch * 104729UL + 3);
-                if (h.EmpEpoch == 0)
-                {
-                    // First materialization (seeded city or new arrival housed
-                    // for the first time): draw at the balanced rate — some
-                    // arrive with a job lined up, some search.
-                    h.Employed = u < rate;
-                }
-                else
-                {
-                    double find = rate < 0.999
-                        ? Math.Min(1.0, SeparationPerEpoch * rate / (1.0 - rate)) : 1.0;
-                    h.Employed = h.Employed ? u >= SeparationPerEpoch : u < find;
-                }
-                h.EmpEpoch = epoch;
+                ulong epoch = (ulong)((W.Tick + offset) / 60);
+                h.Employed = SplitMix64.Hash01((ulong)h.Id * 7919UL + epoch * 104729UL + 3) < rate;
             }
 
             // Seekers = unhoused + sheltered now, EMA-smoothed (expected near-term demand).

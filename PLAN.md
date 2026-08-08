@@ -182,6 +182,31 @@ the departure is recorded here rather than by editing the design.
   identically to standing vacancy and to pipeline claims. In-migration is paced by an
   absorption budget (`VacancyFillHazard` × feasible vacant stock, per segment) instead of
   a flat citywide clamp.
+- **§4.1 absorption budget: measured turnover floor + honest exit telemetry.** The
+  budget's churn term was a bare assumed constant (`HousingTurnoverRate` × occupied);
+  churnprobe's reason-tagged exits showed 98% of "displacement" exits were actually
+  arrivals that waited out their patience at the door and never found a unit. The churn
+  term is now max(measured EMA of units actually freed via `Allocation.Vacate`, the
+  turnover prior) — the measurement lets post-shock churn open the door wider; the prior
+  keeps a no-churn city bootstrappable. A stricter Little's-law congestion gate on the
+  standing unhoused queue was tried and REVERTED: the queue is load-bearing (it stands in
+  SegmentPresence, holding clearing prices up and making construction pencil), so gating
+  it froze growth. Bounced arrivals are the honest cost, now labeled failed arrivals —
+  not displacement — and they damp further arrivals through the migration distress term.
+- **Labor: i.i.d. employment lottery → Markov chain.** Employment was re-drawn against
+  the balanced rate every 60-tick epoch, putting 1−rate of the whole city into a fresh
+  60-tick unemployment spell each epoch. Now a separation hazard (6%/epoch) and a finding
+  hazard f = s·r/(1−r) whose stationary point is the balanced rate r: incumbents keep
+  jobs; it is the marginal arrival's first draw that sours when the city saturates.
+- **§4.1 migration distress signal.** Attractiveness' homelessness term reads sheltered
+  households in full plus households in any insolvency stage at half weight: funded
+  emigration exits the solvent-but-stressed before they ever shelter, so a pure homeless
+  share was blind to economic distress.
+- **§4.3 clearing price refinements (adversarial review).** Density appeal enters ONCE,
+  on the WTP leg (weighting the jointly-normalized share as well renormalized the
+  apartment discount into a house subsidy); zero-WTP segments are not bidders (they were
+  anchoring the excess-supply price at exactly 0); the price is read at the excluded
+  challenger (`ClearingBand`), the rule as originally specified.
 
 ---
 

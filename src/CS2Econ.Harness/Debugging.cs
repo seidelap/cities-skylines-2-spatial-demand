@@ -150,6 +150,75 @@ namespace CS2Econ.Harness
         /// dump the clearing queue: standing stock, summed demand mass, the
         /// demand/supply ratio, the WTP ladder, the resulting bid and the
         /// structure charge it must beat. Answers "why is LR zero here?".</summary>
+        /// <summary>`harness indprobe` — why is (or isn't) industrial being
+        /// built in the Weber check's plain fixture? Prints the industrial
+        /// firm bid at the best clusters, the residual demand routed to
+        /// industrial, and construction outcomes by use.</summary>
+        public static int IndProbe(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 6000 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            for (int t = 0; t < ticks; t += 50)
+            {
+                sim.Run(Math.Min(50, ticks - t));
+                int alive = 0, dead = 0; double money = 0, rev = 0;
+                foreach (var f in sim.W.Firms)
+                    if (f.Sector == ZoneKind.Industrial)
+                    {
+                        if (f.Dead) dead++;
+                        else { alive++; money += f.Money; rev += f.ProfitEma; }
+                    }
+                double condSum = 0; int nInd = 0; double assessSum = 0;
+                foreach (var pl in sim.W.Parcels)
+                    if (pl.State == ParcelState.Built && pl.Use == ZoneKind.Industrial)
+                    { nInd++; condSum += pl.Condition; assessSum += LandAccounting.UnitAssessment(pl, p); }
+                Console.WriteLine($"t={sim.W.Tick,4}: ind alive={alive} dead={dead} "
+                    + $"money/firm={(alive > 0 ? money / alive : 0):F0} revEma/firm={(alive > 0 ? rev / alive : 0):F2} | "
+                    + $"parcels={nInd} meanCond={(nInd > 0 ? condSum / nInd : 0):F2} meanAssess/unit={(nInd > 0 ? assessSum / nInd : 0):F2}");
+            }
+            var w = sim.W; var acc = sim.Engine.Access;
+
+            var builtByUse = new int[7]; var ucByUse = new int[7];
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State == ParcelState.Built) builtByUse[(int)pl.Use]++;
+                else if (pl.State == ParcelState.UnderConstruction) ucByUse[(int)pl.Use]++;
+            }
+            Console.WriteLine("built by use: " + string.Join(" ", Enum.GetValues<ZoneKind>()
+                .Where(k => k != ZoneKind.None)
+                .Select(k => $"{k}={builtByUse[(int)k]}+{ucByUse[(int)k]}uc")));
+
+            double[] resid = new double[6];
+            for (int u = 0; u < 6; u++)
+                for (int c = 0; c < acc.C; c++) resid[u] += sim.Engine.Residuals.ByUse[u][c];
+            Console.WriteLine($"residual Σ: resLow={resid[0]:F0} resHigh={resid[1]:F0} com={resid[2]:F0} ind={resid[3]:F0} off={resid[4]:F0} ext={resid[5]:F0}");
+
+            var top = Enumerable.Range(0, acc.C)
+                .OrderByDescending(c => sim.Engine.Residuals.ByUse[3][c]).Take(5);
+            double S2 = LandAccounting.SPerUnit(2, 1.0, p);
+            foreach (int c in top)
+            {
+                double bid = LandAccounting.FirmBidPerSlot(acc, sim.Engine.Trade, c, ZoneKind.Industrial, 2, p);
+                Console.WriteLine($"  cluster {c}: indBid/slot={bid:F3} vs S(2)/unit={S2:F3} resid={sim.Engine.Residuals.ByUse[3][c]:F2}");
+            }
+
+            // Entry margin on each VACANT industrial parcel: excess = bid − assessment.
+            int shown = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.Use != ZoneKind.Industrial || pl.OccupantFirm >= 0) continue;
+                double bid = LandAccounting.FirmBidPerSlot(acc, sim.Engine.Trade, pl.Cluster, pl.Use, pl.Level, p,
+                                                           out _, w.Clusters) * p.CondFactor(pl.Condition);
+                double assess = LandAccounting.UnitAssessment(pl, p);
+                if (shown++ < 8)
+                    Console.WriteLine($"  parcel {pl.Id} cl={pl.Cluster} lvl={pl.Level} cond={pl.Condition:F2}: "
+                        + $"bid={bid:F3} assess={assess:F3} excess={bid - assess:F3} LR={pl.AssessedLR:F2}");
+            }
+            Console.WriteLine($"  vacant industrial parcels: {shown}");
+            return 0;
+        }
+
         public static int PriceProbe(ulong seed, int ticks)
         {
             var p = new EconParams();

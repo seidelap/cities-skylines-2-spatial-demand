@@ -228,14 +228,15 @@ namespace CS2Econ.Core
         /// that paces in-migration (arrivals ≤ hazard × vacant stock). Its
         /// inverse is mean time-to-fill in ticks (≈ days on market).</summary>
         public double VacancyFillHazard = 1.0 / 60.0;
-        /// <summary>RETIRED from the absorption budget. This was an assumed
-        /// share of occupied units re-let per tick; the budget now reads the
-        /// MEASURED turnover flow instead (EMA of units actually freed via
-        /// Allocation.Vacate — see EconomyEngine.TurnoverEma). The forecast
-        /// admitted ~50× more arrivals than units actually freed, and 98% of
-        /// "displacement" exits turned out to be arrivals that never found a
-        /// unit (churnprobe). Kept only as documentation of the old value; no
-        /// engine code reads it.</summary>
+        /// <summary>Turnover PRIOR for the absorption budget: assumed share of
+        /// occupied units re-let per tick, used as a floor under the MEASURED
+        /// turnover flow (EMA of units actually freed via Allocation.Vacate —
+        /// see EconomyEngine.TurnoverEma). As the budget's sole churn term it
+        /// admitted ~50× more arrivals than units actually freed (churnprobe:
+        /// 98% of "displacement" exits were arrivals that never found a
+        /// unit); the bare measurement instead deadlocked a saturated
+        /// no-churn city. Floor + measurement + the unhoused-queue congestion
+        /// gate together pace admission honestly.</summary>
         public double HousingTurnoverRate = 0.004;
 
         // ---- access (design §4.2) -------------------------------------------
@@ -285,14 +286,16 @@ namespace CS2Econ.Core
         /// produce this dispersion automatically; the segment aggregation
         /// hides it. This is NOT the old BidAccessScale double discount (that
         /// scaled the whole bid for surplus the clearing mechanism already
-        /// provides). Calibration honesty: 0.55 keeps the effective price
-        /// level (MaxRentShare × this) near the historically validated
-        /// calibration after the double discount was removed. An earlier note
-        /// here credited the value with stopping an emigration "turnstile";
-        /// churnprobe later showed 98% of those exits were arrivals that never
-        /// found a unit — an absorption-budget bug (see HousingTurnoverRate),
-        /// not a price-level effect.</summary>
-        public double MarginalIncomeQuantile = 0.55;
+        /// provides). Calibration honesty: this was cut to 0.55 to damp an
+        /// emigration "turnstile"; churnprobe then showed 98% of those exits
+        /// were arrivals that never found a unit — an absorption-budget bug
+        /// (see HousingTurnoverRate), not a price-level effect — while the
+        /// cut itself halved assessments and stalled construction (starts
+        /// 265 → 42 in the debug fixture; commercial/industrial development
+        /// to zero). With the churn justification disproven the cut was
+        /// reverted; 0.75 keeps the dispersion story at its original,
+        /// A/B-validated level.</summary>
+        public double MarginalIncomeQuantile = 0.75;
         public double CommercialMarkup = 0.35;    // gross margin on captured spending
         public double OfficeOutputPrice = 3.1;    // near-exogenous (design §4.2)
 
