@@ -258,10 +258,19 @@ namespace CS2Econ.Core
         /// while everyone above them retains theirs automatically. Keeping the
         /// old 0.47 therefore discounted the competitive price a second time,
         /// pushing bids below structure cost across most of the map, flattening
-        /// ℓ* and thinning land rent. Raised to 1.0 so the clearing price is the
-        /// competitive price; heterogeneity and surplus now come from where
-        /// they belong — the queue.</summary>
-        public double BidAccessScale = 1.0;
+        /// ℓ* and thinning land rent. Heterogeneity and surplus now come from
+        /// where they belong — the queue.
+        ///
+        /// Calibration anchor: scale × MarginalIncomeQuantile = 1.0, the
+        /// effective price level every §6 target was validated at. The
+        /// adversarial-review corrections (appeal on the WTP leg only,
+        /// zero-WTP bidders excluded, excluded-challenger read) shifted the
+        /// mean clearing bid about −25% at unchanged parameters — mechanism
+        /// fixes, not price-level decisions — so the scale absorbs the
+        /// difference: 0.75 quantile × 1.33 restores the validated level
+        /// (at product 0.75 the level-map Spearman fell to 0.28 and the
+        /// monoculture bend to 29% — both §6 misses).</summary>
+        public double BidAccessScale = 1.33;
         /// <summary>How far PAST the last filled unit the clearing walk reads
         /// the demand curve: price = WTP at queue position supply×(1+band) —
         /// the first EXCLUDED tranche of bidders, not the last admitted one.
