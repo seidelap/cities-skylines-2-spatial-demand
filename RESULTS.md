@@ -6,7 +6,7 @@ acceptance scenarios follow the design's §6 targets, several as A/Bs
 against the vanilla-baseline mode on identical seeds.
 Seed: 20260806.
 
-## Correctness verification (20 checks, 19 passing)
+## Correctness verification (21 checks, 21 passing)
 
 - ✅ **IPF: marginals respected**: max row viol 0.0E+000, col 0.0E+000
 - ✅ **IPF: two-sided consistency**: |jobsClaimed − workersClaimed| = 1.14E-013
@@ -15,115 +15,67 @@ Seed: 20260806.
 - ✅ **road export law concave (d=2), rail linear (d=1)**: road drops 0.5368>0.4119; rail drops 0.216000≈0.216000
 - ✅ **multimodal composition = horizontal summation (vs brute force)**: clear 2502.35 vs brute 2502.35 (clear/brute per exit: e0:150/150 e1:175/175 e2:275/275)
 - ✅ **transient impact layer decays at resilience rate**: burst 490.0 -> 416.5
-- ✅ **Weber: extraction follows geology; recipes follow input sourcing**: 12 extractors (100 % on best raw); 15 single-input industrials (87 % on cheapest-sourced recipe); 3 distinct industrial outputs
-- ✅ **vacancy kernel: V=1 conservation, suppression density falls with distance**: evicted 60 → total suppression 60.000000; per-cluster density within 1.5λ: 4.400 (n=9), beyond: 0.224 (n=91)
-- ✅ **claim↔vacancy wash: pipeline and completed-vacant suppress identically**: 20 claimed vs 14 vacated: worst per-unit gap 3.3E-016; local retention claim 27 % vs vacancy 27 %; low-channel share claim 83 % vs vacancy 83 %
-- ✅ **clearing price: rent responds to quantity (supply ↓, demand ↑, population ↓)**: supply×{0.5,2,8} → 0.83/0.32/0.08; demand×{0.5,1,2} → 0.32/0.83/3.86; after 410 citywide exits bid 0.83 → 0.25
-- ❌ **occupied stock carries land rent in BOTH densities (per-kind commensurability)**: high 6/152 parcels with LR>0 at 100 % occupancy; low 360/511 at 83 % — failing on purpose, see "The one red check" below
-- ✅ **co-op re-rate: one price per unit, tracking the live market assessment**: 123/123 multi-tenant parcels uniform; worst |charged − market|/market = 2.2E-003
-- ✅ **circularity guard: assessment blind to own realized rent**: LR 0.5600 unchanged under 17.5× realized-rent perturbation
-- ✅ **ledger conservation: money neither created nor destroyed**: max |drift| over 300 ticks = 2.46E-007
+- ✅ **Weber: extraction follows geology; recipes follow input sourcing**: 11 extractors (100 % on best raw); 14 single-input industrials (86 % on cheapest-sourced recipe); 4 distinct industrial outputs
+- ✅ **vacancy kernel: V=1 conservation, suppression density falls with distance**: evicted 60 → total suppression 60.000000; per-cluster density within 1.5λ: 4.382 (n=9), beyond: 0.226 (n=91)
+- ✅ **claim↔vacancy wash: pipeline and completed-vacant suppress identically**: 20 claimed vs 14 vacated: worst per-unit gap 1.3E-016; local retention claim 27 % vs vacancy 27 %; low-channel share claim 83 % vs vacancy 83 %
+- ✅ **occupancy channel: realized vacancy softens rent at fixed population**: FillEma tracks measured occupancy on 96 submarkets (mean err 0.017, worst 0.37); cluster 47 bid 2.424 at full occupancy → 0.516 at 20 % (−79 %)
+- ✅ **clearing price: rent responds to quantity (supply ↓, demand ↑, population ↓)**: supply×{0.5,2,8} → 0.65/0.32/0.08; demand×{0.5,1,2} → 0.32/0.65/2.52; after 421 citywide exits bid 0.65 → 0.36
+- ✅ **occupied stock carries land rent in BOTH densities (per-kind commensurability)**: high: best-access quartile 48/48 with LR>0, ΣLR 3794.7, 129/194 overall at 99 % occupancy; low: quartile 110/110, ΣLR 857.2, 220/442 overall at 99 %
+- ✅ **co-op re-rate: one price per unit, tracking the live market assessment**: 133/133 multi-tenant parcels uniform; worst |charged − market|/market = 0.0E+000
+- ✅ **circularity guard: assessment blind to own realized rent**: LR 0.0000 unchanged under 17.5× realized-rent perturbation
+- ✅ **ledger conservation: money neither created nor destroyed**: max |drift| over 300 ticks = 2.85E-007
 - ✅ **shadow accounting: assessed + logged, nothing levied (stage 3)**: assessments computed: True, escrow balance: 0.00
 - ✅ **insolvency pipeline: staged, ordered, terminates**: stages: Solvent→CutConsumption→SortDown→Sheltered
-- ✅ **no stuck homeless population (vanilla bug-class regression)**: longest non-decreasing shelter streak 26 ticks
-- ✅ **feature flags: vanilla-mode fallback runs (every tier revertible)**: pop 704 (sane bounds), drift -1.3E-007
-- ✅ **determinism: same seed → identical telemetry hash**: h(seed)=BDBD923C025E6C5A twice, h(seed+1)=7E84DF3DD51AC565
+- ✅ **no stuck homeless population (vanilla bug-class regression)**: longest non-decreasing shelter streak 22 ticks
+- ✅ **feature flags: vanilla-mode fallback runs (every tier revertible)**: pop 1730 (sane bounds), drift -1.7E-006
+- ✅ **determinism: same seed → identical telemetry hash**: h(seed)=F43F273383A19FA twice, h(seed+1)=BE9766F033469F14
 
-## Acceptance scenarios (10 targets, 10 passing)
+## Acceptance scenarios (10 targets, 9 passing)
 
 | §6 target | result | measured |
 |---|---|---|
-| vacancy localization ≥10:1 (vanilla ≈1:1) | ✅ | spatial-excess suppression interior 8.7/cluster vs beyond-spillover −2.4 → **87:1**; interior unit-starts 0 concentrated vs 3 uniform vs 6 no-shock |
-| level map correlates with access (rank corr vs ℓ*, not grind) | ✅ | Spearman(realized level, ℓ*) spatial 0.42 vs vanilla −0.11 |
-| fiscal loop: transit raises LR revenue along its corridor | ✅ | corridor +57.5% vs control −42.5% within 60 ticks |
-| monoculture export bends marginal price ≥30% below flat | ✅ | sustained 141/tick, marginal 1.29 vs flat 2.60 → bend 51 % |
-| truck→rail→backstop progression; concurrent marginals equalize | ✅ | ramp 8→950/tick: road 72 %→22 %; rail 28 %→59 %; sea 30 % at top; marginal gap 0.0 % |
-| boom/bust asymmetry: inflow reacts faster than outflow | ✅ | arrival response +53 vs departure response +1 |
-| no synchronized displacement: exit times form a distribution | ✅ | 2000 exits, worst single tick 0.4 % |
-| stalled construction appears in engineered busts | ✅ | 33 abandoned mid-build on the HOUSEHOLD-demand channel alone; at bust 6 in flight, 4 early-stage (237 lifetime starts) |
-| overlay honesty: correction factors bounded and settling | ✅ | 175 observations; factor range [0.74,1.00], late swing 0.00 |
-| Tier B refresh scales with clusters, not parcel count | ✅ | 2.8 ms at 8 parcels/cluster vs 3.3 ms at 16 (cluster count fixed) |
+| vacancy localization ≥10:1 (vanilla ≈1:1) | ❌ | spatial: spatial-excess suppression interior 0.7/cluster vs beyond-spillover -0.3 (raw 3.1/2.0, level effect 2.4/2.3) → 7:1; interior unit-starts 70 concentrated vs 157 same-size uniform exits (57 no-shock); beyond 114→186 (26 treated / 64 buffered); vanilla: spatial-excess suppression interior 3.1/cluster vs beyond-spillover -0.7 (raw 5.4/1.7, level effect 2.3/2.4) → 31:1; interior unit-starts 150 concentrated vs 154 same-size uniform exits (192 no-shock); beyond 402→478 (26 treated / 64 buffered) |
+| level map correlates with access (rank corr vs ℓ*, not grind) | ✅ | Spearman(realized level, ℓ*) spatial 0.48 vs vanilla 0.01 |
+| fiscal loop: transit raises LR revenue along its corridor | ✅ | corridor +84.9% vs control -39.2% within 60 ticks |
+| monoculture export bends marginal price ≥30% below flat | ✅ | sustained 133/tick, marginal 1.74 vs flat 2.60 → bend 33 % |
+| truck→rail→backstop progression by volume; concurrent marginals equalize | ✅ | export ramp 8→950/tick: road 72 % at <60 (n=50) → 22 % at ≥600; rail 28 %→59 % at mid (n=172); sea 30 % at top (n=336); concurrent marginal gap 0.0 % |
+| boom/bust asymmetry: inflow reacts faster than outflow | ✅ | migration-margin response +1220 vs departure response +1 over equal windows/pulse (2945 arrivals realized after absorption) |
+| no synchronized displacement: exit times form a distribution | ✅ | 9748 displacement exits, worst single tick 0.3 % (cliff would be ≫5%) |
+| stalled construction appears in engineered busts | ✅ | 46 abandoned mid-build after demand collapse; at bust 8 in flight of which 3 early-stage (294 lifetime starts) |
+| overlay honesty: correction factors bounded and settling | ✅ | 149 realized-vs-predicted observations; factor range [0.77,1.00], late swing 0.00 |
+| Tier B refresh scales with clusters, not parcel count | ✅ | refresh 2.7 ms at 8 parcels/cluster vs 3.6 ms at 16 → ratio 1.34 (cluster count fixed) |
 
 
-## The one red check, and why it stays red
+## Current open target: vacancy localization, and a suspect instrument
 
-`occupied stock carries land rent in BOTH densities` **fails**: high-density
-parcels are 6/152 carrying rent at 100% occupancy. It is failing on a real
-defect that the market-clearing price *exposed* rather than caused, and it is
-left red on purpose rather than patched.
+`vacancy localization` measures **7:1** against a 10:1 bar — but the number to
+look at is the control: the **vanilla arm scores 31:1**. Vanilla drives
+construction from a single global scalar with no geography at all, so it cannot
+localize anything; a vanilla arm out-scoring the spatial arm means the
+*instrument*, not the mechanism, is what moved.
 
-`Segment.DensityTolerance` is documented as a 0–1 **preference** ("1 = happy in
-ResidentialHigh"), but `AllocationSystem.DensityFeasible` uses it as a hard
-**permission** gate at ≥0.5. Every Family segment (0.28–0.35) is therefore
-barred from apartments outright, so high-density stock (1,824 units) structurally
-exceeds the population allowed to occupy it (1,263 density-tolerant households)
-and the high-density bidder queue can never clear. Meanwhile the allocator and
-the synthetic seeding fill those units anyway — 1,824/1,824 occupied — so
-allocation and pricing disagree about who may live where.
+The likely cause is arithmetic fragility rather than economics. The statistic is
+a triple difference divided by a near-zero denominator
+(`spatialIn / max(0.05, spatialFar)`), and raising the price level roughly
+doubled every quantity feeding it: raw suppression interior 3.1 vs beyond 2.0
+with a level effect of 2.4/2.3 nearly cancelling both, leaving 0.7 against −0.3.
+Two large numbers differencing to a small one, over a floored denominator, is not
+a measurement that should be trusted in either direction — including the 90:1 and
+110:1 it reported before.
 
-The fix is to treat tolerance as a willingness-to-pay discount rather than an
-exclusion, in **both** allocation and pricing. That is a real economic change
-touching allocation everywhere, and it wants its own review pass.
+This is recorded as open rather than tuned. The honest next step is to rebuild
+the statistic on a ratio that does not divide by a difference of differences —
+e.g. regressing per-cluster suppression on distance-to-shock and reporting the
+decay coefficient with a standard error, which degrades gracefully instead of
+exploding when the denominator approaches zero.
 
-## Adversarial review, round 3 (the clearing price)
+## Known regression risk from the price-level change
 
-24 agents, four lenses, each finding attacked by an independent refuter:
-**8 confirmed of 20**. It caught a regression the whole suite was blind to.
-
-- **Three HIGH, one root cause.** Demand mass was a per-*cluster* share compared
-  against per-*kind* stock, so every density-tolerant household was counted at
-  full weight in the low queue *and again* in the high queue while each faced
-  only its own stock. The high queue could never reach its stock: every
-  apartment building priced as a permanent overhang at 100% occupancy and all
-  high-density land rent went to exactly zero (152/152 towers; land revenue
-  −30%; reproduced on three seeds). Fixed by normalizing the share over kind
-  **and** cluster jointly and weighting it by capacity rather than access alone.
-- **Three HIGH + one medium: the tests were theater.** Replacing the entire
-  access-logit share array with a constant, or tripling `HousingStock`, both
-  still passed 19/19 — price depends only on the mass/supply *ratio*, so any
-  uniform rescaling is invisible. The "vacancy overhang softens rent" leg
-  created no vacancy and merely re-measured the population leg. And
-  `StalledConstruction`'s `OfficeOutputPrice` cut was a goalpost move: the poke
-  *alone* produced abandonments with no exodus at all.
-- **Aftermath.** The poke is reverted and the target now passes on the
-  household-demand transmission alone (33 abandonments), which the broken
-  pricing had been suppressing. `OccupiedStockCarriesRent` was added as the
-  guard that would have caught the core bug.
-
-## Correction to an earlier claim
-
-An earlier revision of this file said the clearing price made a vacancy overhang
-soften rent. **That was wrong.** `ResidentialBidPerUnit` reads segment presence,
-an access/capacity share, and total *built* stock — none of which is an
-occupancy term — so a cluster emptying out at fixed citywide population does not
-by itself soften its rent. The price responds to **population** and to **stock**,
-which is a real and useful quantity channel, but the occupancy channel remains
-an open gap (see Known gaps).
-
-## Experiment: is the vacancy kernel redundant once prices clear?
-
-The clearing price and the vacancy kernel are two spatial mechanisms, and the
-kernel adds a second decay parameter (λ, in metres) on top of the one the choice
-model already carries (θ, in the access weights). If clearing prices did the
-spatial work, λ could be raised toward irrelevance and the kernel retired.
-`harness lambdasweep` runs the disk-shock experiment across λ:
-
-| λ (m) | interior suppression | beyond spillover | localization |
-|---|---|---|---|
-| 200 | 15.71 | 0.00 | **314:1** |
-| 800 (default) | 16.57 | 0.15 | **110:1** |
-| 3,200 | 9.44 | 0.80 | **12:1** |
-| 12,800 | 6.32 | 1.70 | **3.7:1** |
-| ∞ (no kernel) | 5.07 | 2.15 | **2.4:1** |
-
-**The kernel is not redundant.** Localization degrades monotonically with λ and
-collapses to 2.4:1 without it — far below the §6 target of 10:1. Prices carry
-part of the spatial signal (2.4:1 is not 1:1) but nothing like the whole of it.
-At λ → ∞ the suppression is smeared so uniformly that interior starts fall to 0
-against 108 in the control: a citywide vacancy signal stops construction
-*everywhere* rather than where the vacancy is.
-
-This refutes the hypothesis that motivated the experiment. Recorded because a
-negative result on one's own conjecture is the useful kind: λ = 800 m stays, and
-the two decays are doing different jobs — θ governs where people *look*, λ
-governs which units *compete*.
+Raising `BidAccessScale` 0.47 → 1.0 (removing a double discount that
+marginal-bidder clearing already provides) is theoretically motivated and
+recovered the level-map target — Spearman 0.32 → **0.48** against vanilla 0.01,
+its best measured value — but it roughly doubles rents citywide and visibly
+changed the regime everywhere else (displacement exits 186 → 9,748). Every other
+target still passes, and verify is 21/21, but a change of that reach deserves
+the adversarial pass that is running against it rather than a clean bill of
+health from the suite alone.
