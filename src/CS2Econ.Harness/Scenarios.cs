@@ -566,17 +566,16 @@ namespace CS2Econ.Harness
             int earlyAtBust = EarlyStage(), pipelineAtBust = InFlight();
 
             int abandonedBefore = sim.Engine.Construction.AbandonedTotal;
-            // Engineered bust — an ECONOMY-WIDE collapse, not just a household
-            // exodus: amenity craters, a third of the city leaves, AND the
-            // office output price collapses. The last term matters because
-            // office towers price off a near-exogenous output price (the
-            // documented infinite-tap gap), so a pure population exodus leaves
-            // their expected flow almost untouched and the pipeline — which is
-            // office-heavy at this point in the run — sails through a "bust"
-            // that never reached it. Collapsing both channels is what makes the
-            // §6 claim testable on whatever happens to be in flight.
+            // Engineered bust: amenity craters and a third of the city leaves.
+            // Deliberately a HOUSEHOLD-DEMAND collapse only. An earlier version
+            // also cut p.OfficeOutputPrice, which made the target pass — but
+            // adversarial review showed the office poke ALONE carried the pass
+            // (2 abandonments with no exodus at all), i.e. it was a goalpost
+            // move that tested a parameter cut rather than the §6 transmission
+            // "demand collapse -> construction stalls". Restored; if the
+            // household channel cannot strand a project, that is a real result
+            // and belongs in RESULTS.md, not in a poke.
             foreach (var c in sim.W.Clusters) c.Amenity -= 1.6;
-            p.OfficeOutputPrice *= 0.25;
             foreach (var h in sim.W.Households)
             {
                 if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;

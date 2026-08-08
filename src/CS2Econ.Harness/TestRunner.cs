@@ -32,6 +32,7 @@ namespace CS2Econ.Harness
             VacancyKernelConservation(seed);
             ClaimVacancyWash(seed);
             ClearingPrice(seed);
+            OccupiedStockCarriesRent(seed);
             CoopInstantRerate(seed);
             CircularityGuard(seed);
             LedgerConservation(seed);
@@ -347,9 +348,15 @@ namespace CS2Econ.Harness
             double dHigh = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presDouble, p, stock);
             bool demandMonotone = dLow <= dMid + 1e-9 && dMid <= dHigh + 1e-9 && dHigh > dLow + 1e-6;
 
-            // (c) the closed gap: a real vacancy overhang lowers the assessed
-            // bid at that cluster. Evict most of one cluster's residents, re-run
-            // the access refresh (which recomputes stock and shares), re-price.
+            // (c) population collapse lowers the price. NOTE this is a
+            // POPULATION channel, not an occupancy one: the bid reads
+            // presence, the access/capacity share and standing stock — no term
+            // in it is realized occupancy, so a cluster emptying out at fixed
+            // citywide population does NOT by itself soften its rent. An
+            // earlier version of this check was captioned "vacancy overhang"
+            // and did exactly this; adversarial review showed it merely
+            // re-measured (b). Labelled honestly now, and the real occupancy
+            // question is tracked as an open gap in RESULTS.md.
             double before = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock);
             int killed = 0;
             foreach (var h in sim.W.Households)
@@ -364,11 +371,65 @@ namespace CS2Econ.Harness
                 sim.Engine.Access, c0, ZoneKind.ResidentialLow, 2, sim.Engine.SegmentPresence, p, stock);
             bool softens = after < before * 0.98;
 
-            Check("clearing price: rent responds to quantity (supply ↓, demand ↑, overhang softens)",
+            Check("clearing price: rent responds to quantity (supply ↓, demand ↑, population ↓)",
                   supplyMonotone && demandMonotone && killed > 100 && softens,
                   $"supply×{{0.5,2,8}} → {pLow:F2}/{pMid:F2}/{pHigh:F2}; " +
                   $"demand×{{0.5,1,2}} → {dLow:F2}/{dMid:F2}/{dHigh:F2}; " +
                   $"after {killed} citywide exits bid {before:F2} → {after:F2}");
+        }
+
+        private static void OccupiedStockCarriesRent(ulong seed)
+        {
+            // Commensurability of the clearing condition, per DENSITY KIND.
+            // The demand mass a queue accumulates and the stock it clears must
+            // be the same kind of quantity. When mass was a per-CLUSTER share
+            // compared against per-KIND stock, every density-tolerant household
+            // was counted at full weight in BOTH queues while each faced only
+            // its own stock: the high-density queue could never reach its stock,
+            // so every apartment building priced as a permanent vacancy
+            // overhang at 100% occupancy and ALL high-density land rent went to
+            // exactly zero (adversarial review, three independent lenses).
+            //
+            // The invariant: fully-occupied stock is not an overhang. If a
+            // density kind is essentially fully let citywide, a healthy share
+            // of its parcels must carry positive assessed land rent.
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(300);
+            var w = sim.W;
+
+            // Force a full reassessment so nothing is stale from the slice.
+            foreach (var pl in w.Parcels)
+                LandAccounting.Assess(w, sim.Engine.Access, sim.Engine.Trade, pl, sim.Engine.SegmentPresence, p);
+
+            (int built, int positive, int units, int filled) Census(ZoneKind kind)
+            {
+                int b = 0, pos = 0, u = 0, f = 0;
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || pl.Use != kind) continue;
+                    b++; u += pl.Units; f += pl.OccupantHouseholds.Count;
+                    if (pl.AssessedLR > 1e-9) pos++;
+                }
+                return (b, pos, u, f);
+            }
+            var lo = Census(ZoneKind.ResidentialLow);
+            var hi = Census(ZoneKind.ResidentialHigh);
+
+            double hiOcc = hi.units > 0 ? (double)hi.filled / hi.units : 0;
+            double loOcc = lo.units > 0 ? (double)lo.filled / lo.units : 0;
+            double hiPos = hi.built > 0 ? (double)hi.positive / hi.built : 1;
+            double loPos = lo.built > 0 ? (double)lo.positive / lo.built : 1;
+            // Only demand rent where the stock is actually let: a genuinely
+            // empty kind SHOULD price at zero.
+            bool hiOk = hi.built < 5 || hiOcc < 0.5 || hiPos >= 0.5;
+            bool loOk = lo.built < 5 || loOcc < 0.5 || loPos >= 0.5;
+
+            Check("occupied stock carries land rent in BOTH densities (per-kind commensurability)",
+                  hiOk && loOk,
+                  $"high: {hi.positive}/{hi.built} parcels with LR>0 at {hiOcc:P0} occupancy; " +
+                  $"low: {lo.positive}/{lo.built} at {loOcc:P0}");
         }
 
         private static void ClaimVacancyWash(ulong seed)

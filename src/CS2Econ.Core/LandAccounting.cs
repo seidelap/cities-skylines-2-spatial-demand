@@ -94,11 +94,15 @@ namespace CS2Econ.Core
                 double rel = acc.AccessValue[s][cluster] / acc.MeanAccess;
                 double premium = MathUtil.Clamp(Math.Pow(Math.Max(0.05, rel), p.PremiumExponent), 0.2, 4.0);
                 wtp[n] = seg.MaxRentShare * income * premium * p.BidAccessScale * quality;
-                // How many of this segment want THIS cluster (access-only logit;
-                // price must not enter — it is the unknown being solved for).
-                double share = acc.SegmentClusterShare.Length > s
-                               && acc.SegmentClusterShare[s].Length > cluster
-                    ? acc.SegmentClusterShare[s][cluster] : 0;
+                // How many of this segment want THIS (kind, cluster) — the
+                // share is normalized over kind AND cluster, so it is
+                // commensurate with the per-kind stock below. A per-cluster
+                // share here double-counts every density-tolerant household
+                // across both queues.
+                int ki = highDensity ? 1 : 0;
+                double share = acc.SegmentKindShare.Length > s
+                               && acc.SegmentKindShare[s][ki].Length > cluster
+                    ? acc.SegmentKindShare[s][ki][cluster] : 0;
                 mass[n] = pres * share;
                 n++;
             }

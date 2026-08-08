@@ -35,14 +35,34 @@ namespace CS2Econ.Core
         public double[][] AccessValue = Array.Empty<double[]>();
         public double MeanAccess = 1;
 
-        /// <summary>[segment][cluster] → share of that segment that would CHOOSE
-        /// this cluster on access alone (logit, normalized over clusters).
-        /// Price-free by construction: it is one half of the market-clearing
-        /// condition, so letting affordability in would be circular.</summary>
-        public double[][] SegmentClusterShare = Array.Empty<double[]>();
+        /// <summary>[segment][0=Low,1=High][cluster] → share of that segment
+        /// that would CHOOSE this (density kind, cluster), normalized over
+        /// BOTH dimensions together so each segment's shares sum to 1 across
+        /// the whole feasible market.
+        ///
+        /// Normalizing over kind AND cluster is load-bearing. A per-cluster
+        /// share compared against per-KIND stock counts the same household at
+        /// full weight in the low queue and again in the high queue while each
+        /// queue faces only its own stock — which made every high-density
+        /// cluster price as a permanent overhang at 100% occupancy and drove
+        /// all apartment land rent to exactly zero (adversarial review,
+        /// confirmed HIGH by three independent lenses).
+        ///
+        /// Weighted by CAPACITY (standing + buildable), not by access alone: a
+        /// destination-choice model without a size term spreads demand evenly
+        /// over clusters while stock is concentrated, so the demand/stock ratio
+        /// is not a tightness measure. With it, demand lands where housing is
+        /// or could be, and tightness reduces to relative attractiveness × the
+        /// citywide occupancy ratio. Price-free by construction: affordability
+        /// must not enter, since price is the unknown being solved for.</summary>
+        public double[][][] SegmentKindShare = Array.Empty<double[][]>();
         /// <summary>[0=Low,1=High][cluster] → standing residential units. The
         /// quantity the clearing price has to fill.</summary>
         public double[][] HousingStock = Array.Empty<double[]>();
+        /// <summary>[0=Low,1=High][cluster] → standing + buildable capacity
+        /// (built units, zoned-empty capacity, pipeline). The attraction term
+        /// of SegmentKindShare.</summary>
+        public double[][] HousingCapacity = Array.Empty<double[]>();
 
         // Commercial capture (Layer-3 phantom entrant machinery, §4.2)
         public double[] IncumbentShopWeight = Array.Empty<double>(); // per origin: Σ_j wShop·mass_j
@@ -219,36 +239,74 @@ namespace CS2Econ.Core
             MeanAccess = cnt > 0 ? Math.Max(0.5, sumAccess / cnt) : 1;
 
             // ---- inputs to the market-clearing bid (design §4.3) -------------
-            // Where each segment WANTS to live (logit on access value,
-            // normalized over clusters — the SAME allocation Construction uses
-            // for seekers, minus the affordability factor, which must not enter
-            // here: price is what we are solving for).
-            if (SegmentClusterShare.Length != nc)
-            {
-                SegmentClusterShare = new double[nc][];
-                for (int s = 0; s < nc; s++) SegmentClusterShare[s] = new double[C];
-            }
-            for (int s = 0; s < nc; s++)
-            {
-                var row = SegmentClusterShare[s];
-                double tot = 0;
-                for (int c = 0; c < C; c++) { row[c] = Math.Exp(AccessValue[s][c] / 1.5); tot += row[c]; }
-                if (tot > 1e-12) for (int c = 0; c < C; c++) row[c] /= tot;
-            }
-
-            // Standing housing stock per density kind — the QUANTITY side of
-            // the clearing condition. [0] = ResidentialLow, [1] = ResidentialHigh.
+            // Standing stock (the quantity a price must fill) and capacity
+            // (standing + buildable — the attraction term). [0] = Low, [1] = High.
             if (HousingStock.Length != 2)
             {
                 HousingStock = new double[2][];
-                for (int k = 0; k < 2; k++) HousingStock[k] = new double[C];
+                HousingCapacity = new double[2][];
             }
-            for (int k = 0; k < 2; k++) Array.Clear(HousingStock[k], 0, C);
+            for (int k = 0; k < 2; k++)
+            {
+                if (HousingStock[k] == null || HousingStock[k].Length != C) HousingStock[k] = new double[C];
+                else Array.Clear(HousingStock[k], 0, C);
+                if (HousingCapacity[k] == null || HousingCapacity[k].Length != C) HousingCapacity[k] = new double[C];
+                else Array.Clear(HousingCapacity[k], 0, C);
+            }
             foreach (var pl in w.Parcels)
             {
-                if (pl.State != ParcelState.Built || !pl.IsResidential) continue;
                 if ((uint)pl.Cluster >= (uint)C) continue;
-                HousingStock[pl.Use == ZoneKind.ResidentialHigh ? 1 : 0][pl.Cluster] += pl.Units;
+                if (pl.State == ParcelState.Built && pl.IsResidential)
+                {
+                    int k = pl.Use == ZoneKind.ResidentialHigh ? 1 : 0;
+                    HousingStock[k][pl.Cluster] += pl.Units;
+                    HousingCapacity[k][pl.Cluster] += pl.Units;
+                }
+                else if (pl.State == ParcelState.UnderConstruction
+                         && (pl.Use == ZoneKind.ResidentialLow || pl.Use == ZoneKind.ResidentialHigh))
+                    HousingCapacity[pl.Use == ZoneKind.ResidentialHigh ? 1 : 0][pl.Cluster] += pl.Units;
+                else if (pl.State == ParcelState.Empty
+                         && (pl.Zoned == ZoneKind.ResidentialLow || pl.Zoned == ZoneKind.ResidentialHigh))
+                    HousingCapacity[pl.Zoned == ZoneKind.ResidentialHigh ? 1 : 0][pl.Cluster]
+                        += LandAccounting.UnitsFor(pl.Zoned);
+            }
+
+            // Where each segment WANTS to live, over (kind × cluster) jointly:
+            // access logit × capacity, restricted to the densities that segment
+            // can occupy, normalized so each segment's shares sum to 1 over the
+            // whole feasible market. See SegmentKindShare's doc for why the
+            // joint normalization and the capacity weight are both required.
+            if (SegmentKindShare.Length != nc)
+            {
+                SegmentKindShare = new double[nc][][];
+                for (int s = 0; s < nc; s++)
+                    SegmentKindShare[s] = new double[2][];
+            }
+            for (int s = 0; s < nc; s++)
+            {
+                var seg = Segment.All[s];
+                double tot = 0;
+                for (int k = 0; k < 2; k++)
+                {
+                    if (SegmentKindShare[s][k] == null || SegmentKindShare[s][k].Length != C)
+                        SegmentKindShare[s][k] = new double[C];
+                    var row = SegmentKindShare[s][k];
+                    var kind = k == 1 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
+                    bool feasible = AllocationSystem.DensityFeasible(seg, kind);
+                    for (int c = 0; c < C; c++)
+                    {
+                        row[c] = feasible
+                            ? Math.Exp(AccessValue[s][c] / 1.5) * HousingCapacity[k][c]
+                            : 0;
+                        tot += row[c];
+                    }
+                }
+                if (tot > 1e-12)
+                    for (int k = 0; k < 2; k++)
+                    {
+                        var row = SegmentKindShare[s][k];
+                        for (int c = 0; c < C; c++) row[c] /= tot;
+                    }
             }
         }
 
