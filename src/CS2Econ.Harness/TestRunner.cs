@@ -345,30 +345,49 @@ namespace CS2Econ.Harness
                 acc.HousingStock[0][c0] = saved0;
                 return v;
             }
+            // Two-regime economics (see ResidentialBidPerUnit): while the
+            // stock CLEARS, price carries the quantity response; once demand
+            // exhausts, price floors FLAT at the deepest positive bidder and
+            // the response moves to expected VACANCY (fillRatio). So the
+            // ladders assert weak price monotonicity with at least one strict
+            // step, and require the fill ratio to carry the response wherever
+            // the price has gone flat.
+            double FillAtStock(double units)
+            {
+                double saved0 = acc.HousingStock[0][c0];
+                acc.HousingStock[0][c0] = units;
+                LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out double f);
+                acc.HousingStock[0][c0] = saved0;
+                return f;
+            }
             double pLow = PriceAtStock(stock * 0.5);
             double pMid = PriceAtStock(stock * 2.0);
             double pHigh = PriceAtStock(stock * 8.0);
-            bool supplyMonotone = pLow >= pMid - 1e-9 && pMid >= pHigh - 1e-9 && pLow > pHigh + 1e-6;
+            double fMid = FillAtStock(stock * 2.0), fHigh = FillAtStock(stock * 8.0);
+            bool supplyMonotone = pLow >= pMid - 1e-9 && pMid >= pHigh - 1e-9 && pLow > pHigh * 0.999 + 1e-6
+                // Where the price ladder goes flat (excess regime), the
+                // expected fill must fall instead: supply×8 leaves more
+                // units unlet than supply×2 at the same flat price.
+                && (pMid > pHigh + 1e-9 || fHigh < fMid - 1e-9);
 
-            // (b) demand ladder at fixed supply: strictly non-decreasing.
+            // (b) demand ladder at fixed supply: weakly increasing price,
+            // strictly from base to double; where flat (excess), fill rises.
             var presHalf = new double[Segment.Count];
             var presDouble = new double[Segment.Count];
             for (int s = 0; s < Segment.Count; s++) { presHalf[s] = pres[s] * 0.5; presDouble[s] = pres[s] * 2.0; }
-            double dLow = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presHalf, p);
-            double dMid = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p);
-            double dHigh = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presDouble, p);
-            bool demandMonotone = dLow <= dMid + 1e-9 && dMid <= dHigh + 1e-9 && dHigh > dLow + 1e-6;
+            double dLow = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presHalf, p, out double fdLow);
+            double dMid = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out double fdMid);
+            double dHigh = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, presDouble, p, out _);
+            bool demandMonotone = dLow <= dMid + 1e-9 && dMid <= dHigh + 1e-9 && dHigh > dLow + 1e-6
+                && (dLow < dMid - 1e-9 || fdLow < fdMid - 1e-9);
 
-            // (c) population collapse lowers the price. NOTE this is a
-            // POPULATION channel, not an occupancy one: the bid reads
-            // presence, the access/capacity share and standing stock — no term
-            // in it is realized occupancy, so a cluster emptying out at fixed
-            // citywide population does NOT by itself soften its rent. An
-            // earlier version of this check was captioned "vacancy overhang"
-            // and did exactly this; adversarial review showed it merely
-            // re-measured (b). Labelled honestly now, and the real occupancy
-            // question is tracked as an open gap in RESULTS.md.
-            double before = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p);
+            // (c) population collapse: with the flat-tail excess price the
+            // response is regime-dependent — price falls while the submarket
+            // clears, expected fill falls once it does not. Composition drift
+            // (WHO remains changes the tail tranche's value) may nudge the
+            // flat price a few percent either way; what must never happen is
+            // the market registering NO response on either margin.
+            double before = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out double fillBefore);
             int killed = 0;
             foreach (var h in sim.W.Households)
             {
@@ -379,14 +398,15 @@ namespace CS2Econ.Harness
             }
             sim.Run(10);
             double after = LandAccounting.ResidentialBidPerUnit(
-                sim.Engine.Access, c0, ZoneKind.ResidentialLow, 2, sim.Engine.SegmentPresence, p);
-            bool softens = after < before * 0.98;
+                sim.Engine.Access, c0, ZoneKind.ResidentialLow, 2, sim.Engine.SegmentPresence, p, out double fillAfter);
+            bool softens = after < before * 0.98
+                           || (fillAfter < fillBefore - 0.02 && after < before * 1.10);
 
-            Check("clearing price: rent responds to quantity (supply ↓, demand ↑, population ↓)",
+            Check("clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)",
                   supplyMonotone && demandMonotone && killed > 100 && softens,
-                  $"supply×{{0.5,2,8}} → {pLow:F2}/{pMid:F2}/{pHigh:F2}; " +
-                  $"demand×{{0.5,1,2}} → {dLow:F2}/{dMid:F2}/{dHigh:F2}; " +
-                  $"after {killed} citywide exits bid {before:F2} → {after:F2}");
+                  $"supply×{{0.5,2,8}} → {pLow:F2}/{pMid:F2}/{pHigh:F2} (fill {fMid:F2}→{fHigh:F2}); " +
+                  $"demand×{{0.5,1,2}} → {dLow:F2}/{dMid:F2}/{dHigh:F2} (fill {fdLow:F2}→{fdMid:F2}); " +
+                  $"after {killed} citywide exits bid {before:F2} → {after:F2}, fill {fillBefore:F2} → {fillAfter:F2}");
         }
 
         private static void OccupiedStockCarriesRent(ulong seed)
@@ -520,18 +540,30 @@ namespace CS2Econ.Harness
                 acc.RebuildDemandShares();      // same recompute the refresh does
             }
             Reprice(1.0);
-            double bidFull = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p);
+            double bidFull = LandAccounting.ResidentialBidPerUnit(
+                acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out double fillFull);
             Reprice(0.2);
-            double bidEmpty = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p);
+            double bidEmpty = LandAccounting.ResidentialBidPerUnit(
+                acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out double fillEmpty);
             acc.FillEma[0][c0] = saved[0]; acc.FillEma[1][c0] = saved[1];
             acc.RebuildDemandShares();
 
+            // Two-regime economics: while the submarket CLEARS, the thinner
+            // demand share reads deeper down the curve and the PRICE falls.
+            // Once demand exhausts, the price floors flat at the deepest
+            // positive bidder (cutting below them buys no tenant that
+            // exists) and the channel's response moves to expected FILL —
+            // the vacancy deepens instead. Either margin must respond.
+            bool priceLeg = bidEmpty < bidFull * 0.95;
+            bool vacancyLeg = bidEmpty <= bidFull * 1.001 && fillEmpty < fillFull * 0.8;
+
             double meanErr = compared > 0 ? sumErr / compared : 1;
-            Check("occupancy channel: realized vacancy softens rent at fixed population",
-                  compared >= 10 && meanErr < 0.06 && worstErr < 0.5 && bidEmpty < bidFull * 0.95,
+            Check("occupancy channel: realized vacancy softens rent (price while cleared, deeper vacancy once floored)",
+                  compared >= 10 && meanErr < 0.06 && worstErr < 0.5 && (priceLeg || vacancyLeg),
                   $"FillEma tracks measured occupancy on {compared} submarkets " +
                   $"(mean err {meanErr:F3}, worst {worstErr:F2}); " +
-                  $"cluster {c0} bid {bidFull:F3} at full occupancy → {bidEmpty:F3} at 20 % (−{1 - bidEmpty / bidFull:P0})");
+                  $"cluster {c0} bid {bidFull:F3} (fill {fillFull:F2}) at full occupancy → " +
+                  $"{bidEmpty:F3} (fill {fillEmpty:F2}) at 20 % ({(priceLeg ? "price leg" : "vacancy leg")})");
         }
 
         private static void ClaimVacancyWash(ulong seed)

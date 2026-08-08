@@ -42,26 +42,42 @@ namespace CS2Econ.Core
             => (p.HurdleRate + p.Depreciation + p.MaintenanceRate) * condition * p.RC1PerUnit
                * Math.Pow(p.LevelCostGamma, level - 1);
 
-        /// <summary>Residential bid per unit at (cluster, kind, level): the
-        /// MARKET-CLEARING price — the willingness-to-pay of the marginal
-        /// bidder, i.e. the price at which the stock exactly fills.
+        /// <summary>Residential bid per unit at (cluster, kind, level) — TWO
+        /// REGIMES, split by whether the stock can actually fill:
         ///
-        /// Rank the segments that would choose this cluster by WTP descending
-        /// and walk down the queue accumulating their mass until the standing
-        /// units are filled; the bidder who takes the last unit sets the price
-        /// (interpolated within a segment's mass, so the demand curve is
-        /// continuous rather than an 8-step staircase). Excess supply — demand
-        /// exhausted before the stock fills — prices DOWN in proportion to the
-        /// shortfall, which is how a vacancy overhang softens rent; at zero
-        /// demand the bid goes to zero and the land rent with it, since land
-        /// nobody wants earns nothing.
+        /// CLEARED (demand reaches supply×(1+ClearingBand)): the fills-all
+        /// market-clearing price, read at the excluded challenger so every
+        /// admitted tenant keeps strictly positive surplus. Competition
+        /// disciplines this regime: an owner holding units above the clearing
+        /// price is undercut by a neighbor who steals the tenant and fills
+        /// their own building, so submarket-wide revenue-maximization is not
+        /// an equilibrium here. (Tried at full strength: every submarket
+        /// priced at its richest tranche's WTP — 22.25 invariant to supply×8,
+        /// demand×2 and 397 exits — 2,187 units held vacant, housed
+        /// insolvency ×20, one segment extinct. A cartel, measured.)
         ///
-        /// Neither the max bidder (one rich eccentric re-rating a building —
-        /// the affordability spiral this replaced) nor the presence-weighted
-        /// mean (which ignores quantity entirely and so could not respond to
-        /// vacancy at all). This is the Alonso bid-rent price and the
-        /// Shapley–Shubik equilibrium price; a person-by-unit ascending auction
-        /// converges to it.
+        /// EXCESS SUPPLY (demand exhausts first): the REVENUE-MAX point on
+        /// the available curve — the fill n* ≤ supply maximizing total rent
+        /// n × P(n), priced at P(n*). ("4 × $6 beats 5 × $4: with 5 units we
+        /// fill 4.") Withholding is uncontested in this regime — nobody is
+        /// coming for the marginal unit, so undercutting wins nothing — and
+        /// empirically rents are downward-rigid in gluts: owners hold
+        /// vacancy rather than chase the last bidder down the curve. This
+        /// replaces the old proportional-decay branch, whose zero-anchor on
+        /// the deepest queued bidder pinned 41 occupied submarkets at
+        /// exactly zero; the revenue argmax can never price into a zero-WTP
+        /// tranche (n × 0 = 0). The shortfall surfaces as VACANCY: the
+        /// affordability gate stops bidders below P from taking units, so
+        /// fill settles near n* without explicit rationing.
+        ///
+        /// The zero-WTP filter still guards the DEPTH TEST: a segment with
+        /// zero expected income contributes no demand, so its mass must not
+        /// fake a cleared market and pull the read into worthless tranches.
+        ///
+        /// Neither regime is the max bidder (one rich eccentric re-rating a
+        /// building — the affordability spiral this replaced) nor the
+        /// presence-weighted mean (which ignores quantity entirely and so
+        /// could not respond to vacancy at all).
         ///
         /// Circularity guard (§3) intact and, if anything, stronger: the inputs
         /// are potential demand (presence × access share) and standing stock —
@@ -91,7 +107,19 @@ namespace CS2Econ.Core
         public static double ResidentialBidPerUnit(
             AccessState acc, int cluster, ZoneKind kind, int level,
             double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0)
+            => ResidentialBidPerUnit(acc, cluster, kind, level, segmentPresence, p, out _, addUnits, minSupply);
+
+        /// <summary>Overload exposing the expected fill ratio n*/supply at the
+        /// returned price — 1.0 where demand is deep enough that filling the
+        /// whole stock maximizes revenue, below 1.0 where the revenue-max
+        /// point deliberately leaves units vacant. For telemetry, overlays and
+        /// checks; valuation stays price-based (see Assess).</summary>
+        public static double ResidentialBidPerUnit(
+            AccessState acc, int cluster, ZoneKind kind, int level,
+            double[] segmentPresence, EconParams p, out double fillRatio,
+            double addUnits = 0, double minSupply = 0)
         {
+            fillRatio = 1.0;
             Span<double> wtp = stackalloc double[Segment.Count];
             Span<double> mass = stackalloc double[Segment.Count];
             int n = 0;
@@ -117,12 +145,11 @@ namespace CS2Econ.Core
                 // earns below its mean; see the EconParams doc.
                 wtp[n] = seg.MaxRentShare * income * p.MarginalIncomeQuantile
                          * premium * p.BidAccessScale * quality * appeal;
-                // A zero-WTP entry is not a bidder: a segment whose expected
-                // income here is zero demands no unit at any positive price,
-                // so it must set neither the price nor the queue depth. The
-                // excess-supply branch below anchors on the DEEPEST queued
-                // bidder — letting a zero-income segment in pinned 41 fully
-                // occupied submarkets at exactly zero land rent (review).
+                // A zero-WTP entry is not a bidder: it demands no unit at any
+                // positive price, so its mass must neither fake market depth
+                // (pulling the cleared-regime read into worthless tranches)
+                // nor pad the queue. The excess regime would ignore it anyway
+                // (the revenue argmax never prices into n × 0).
                 if (wtp[n] <= 1e-12) continue;
                 // How many of this segment want THIS (kind, cluster) — the
                 // share is normalized over kind AND cluster, so it is
@@ -154,9 +181,9 @@ namespace CS2Econ.Core
 
             // Read the demand curve at the first EXCLUDED tranche, not the
             // last admitted bidder (EconParams.ClearingBand): the price is
-            // what the challenger who did NOT get a unit would pay, so every
-            // sitting tenant keeps strictly positive surplus.
-            double readAt = supply * (1.0 + Math.Max(0, p.ClearingBand));
+            // what the challenger who did NOT get a unit would pay.
+            double band = 1.0 + Math.Max(0, p.ClearingBand);
+            double readAt = supply * band;
 
             double cum = 0;
             for (int i = 0; i < n; i++)
@@ -165,17 +192,29 @@ namespace CS2Econ.Core
                 cum += mass[i];
                 if (cum >= readAt)
                 {
-                    // Position lies inside segment i's mass; interpolate from
-                    // the segment above so the curve is continuous.
+                    // CLEARED regime: position lies inside segment i's mass;
+                    // interpolate from the segment above so the demand curve
+                    // is continuous rather than an 8-step staircase.
                     double frac = mass[i] > 1e-12 ? (readAt - prev) / mass[i] : 1.0;
                     double above = i > 0 ? wtp[i - 1] : wtp[0];
                     return above + (wtp[i] - above) * MathUtil.Clamp(frac, 0, 1);
                 }
             }
-            // Demand exhausts before the read position. Price falls below the
-            // deepest bidder in proportion to the shortfall — continuous, and
-            // → 0 as demand → 0.
-            return wtp[n - 1] * MathUtil.Clamp(cum / readAt, 0, 1);
+
+            // EXCESS-SUPPLY regime: demand exhausts before the stock fills.
+            // Price FLAT at the deepest positive bidder — cutting further
+            // gains no tenant that exists, so it is pure revenue loss (the
+            // revenue-max argument at the only point it binds monotonically).
+            // The shortfall surfaces as VACANCY, reported via fillRatio; the
+            // price does not decay toward zero chasing absent demand, and it
+            // does not jump ABOVE the cleared-boundary price either: an
+            // unconstrained revenue-max here priced excess submarkets above
+            // their own scarcity price (supply×2 read 2.71 vs 1.77 at ×0.5,
+            // and rents ROSE as population fled — measured, reverted). The
+            // flat tail is the unique excess rule continuous at the regime
+            // boundary and weakly monotone in both supply and demand.
+            fillRatio = MathUtil.Clamp(cum / band / supply, 0, 1);
+            return wtp[n - 1];
         }
 
         /// <summary>Firm bid per job slot for a hypothetical occupant of (cluster,
@@ -291,7 +330,16 @@ namespace CS2Econ.Core
                 : FirmBidPerSlot(acc, prices, cluster, use, level, p);
 
         /// <summary>Permitted configurations for a parcel: its zoned kind at any
-        /// level. (Rezoning arrives as a change to Zoned from the host.)</summary>
+        /// level. (Rezoning arrives as a change to Zoned from the host.)
+        ///
+        /// Valuation is PRICE-based: LR = (bid − S) × units even where the
+        /// revenue-max price expects fill below the stock. Scaling LR by the
+        /// expected fill would feed back into UnitAssessment (tenants pay
+        /// S + φ·LR/units) and charge sitting tenants BELOW the market price,
+        /// re-opening the door the revenue-max point closed. The cost is that
+        /// a thin submarket's paper LR overstates its collected rent by the
+        /// expected-vacancy share — visible via the fillRatio overload, never
+        /// hidden in the tenant's bill.</summary>
         public static void Assess(
             WorldState w, AccessState acc, IPriceContext prices, Parcel parcel,
             double[] segmentPresence, EconParams p)
