@@ -528,9 +528,25 @@ namespace CS2Econ.Harness
 
             // (b) the same cluster, priced at full vs collapsed occupancy —
             // population, stock, access and geometry all held identical.
-            int c0 = 0;
-            for (int c = 1; c < acc.C; c++)
-                if (acc.HousingStock[0][c] > acc.HousingStock[0][c0]) c0 = c;
+            // Prefer a CLEARED submarket (fill ratio 1 at full occupancy):
+            // there the channel must move the PRICE, which is the substantive
+            // claim. In an excess submarket the flat-tail price is
+            // mass-invariant and the response moves to expected fill — real,
+            // but fill ∝ mass by construction there, so a check that only
+            // ever lands on excess submarkets would be measuring its own
+            // plumbing. Fall back to the largest-stock cluster (vacancy leg)
+            // only if no cleared submarket exists.
+            int c0 = -1, cBig = 0;
+            for (int c = 0; c < acc.C; c++)
+            {
+                if (acc.HousingStock[0][c] > acc.HousingStock[0][cBig]) cBig = c;
+                if (c0 < 0 && acc.HousingStock[0][c] >= 4)
+                {
+                    LandAccounting.ResidentialBidPerUnit(acc, c, ZoneKind.ResidentialLow, 2, pres, p, out double f0);
+                    if (f0 >= 1.0 - 1e-9) c0 = c;
+                }
+            }
+            if (c0 < 0) c0 = cBig;
             double stock = acc.HousingStock[0][c0];
             double[] saved = { acc.FillEma[0][c0], acc.FillEma[1][c0] };
 

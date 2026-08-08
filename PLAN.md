@@ -207,6 +207,15 @@ the departure is recorded here rather than by editing the design.
   apartment discount into a house subsidy); zero-WTP segments are not bidders (they were
   anchoring the excess-supply price at exactly 0); the price is read at the excluded
   challenger (`ClearingBand`), the rule as originally specified.
+- **§4.3 excess-supply price: proportional decay → flat tail.** Where demand exhausts
+  before the stock fills, the price floors FLAT at the deepest positive bidder's WTP
+  instead of decaying toward zero: cutting below the last real bidder buys no tenant
+  that exists (the revenue-max "4×$6 beats 5×$4" argument at the one point it binds
+  monotonically). Two stronger forms were measured and reverted — submarket-wide
+  revenue-max is a cartel (price invariant at the richest tranche's WTP, mass vacancy,
+  a segment extinct), and unconstrained revenue-max in excess only breaks supply
+  monotonicity (more supply raised the price at the regime boundary). The shortfall
+  surfaces as expected vacancy (`fillRatio` output); valuation stays price-based.
 
 ---
 

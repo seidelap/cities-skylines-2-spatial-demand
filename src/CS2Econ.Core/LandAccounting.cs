@@ -56,23 +56,31 @@ namespace CS2Econ.Core
         /// demand×2 and 397 exits — 2,187 units held vacant, housed
         /// insolvency ×20, one segment extinct. A cartel, measured.)
         ///
-        /// EXCESS SUPPLY (demand exhausts first): the REVENUE-MAX point on
-        /// the available curve — the fill n* ≤ supply maximizing total rent
-        /// n × P(n), priced at P(n*). ("4 × $6 beats 5 × $4: with 5 units we
-        /// fill 4.") Withholding is uncontested in this regime — nobody is
-        /// coming for the marginal unit, so undercutting wins nothing — and
-        /// empirically rents are downward-rigid in gluts: owners hold
-        /// vacancy rather than chase the last bidder down the curve. This
-        /// replaces the old proportional-decay branch, whose zero-anchor on
-        /// the deepest queued bidder pinned 41 occupied submarkets at
-        /// exactly zero; the revenue argmax can never price into a zero-WTP
-        /// tranche (n × 0 = 0). The shortfall surfaces as VACANCY: the
+        /// EXCESS SUPPLY (demand exhausts first): price FLAT at the deepest
+        /// positive bidder's WTP — never below (cutting under the last real
+        /// bidder buys no tenant that exists: the revenue-max argument
+        /// "4 × $6 beats 5 × $4" at the one point it binds monotonically)
+        /// and never above (an unconstrained revenue-max here priced excess
+        /// submarkets above their own scarcity price — supply×2 read 2.71
+        /// vs 1.77 at ×0.5, rents rising as population fled; measured,
+        /// reverted). Withholding is uncontested in this regime — nobody is
+        /// coming for the marginal unit — and empirically rents are
+        /// downward-rigid in gluts. This replaces the old proportional-decay
+        /// branch, which chased absent demand toward zero and whose anchor
+        /// on the deepest QUEUED bidder pinned 41 occupied submarkets at
+        /// exactly zero. The shortfall surfaces as VACANCY (fillRatio): the
         /// affordability gate stops bidders below P from taking units, so
-        /// fill settles near n* without explicit rationing.
+        /// fill settles near the curve's depth without explicit rationing.
         ///
-        /// The zero-WTP filter still guards the DEPTH TEST: a segment with
-        /// zero expected income contributes no demand, so its mass must not
-        /// fake a cleared market and pull the read into worthless tranches.
+        /// The zero-WTP filter guards both regimes: a segment with zero
+        /// expected income contributes no demand, so its mass must not fake
+        /// a cleared market, and its worthless tranche must not become the
+        /// flat tail's anchor. KNOWN SENSITIVITY: because the logit shares
+        /// are strictly positive, the tail tranche is in practice the
+        /// POOREST segment with citywide presence — the excess price is
+        /// that segment's WTP surface, and a poor segment's presence
+        /// crossing the ≥1 gate re-rates excess submarkets together. The
+        /// filter bounds this from below; it does not remove it.
         ///
         /// Neither regime is the max bidder (one rich eccentric re-rating a
         /// building — the affordability spiral this replaced) nor the
@@ -109,11 +117,11 @@ namespace CS2Econ.Core
             double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0)
             => ResidentialBidPerUnit(acc, cluster, kind, level, segmentPresence, p, out _, addUnits, minSupply);
 
-        /// <summary>Overload exposing the expected fill ratio n*/supply at the
-        /// returned price — 1.0 where demand is deep enough that filling the
-        /// whole stock maximizes revenue, below 1.0 where the revenue-max
-        /// point deliberately leaves units vacant. For telemetry, overlays and
-        /// checks; valuation stays price-based (see Assess).</summary>
+        /// <summary>Overload exposing the expected fill ratio at the returned
+        /// price — 1.0 in the cleared regime (the stock fills), below 1.0 in
+        /// excess supply where the curve's depth caps the fill and the
+        /// balance stands vacant at the flat-tail price. For telemetry,
+        /// overlays and checks; valuation stays price-based (see Assess).</summary>
         public static double ResidentialBidPerUnit(
             AccessState acc, int cluster, ZoneKind kind, int level,
             double[] segmentPresence, EconParams p, out double fillRatio,
@@ -205,14 +213,20 @@ namespace CS2Econ.Core
             // Price FLAT at the deepest positive bidder — cutting further
             // gains no tenant that exists, so it is pure revenue loss (the
             // revenue-max argument at the only point it binds monotonically).
-            // The shortfall surfaces as VACANCY, reported via fillRatio; the
-            // price does not decay toward zero chasing absent demand, and it
-            // does not jump ABOVE the cleared-boundary price either: an
-            // unconstrained revenue-max here priced excess submarkets above
-            // their own scarcity price (supply×2 read 2.71 vs 1.77 at ×0.5,
-            // and rents ROSE as population fled — measured, reverted). The
-            // flat tail is the unique excess rule continuous at the regime
-            // boundary and weakly monotone in both supply and demand.
+            // The shortfall surfaces as VACANCY, reported via fillRatio.
+            // NOTE the old proportional decay was ALSO continuous at the
+            // regime boundary and weakly monotone in supply and demand; what
+            // distinguishes the flat tail is the no-pointless-discount
+            // principle above, plus the jump the unconstrained revenue-max
+            // showed it must not have (supply×2 read 2.71 vs 1.77 at ×0.5,
+            // rents rising as population fled — measured, reverted).
+            // Monotonicity here is with respect to SCALING a fixed
+            // composition; a poor segment entering or leaving citywide
+            // presence still moves the tail's VALUE (see the header note).
+            // fillRatio uses the same challenger convention as the read
+            // (n × band positions), so in the sliver where cum lies between
+            // supply and supply×band it understates realizable fill by up
+            // to the band width — a documented convention, not a bug.
             fillRatio = MathUtil.Clamp(cum / band / supply, 0, 1);
             return wtp[n - 1];
         }

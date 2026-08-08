@@ -74,13 +74,16 @@ namespace CS2Econ.Core
         public double[][] FillEma = Array.Empty<double[]>();
         /// <summary>Floor under the fill weight: a fully empty submarket keeps
         /// this share of its attraction. NOTE the clearing price responds
-        /// SUPERLINEARLY to a multiplier on demand mass — shrinking the mass
-        /// both walks the marginal bidder down the WTP ladder and can cross
-        /// into the excess-supply branch (measured elasticity ~1.3–1.8, not
-        /// 1.0; adversarial review). So this floors the ATTRACTION at 0.25,
-        /// which floors the price nearer ~0.10 of its full-weight level —
-        /// still a hard fall with a nonzero floor, which is the intent; do
-        /// not read the value as a price floor when recalibrating.</summary>
+        /// SUPERLINEARLY to a multiplier on demand mass while the submarket
+        /// CLEARS — shrinking the mass walks the marginal bidder down the
+        /// WTP ladder (measured elasticity ~1.3–1.8, not 1.0; adversarial
+        /// review, pre-flat-tail). Since the flat-tail excess rule, the
+        /// price cannot fall below the deepest positive bidder's WTP: once
+        /// a shrinking mass tips the submarket into excess, further
+        /// shrinkage moves expected FILL, not price. So this floors the
+        /// ATTRACTION at 0.25; the price floor is the flat tail, and the
+        /// remaining fall to it is still steeper than linear — do not read
+        /// the value as a price floor when recalibrating.</summary>
         public const double OccupancyFloor = 0.25;
         /// <summary>Smoothing on FillEma (per refresh).</summary>
         public const double FillEmaAlpha = 0.25;
