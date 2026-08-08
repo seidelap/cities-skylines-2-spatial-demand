@@ -31,6 +31,7 @@ namespace CS2Econ.Harness
             WeberRecipeChoice(seed);
             VacancyKernelConservation(seed);
             ClaimVacancyWash(seed);
+            OccupancyChannel(seed);
             ClearingPrice(seed);
             OccupiedStockCarriesRent(seed);
             CoopInstantRerate(seed);
@@ -403,33 +404,123 @@ namespace CS2Econ.Harness
             foreach (var pl in w.Parcels)
                 LandAccounting.Assess(w, sim.Engine.Access, sim.Engine.Trade, pl, sim.Engine.SegmentPresence, p);
 
-            (int built, int positive, int units, int filled) Census(ZoneKind kind)
+            (int built, int positive, int units, int filled, double sumLR) Census(ZoneKind kind)
             {
-                int b = 0, pos = 0, u = 0, f = 0;
+                int b = 0, pos = 0, u = 0, f = 0; double lr = 0;
                 foreach (var pl in w.Parcels)
                 {
                     if (pl.State != ParcelState.Built || pl.Use != kind) continue;
-                    b++; u += pl.Units; f += pl.OccupantHouseholds.Count;
+                    b++; u += pl.Units; f += pl.OccupantHouseholds.Count; lr += pl.AssessedLR;
                     if (pl.AssessedLR > 1e-9) pos++;
                 }
-                return (b, pos, u, f);
+                return (b, pos, u, f, lr);
             }
             var lo = Census(ZoneKind.ResidentialLow);
             var hi = Census(ZoneKind.ResidentialHigh);
 
             double hiOcc = hi.units > 0 ? (double)hi.filled / hi.units : 0;
             double loOcc = lo.units > 0 ? (double)lo.filled / lo.units : 0;
-            double hiPos = hi.built > 0 ? (double)hi.positive / hi.built : 1;
-            double loPos = lo.built > 0 ? (double)lo.positive / lo.built : 1;
-            // Only demand rent where the stock is actually let: a genuinely
-            // empty kind SHOULD price at zero.
-            bool hiOk = hi.built < 5 || hiOcc < 0.5 || hiPos >= 0.5;
-            bool loOk = lo.built < 5 || loOcc < 0.5 || loPos >= 0.5;
+
+            // A Ricardian extensive margin is CORRECT and must not be
+            // legislated away: the worst land in use earns no rent, so a large
+            // zero-LR tail among peripheral parcels is the model working. What
+            // must never happen is an entire density class pinned at zero —
+            // that was the commensurability bug (152/152 towers at exactly
+            // zero, ΣLR == 0). So the invariant is stated on the land that is
+            // NOT marginal: rank each kind's parcels by their cluster's access
+            // and require the best quartile to earn rent, plus ΣLR > 0.
+            double AccessOf(int cluster)
+            {
+                double v = 0;
+                for (int s = 0; s < Segment.Count; s++) v += sim.Engine.Access.AccessValue[s][cluster];
+                return v / Segment.Count;
+            }
+            (int n, int pos) BestQuartile(ZoneKind kind)
+            {
+                var ps = w.Parcels.Where(pl => pl.State == ParcelState.Built && pl.Use == kind)
+                                  .OrderByDescending(pl => AccessOf(pl.Cluster)).ToList();
+                int take = Math.Max(1, ps.Count / 4);
+                int pos = ps.Take(take).Count(pl => pl.AssessedLR > 1e-9);
+                return (take, pos);
+            }
+            var hiQ = BestQuartile(ZoneKind.ResidentialHigh);
+            var loQ = BestQuartile(ZoneKind.ResidentialLow);
+            bool hiOk = hi.built < 5 || hiOcc < 0.5
+                        || (hi.sumLR > 1e-6 && hiQ.pos >= 0.5 * hiQ.n);
+            bool loOk = lo.built < 5 || loOcc < 0.5
+                        || (lo.sumLR > 1e-6 && loQ.pos >= 0.5 * loQ.n);
 
             Check("occupied stock carries land rent in BOTH densities (per-kind commensurability)",
                   hiOk && loOk,
-                  $"high: {hi.positive}/{hi.built} parcels with LR>0 at {hiOcc:P0} occupancy; " +
-                  $"low: {lo.positive}/{lo.built} at {loOcc:P0}");
+                  $"high: best-access quartile {hiQ.pos}/{hiQ.n} with LR>0, ΣLR {hi.sumLR:F1}, " +
+                  $"{hi.positive}/{hi.built} overall at {hiOcc:P0} occupancy; " +
+                  $"low: quartile {loQ.pos}/{loQ.n}, ΣLR {lo.sumLR:F1}, " +
+                  $"{lo.positive}/{lo.built} overall at {loOcc:P0}");
+        }
+
+        private static void OccupancyChannel(ulong seed)
+        {
+            // Does REALIZED VACANCY move rent, at fixed citywide population?
+            // Two legs, because an integration test alone is confounded by the
+            // allocator instantly re-housing whoever you evict:
+            //   (a) AccessState.FillEma really is measured occupancy;
+            //   (b) lowering FillEma lowers the clearing price.
+            // Together those are the channel. Stated separately and honestly
+            // because an earlier check CLAIMED to measure a vacancy overhang
+            // and in fact only varied population (adversarial review).
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(120);
+            var w = sim.W; var acc = sim.Engine.Access; var pres = sim.Engine.SegmentPresence;
+
+            // (a) FillEma tracks measured occupancy. It is an EMA by design, so
+            // the claim is that it TRACKS (small mean error), not that it
+            // equals the instantaneous value.
+            double sumErr = 0, worstErr = 0; int compared = 0;
+            for (int k = 0; k < 2; k++)
+            {
+                var kind = k == 1 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
+                for (int c = 0; c < acc.C; c++)
+                {
+                    double units = 0, occ = 0;
+                    foreach (var pl in w.Parcels)
+                        if (pl.State == ParcelState.Built && pl.Use == kind && pl.Cluster == c)
+                        { units += pl.Units; occ += Math.Min(pl.Units, pl.OccupantHouseholds.Count); }
+                    if (units < 4) continue;
+                    compared++;
+                    double err = Math.Abs(acc.FillEma[k][c] - occ / units);
+                    sumErr += err;
+                    worstErr = Math.Max(worstErr, err);
+                }
+            }
+
+            // (b) the same cluster, priced at full vs collapsed occupancy —
+            // population, stock, access and geometry all held identical.
+            int c0 = 0;
+            for (int c = 1; c < acc.C; c++)
+                if (acc.HousingStock[0][c] > acc.HousingStock[0][c0]) c0 = c;
+            double stock = acc.HousingStock[0][c0];
+            double[] saved = { acc.FillEma[0][c0], acc.FillEma[1][c0] };
+
+            void Reprice(double fill)
+            {
+                acc.FillEma[0][c0] = fill; acc.FillEma[1][c0] = fill;
+                acc.RebuildDemandShares();      // same recompute the refresh does
+            }
+            Reprice(1.0);
+            double bidFull = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock);
+            Reprice(0.2);
+            double bidEmpty = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, stock);
+            acc.FillEma[0][c0] = saved[0]; acc.FillEma[1][c0] = saved[1];
+            acc.RebuildDemandShares();
+
+            double meanErr = compared > 0 ? sumErr / compared : 1;
+            Check("occupancy channel: realized vacancy softens rent at fixed population",
+                  compared >= 10 && meanErr < 0.06 && worstErr < 0.5 && bidEmpty < bidFull * 0.95,
+                  $"FillEma tracks measured occupancy on {compared} submarkets " +
+                  $"(mean err {meanErr:F3}, worst {worstErr:F2}); " +
+                  $"cluster {c0} bid {bidFull:F3} at full occupancy → {bidEmpty:F3} at 20 % (−{1 - bidEmpty / bidFull:P0})");
         }
 
         private static void ClaimVacancyWash(ulong seed)

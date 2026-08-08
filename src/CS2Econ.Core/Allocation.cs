@@ -33,13 +33,15 @@ namespace CS2Econ.Core
             }
         }
 
-        /// <summary>Can this segment live in this density? Public because the
-        /// migration absorption budget must count only the vacancy an arriving
-        /// segment can LEGALLY occupy — a tower overhang cannot lease to
-        /// Family segments, so admitting arrivals against it is admitting them
-        /// into guaranteed homelessness (adversarial review, confirmed).</summary>
-        public static bool DensityFeasible(Segment seg, ZoneKind kind)
-            => kind == ZoneKind.ResidentialLow || seg.DensityTolerance >= 0.5;
+        /// <summary>Effective price a segment is willing to see for a unit of
+        /// this density: the posted assessment divided by the segment's
+        /// preference weight. A density-averse household is not BARRED from an
+        /// apartment — it simply experiences the same rent as worse value, so
+        /// it takes one only when it is cheap enough or nothing else is left.
+        /// (Replaces the old hard DensityFeasible gate; see Segment
+        /// .DensityAppeal for why the gate was a category error.)</summary>
+        public static double PerceivedCost(Segment seg, ZoneKind kind, double assessment)
+            => assessment / Math.Max(1e-6, seg.DensityAppeal(kind));
 
         /// <summary>Find a home: logit over clusters on (access value − rent
         /// burden), then cheapest feasible unit within the chosen cluster.
@@ -59,15 +61,18 @@ namespace CS2Econ.Core
             {
                 var list = VacantByCluster[c];
                 if (list.Count == 0) continue;
+                // Cheapest unit as this segment PERCEIVES it (density-discounted),
+                // but affordability is tested against the cash actually owed.
                 double cheapest = double.PositiveInfinity;
                 for (int k = 0; k < list.Count; k++)
                 {
                     var pl = w.Parcels[list[k]];
-                    if (!DensityFeasible(seg, pl.Use)) continue;
-                    double a = LandAccounting.UnitAssessment(pl, p);
+                    double cash = LandAccounting.UnitAssessment(pl, p);
+                    if (cash > maxAssessment) continue;
+                    double a = PerceivedCost(seg, pl.Use, cash);
                     if (a < cheapest) cheapest = a;
                 }
-                if (double.IsInfinity(cheapest) || cheapest > maxAssessment) continue;
+                if (double.IsInfinity(cheapest)) continue;
                 double burden = income > 0.1 ? cheapest / (seg.MaxRentShare * income) : 2.0;
                 double u = acc.AccessValue[h.Segment][c] - 1.2 * burden;
 
@@ -92,14 +97,19 @@ namespace CS2Econ.Core
             for (int i = 0; i < nCand; i++) { accum += wgt[i]; if (r < accum) { bestCluster = clusters[i]; break; } }
             if (bestCluster < 0) bestCluster = clusters[nCand - 1];
 
-            // Cheapest feasible unit in the chosen cluster.
+            // Best-value unit in the chosen cluster, ranked by PERCEIVED cost
+            // (so a density-averse household takes the apartment only when it
+            // is cheap enough to outweigh the discount), affordability still
+            // gated on the cash assessment.
             int bestParcel = -1; double bestA = double.PositiveInfinity;
             foreach (int pi in VacantByCluster[bestCluster])
             {
                 var pl = w.Parcels[pi];
-                if (pl.Vacant == 0 || !DensityFeasible(seg, pl.Use)) continue;
-                double a = LandAccounting.UnitAssessment(pl, p);
-                if (a <= maxAssessment && a < bestA) { bestA = a; bestParcel = pi; }
+                if (pl.Vacant == 0) continue;
+                double cash = LandAccounting.UnitAssessment(pl, p);
+                if (cash > maxAssessment) continue;
+                double a = PerceivedCost(seg, pl.Use, cash);
+                if (a < bestA) { bestA = a; bestParcel = pi; }
             }
             return bestParcel;
         }

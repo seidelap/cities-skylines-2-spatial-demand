@@ -9,6 +9,149 @@ namespace CS2Econ.Harness
     /// the quantities the acceptance tests depend on. Tuning aid, not a test.</summary>
     public static class Debugging
     {
+        /// <summary>`harness lambdasweep` — is the vacancy kernel still doing
+        /// work now that prices clear? The kernel adds a SECOND spatial decay
+        /// (λ, Euclidean metres) on top of the one the choice model already has
+        /// (θ, in the access weights). If clearing prices carry the spatial
+        /// signal, localization should survive λ growing to map scale, and the
+        /// kernel is a redundant parameter that can be retired.
+        ///
+        /// Runs the disk-shock experiment at several λ and reports the
+        /// suppression localization each time. λ → very large ≈ "no kernel"
+        /// (suppression spread uniformly over the whole map).</summary>
+        public static int LambdaSweep(ulong seed, int ticks)
+        {
+            double[] lambdas = { 200, 800, 3200, 12800, 1e9 };
+            Console.WriteLine("λ (m) | interior suppression | beyond-spillover | localization | interior starts");
+            foreach (double lam in lambdas)
+            {
+                var p = new EconParams { VacancyKernelLambdaM = lam };
+                var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000, ParcelsPerCluster = 14 };
+
+                (double[] resid, double starts) Arm(bool shock)
+                {
+                    var sim = Sim.Create(cfg, p, new FeatureFlags());
+                    sim.Run(ticks);
+                    for (int s = 0; s < Segment.Count; s++)
+                        sim.W.Migration.ReservationThreshold[s] = Math.Max(0,
+                            sim.W.Migration.SegmentAttractEma[s] - Migration.BaseOutsideUtility - 0.02);
+                    double mx = 0, my = 0;
+                    foreach (var ci in sim.W.Clusters) { mx += ci.X; my += ci.Y; }
+                    mx /= sim.W.Clusters.Length; my /= sim.W.Clusters.Length;
+                    double sxq = mx + 2800.0 / sim.W.MetersPerUnit;
+                    bool InDisk(int c)
+                    {
+                        double dx = (sim.W.Clusters[c].X - sxq) * sim.W.MetersPerUnit;
+                        double dy = (sim.W.Clusters[c].Y - my) * sim.W.MetersPerUnit;
+                        return Math.Sqrt(dx * dx + dy * dy) <= 2500.0;
+                    }
+                    if (shock)
+                        foreach (var h in sim.W.Households)
+                        {
+                            if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
+                            if (!InDisk(sim.W.Parcels[h.HomeParcel].Cluster)) continue;
+                            if (SplitMix64.Hash01((ulong)h.Id * 31 + seed) < 0.95)
+                            {
+                                sim.Engine.Allocation.Vacate(sim.W, h);
+                                sim.W.Ledger.Transfer(Account.Households, Account.OutsideWorld, Math.Max(0, h.Money));
+                                h.Money = 0; h.ExitedTick = sim.W.Tick;
+                            }
+                        }
+                    long from = sim.W.Tick;
+                    var acc = new double[sim.Engine.Access.C]; int n = 0;
+                    sim.Run(70, s2 =>
+                    {
+                        if ((s2.W.Tick - from) % 10 != 0) return;
+                        n++;
+                        for (int c = 0; c < s2.Engine.Access.C; c++)
+                            acc[c] += s2.Engine.Residuals.Get(c, ZoneKind.ResidentialLow, s2.W.Claims)
+                                    + s2.Engine.Residuals.Get(c, ZoneKind.ResidentialHigh, s2.W.Claims);
+                    });
+                    for (int c = 0; c < acc.Length; c++) acc[c] /= Math.Max(1, n);
+                    double st = 0;
+                    foreach (var (tick, pid, cl) in sim.Starts)
+                        if (tick > from && InDisk(cl)) st += Math.Max(1, sim.W.Parcels[pid].Units);
+                    return (acc, st);
+                }
+
+                var shocked = Arm(true);
+                var control = Arm(false);
+                // Interior = deep inside the disk; reference = beyond 2λ reach
+                // (capped at map scale so the huge-λ arm still has a reference).
+                var simGeom = Sim.Create(cfg, p, new FeatureFlags());
+                var g = simGeom.W.Clusters;
+                double gx = 0, gy = 0;
+                foreach (var ci in g) { gx += ci.X; gy += ci.Y; }
+                gx /= g.Length; gy /= g.Length;
+                double cx = gx + 2800.0 / simGeom.W.MetersPerUnit;
+                double D(int c) => Math.Sqrt(Math.Pow((g[c].X - cx) * simGeom.W.MetersPerUnit, 2)
+                                           + Math.Pow((g[c].Y - gy) * simGeom.W.MetersPerUnit, 2));
+                double inSup = 0, farSup = 0; int nIn = 0, nFar = 0;
+                for (int c = 0; c < g.Length; c++)
+                {
+                    double d = control.resid[c] - shocked.resid[c];
+                    if (D(c) <= 1500) { inSup += d; nIn++; }
+                    else if (D(c) >= 6000) { farSup += d; nFar++; }
+                }
+                inSup = nIn > 0 ? inSup / nIn : 0;
+                farSup = nFar > 0 ? farSup / nFar : 0;
+                Console.WriteLine($"{lam,9:G4} | {inSup,20:F2} | {farSup,16:F2} | "
+                    + $"{inSup / Math.Max(0.05, Math.Abs(farSup)),12:F1}:1 | {shocked.starts,6:F0} vs {control.starts:F0}");
+            }
+            return 0;
+        }
+
+        /// <summary>`harness priceprobe` — for the densest residential clusters,
+        /// dump the clearing queue: standing stock, summed demand mass, the
+        /// demand/supply ratio, the WTP ladder, the resulting bid and the
+        /// structure charge it must beat. Answers "why is LR zero here?".</summary>
+        public static int PriceProbe(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(ticks);
+            var w = sim.W; var acc = sim.Engine.Access; var pres = sim.Engine.SegmentPresence;
+
+            int pop = 0; foreach (var h in w.Households) if (h.ExitedTick < 0) pop++;
+            double totalStock = 0;
+            for (int k = 0; k < 2; k++) for (int c = 0; c < acc.C; c++) totalStock += acc.HousingStock[k][c];
+            Console.WriteLine($"pop={pop} totalStock={totalStock:F0} citywide occupancy={pop / Math.Max(1, totalStock):P1}");
+
+            foreach (var (kind, ki) in new[] { (ZoneKind.ResidentialLow, 0), (ZoneKind.ResidentialHigh, 1) })
+            {
+                var order = Enumerable.Range(0, acc.C).OrderByDescending(c => acc.HousingStock[ki][c]).Take(4);
+                Console.WriteLine($"--- {kind} (S(1)={LandAccounting.SPerUnit(1, 1.0, p):F3} S(2)={LandAccounting.SPerUnit(2, 1.0, p):F3}) ---");
+                foreach (int c in order)
+                {
+                    double stock = acc.HousingStock[ki][c];
+                    if (stock <= 0) continue;
+                    double mass = 0, wtpTop = 0, wtpBot = double.MaxValue;
+                    for (int s = 0; s < Segment.Count; s++)
+                    {
+                        if (pres[s] < 1) continue;
+                        var seg = Segment.All[s];
+                        double m = pres[s] * acc.SegmentKindShare[s][ki][c];
+                        mass += m;
+                        double income = acc.ExpectedIncome(s, c, p);
+                        double rel = acc.AccessValue[s][c] / acc.MeanAccess;
+                        double prem = MathUtil.Clamp(Math.Pow(Math.Max(0.05, rel), p.PremiumExponent), 0.2, 4.0);
+                        double wtp = seg.MaxRentShare * income * prem * p.BidAccessScale * seg.DensityAppeal(kind);
+                        if (m > 1e-9) { wtpTop = Math.Max(wtpTop, wtp); wtpBot = Math.Min(wtpBot, wtp); }
+                    }
+                    double bid = LandAccounting.ResidentialBidPerUnit(acc, c, kind, 1, pres, p, stock);
+                    double filled = 0;
+                    foreach (var pl in w.Parcels)
+                        if (pl.State == ParcelState.Built && pl.Use == kind && pl.Cluster == c)
+                            filled += pl.OccupantHouseholds.Count;
+                    Console.WriteLine(
+                        $"  c={c,3} stock={stock,6:F0} filled={filled,6:F0} ({filled / stock,5:P0}) mass={mass,7:F1} "
+                        + $"D/S={mass / stock,5:F2} fillEma={acc.FillEma[ki][c],4:F2} wtp[{wtpBot,5:F2}..{wtpTop,5:F2}] bid={bid,6:F3}");
+                }
+            }
+            return 0;
+        }
+
         /// <summary>`harness vacprobe` — replicates the vacancy-localization
         /// scenario's setup and prints the overhang's life cycle every 10
         /// ticks: does the shock create persistent vacancies, does the kernel

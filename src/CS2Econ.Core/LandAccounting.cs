@@ -87,13 +87,18 @@ namespace CS2Econ.Core
                 double pres = segmentPresence[s];
                 if (pres < 1) continue;
                 var seg = Segment.All[s];
-                if (highDensity && seg.DensityTolerance < 0.5) continue;
+                // Density enters as a PREFERENCE discount on willingness to pay,
+                // not as a gate: a family will pay for an apartment, just less
+                // than for a house of the same access and quality. The old hard
+                // exclusion left high-density stock with no legal bidders and
+                // therefore no land rent (see Segment.DensityAppeal).
+                double appeal = seg.DensityAppeal(kind);
                 double income = acc.ExpectedIncome(s, cluster, p);
                 // Convex premium: location differences must be strong enough to
                 // produce level geography (ℓ* gradients), not a flat ±20% band.
                 double rel = acc.AccessValue[s][cluster] / acc.MeanAccess;
                 double premium = MathUtil.Clamp(Math.Pow(Math.Max(0.05, rel), p.PremiumExponent), 0.2, 4.0);
-                wtp[n] = seg.MaxRentShare * income * premium * p.BidAccessScale * quality;
+                wtp[n] = seg.MaxRentShare * income * premium * p.BidAccessScale * quality * appeal;
                 // How many of this segment want THIS (kind, cluster) — the
                 // share is normalized over kind AND cluster, so it is
                 // commensurate with the per-kind stock below. A per-cluster

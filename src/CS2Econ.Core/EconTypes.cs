@@ -105,6 +105,42 @@ namespace CS2Econ.Core
         public readonly double HealthW;
         public readonly double PollutionW;      // negative term weight
         public readonly double DensityTolerance;// 0..1: 1 = happy in ResidentialHigh
+
+        /// <summary>How much this segment values a unit of the given density,
+        /// relative to its ideal — a PREFERENCE weight in (0,1], never a
+        /// permission. Low density suits everyone (1.0); high density is
+        /// discounted by the segment's tolerance, floored so no household is
+        /// absolutely barred.
+        ///
+        /// This used to be a hard gate (`DensityTolerance >= 0.5`), which is a
+        /// category error on a field documented as a 0..1 preference: it barred
+        /// every Family segment from apartments outright, so high-density stock
+        /// structurally exceeded the population permitted to occupy it and no
+        /// apartment could clear its market or carry land rent — while the
+        /// allocator filled those units anyway, leaving allocation and pricing
+        /// disagreeing about who may live where (adversarial review, confirmed).
+        /// As a weight it does what its name says: families CAN live in
+        /// apartments, they just bid less for them.</summary>
+        public double DensityAppeal(ZoneKind kind)
+            => kind == ZoneKind.ResidentialHigh
+                ? DensityFloor + (1 - DensityFloor) * MathUtil.Clamp(DensityTolerance, 0, 1)
+                : 1.0;
+
+        /// <summary>Appeal of the least-tolerant segment for high density —
+        /// i.e. the steepest discount density aversion can impose.
+        ///
+        /// Deliberately mild (a ~28% haircut at tolerance 0.3, not a 70% one)
+        /// because the segment table locks density tolerance INVERSELY to
+        /// wealth: every affluent segment sits at 0.28–0.35 while the poorest
+        /// sit at 0.9–1.0. Scaling willingness-to-pay by raw tolerance
+        /// therefore caps what apartments can ever fetch far below houses
+        /// (measured: high-density WTP topped out at 3.21 against 9.68 for
+        /// low), which makes a premium high-rise structurally impossible and
+        /// strands high density permanently at the extensive margin. Density
+        /// belongs in a household's valuation as a modifier, not as the
+        /// dominant term. The inverse wealth/tolerance coupling in the segment
+        /// table is itself a design assumption worth revisiting.</summary>
+        public const double DensityFloor = 0.6;
         public readonly double MaxRentShare;    // fraction of income bid for housing
 
         public Segment(string name, Lifecycle life, LaborClass labor, double participation, double transfer,

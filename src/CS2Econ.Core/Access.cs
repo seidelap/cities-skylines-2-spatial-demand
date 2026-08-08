@@ -63,6 +63,25 @@ namespace CS2Econ.Core
         /// (built units, zoned-empty capacity, pipeline). The attraction term
         /// of SegmentKindShare.</summary>
         public double[][] HousingCapacity = Array.Empty<double[]>();
+        /// <summary>[0=Low,1=High][cluster] → smoothed realized fill rate
+        /// (occupied / standing units). This is the OCCUPANCY CHANNEL: it
+        /// weights the attraction term so a submarket that is actually sitting
+        /// empty sheds estimated demand and prices down, which a purely
+        /// potential-demand field cannot do. Smoothed so a single tick's
+        /// churn cannot move rents, and it reads occupancy — never any
+        /// parcel's realized RENT, which is what the §3 circularity guard
+        /// forbids. Neutral (1.0) where no stock stands.</summary>
+        public double[][] FillEma = Array.Empty<double[]>();
+        /// <summary>Floor under the fill weight: a fully empty submarket keeps
+        /// this share of its attraction, so its price falls hard but never to
+        /// zero — otherwise a cluster that empties could never attract the
+        /// demand that refills it.</summary>
+        public const double OccupancyFloor = 0.25;
+        /// <summary>Smoothing on FillEma (per refresh).</summary>
+        public const double FillEmaAlpha = 0.25;
+        /// <summary>Weight of zoned-but-empty capacity in the attraction term,
+        /// relative to standing stock. See the use site.</summary>
+        public const double ZonedEmptyAttraction = 0.15;
 
         // Commercial capture (Layer-3 phantom entrant machinery, §4.2)
         public double[] IncumbentShopWeight = Array.Empty<double>(); // per origin: Σ_j wShop·mass_j
@@ -241,17 +260,26 @@ namespace CS2Econ.Core
             // ---- inputs to the market-clearing bid (design §4.3) -------------
             // Standing stock (the quantity a price must fill) and capacity
             // (standing + buildable — the attraction term). [0] = Low, [1] = High.
+            bool fillFirstBuild = FillEma.Length != 2;
             if (HousingStock.Length != 2)
             {
                 HousingStock = new double[2][];
                 HousingCapacity = new double[2][];
             }
+            if (fillFirstBuild) FillEma = new double[2][];
+            var filled = new double[2][];
             for (int k = 0; k < 2; k++)
             {
                 if (HousingStock[k] == null || HousingStock[k].Length != C) HousingStock[k] = new double[C];
                 else Array.Clear(HousingStock[k], 0, C);
                 if (HousingCapacity[k] == null || HousingCapacity[k].Length != C) HousingCapacity[k] = new double[C];
                 else Array.Clear(HousingCapacity[k], 0, C);
+                if (FillEma[k] == null || FillEma[k].Length != C)
+                {
+                    FillEma[k] = new double[C];
+                    for (int c = 0; c < C; c++) FillEma[k][c] = 1.0;   // neutral until observed
+                }
+                filled[k] = new double[C];
             }
             foreach (var pl in w.Parcels)
             {
@@ -261,16 +289,46 @@ namespace CS2Econ.Core
                     int k = pl.Use == ZoneKind.ResidentialHigh ? 1 : 0;
                     HousingStock[k][pl.Cluster] += pl.Units;
                     HousingCapacity[k][pl.Cluster] += pl.Units;
+                    filled[k][pl.Cluster] += Math.Min(pl.Units, pl.OccupantHouseholds.Count);
                 }
                 else if (pl.State == ParcelState.UnderConstruction
                          && (pl.Use == ZoneKind.ResidentialLow || pl.Use == ZoneKind.ResidentialHigh))
                     HousingCapacity[pl.Use == ZoneKind.ResidentialHigh ? 1 : 0][pl.Cluster] += pl.Units;
                 else if (pl.State == ParcelState.Empty
                          && (pl.Zoned == ZoneKind.ResidentialLow || pl.Zoned == ZoneKind.ResidentialHigh))
+                    // Zoned-empty land is NOT housing — nobody can live on it —
+                    // so it earns only a token share of the attraction. Enough
+                    // that a virgin cluster still draws the demand a developer
+                    // needs to justify the first building there; small enough
+                    // that a city with more empty lots than homes does not
+                    // drain demand away from the stock that actually exists
+                    // and collapse every clearing price.
                     HousingCapacity[pl.Zoned == ZoneKind.ResidentialHigh ? 1 : 0][pl.Cluster]
-                        += LandAccounting.UnitsFor(pl.Zoned);
+                        += ZonedEmptyAttraction * LandAccounting.UnitsFor(pl.Zoned);
             }
 
+            // Occupancy channel: smooth the realized fill rate per submarket.
+            // Clusters holding no stock stay neutral so a greenfield site is
+            // not pre-judged empty.
+            for (int k = 0; k < 2; k++)
+                for (int c = 0; c < C; c++)
+                {
+                    double stock = HousingStock[k][c];
+                    double target = stock > 0 ? MathUtil.Clamp(filled[k][c] / stock, 0, 1) : 1.0;
+                    FillEma[k][c] = fillFirstBuild ? target
+                                                   : MathUtil.Ema(FillEma[k][c], target, FillEmaAlpha);
+                }
+
+            RebuildDemandShares();
+        }
+
+        /// <summary>Recompute SegmentKindShare from AccessValue, capacity,
+        /// fill and density appeal. Called at the end of Refresh; exposed so
+        /// tests can perturb one input (e.g. FillEma) and re-derive the
+        /// demand field without re-running a whole refresh.</summary>
+        public void RebuildDemandShares()
+        {
+            int C = this.C, nc = Segment.Count;
             // Where each segment WANTS to live, over (kind × cluster) jointly:
             // access logit × capacity, restricted to the densities that segment
             // can occupy, normalized so each segment's shares sum to 1 over the
@@ -292,12 +350,21 @@ namespace CS2Econ.Core
                         SegmentKindShare[s][k] = new double[C];
                     var row = SegmentKindShare[s][k];
                     var kind = k == 1 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
-                    bool feasible = AllocationSystem.DensityFeasible(seg, kind);
+                    // Density is a preference weight on how much of the segment
+                    // routes to this kind, not a permission (Segment.DensityAppeal).
+                    double appeal = seg.DensityAppeal(kind);
                     for (int c = 0; c < C; c++)
                     {
-                        row[c] = feasible
-                            ? Math.Exp(AccessValue[s][c] / 1.5) * HousingCapacity[k][c]
-                            : 0;
+                        // Fill-weighted capacity: demand follows housing that is
+                        // ACTUALLY being taken up, so a submarket sitting vacant
+                        // sheds estimated demand and its clearing price falls —
+                        // the occupancy channel. Damped by the EMA and floored,
+                        // and the loop is negative (dear → vacant → cheaper →
+                        // refills), so it settles rather than spirals.
+                        double fill = FillEma[k][c];
+                        double attract = HousingCapacity[k][c]
+                                         * (OccupancyFloor + (1 - OccupancyFloor) * fill);
+                        row[c] = Math.Exp(AccessValue[s][c] / 1.5) * attract * appeal;
                         tot += row[c];
                     }
                 }

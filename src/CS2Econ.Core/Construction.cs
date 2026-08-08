@@ -165,7 +165,10 @@ namespace CS2Econ.Core
                 double seekers = seekersBySegment[s];
                 if (seekers <= 0) continue;
                 var seg = Segment.All[s];
-                ZoneKind kind = seg.DensityTolerance >= 0.5 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
+                // Which density this segment leans toward — a lean, not a
+                // permission (Segment.DensityAppeal).
+                ZoneKind kind = seg.DensityAppeal(ZoneKind.ResidentialHigh) >= 0.5
+                    ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
                 double sum = 0;
                 for (int c = 0; c < C; c++)
                 {
@@ -182,7 +185,8 @@ namespace CS2Econ.Core
                 for (int c = 0; c < C; c++)
                 {
                     double mass = seekers * share[c] / sum;
-                    if (seg.DensityTolerance >= 0.5) { ByUse[1][c] += mass * 0.75; ByUse[0][c] += mass * 0.25; }
+                    double aHigh = seg.DensityAppeal(ZoneKind.ResidentialHigh);
+                    if (aHigh >= 0.5) { ByUse[1][c] += mass * 0.75; ByUse[0][c] += mass * 0.25; }
                     else { ByUse[0][c] += mass * 0.85; ByUse[1][c] += mass * 0.15; }
                 }
             }
