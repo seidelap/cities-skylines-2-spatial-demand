@@ -396,6 +396,7 @@ namespace CS2Econ.Harness
                     MovingCostDraw = p.MovingCostMean * (0.4 + 1.2 * w.Rng.NextDouble())
                                      * (pl.OwnerOccupied ? p.OwnerMovingCostMult : 1.0),
                 };
+                h.DrawAtBirth(Segment.All[seg]);
                 pl.OccupantHouseholds.Add(h.Id);
                 w.Households.Add(h);
                 hhMoney += h.Money;

@@ -432,6 +432,13 @@ namespace CS2Econ.Mod
                 TenureStart = w.Tick,
                 MovingCostDraw = p.MovingCostMean * (0.4 + 1.2 * w.Rng.NextDouble()),
             };
+            // Personal attributes, drawn once and keyed to the household id so
+            // they survive a save/load round trip and a mid-session re-read.
+            // VERIFY-INGAME: Game.Citizens.Citizen.m_PseudoRandom is the game's
+            // OWN stable per-citizen idiosyncratic seed (research notes §3) and
+            // is the better key here — swap it in once the field's accessor is
+            // confirmed, so our taste draws line up with the game's own.
+            h.DrawAtBirth(Segment.All[h.Segment]);
             if (em.HasComponent<Game.Citizens.HomelessHousehold>(e))                   // §3: m_TempHome
                 h.Stage = InsolvencyStage.Sheltered;
             if (em.HasComponent<Game.Buildings.PropertyRenter>(e))

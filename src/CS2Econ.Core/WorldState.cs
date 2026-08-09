@@ -103,6 +103,43 @@ namespace CS2Econ.Core
         /// `Unemployment Allowance Max Days`, after which the household has no
         /// support and leaves; this is the counter that expiry reads.</summary>
         public int UnemployedTicks;
+
+        // ---- personal attributes, DRAWN AT BIRTH ---------------------------
+        // The only place a distribution legitimately enters: an individual is
+        // handed its own preferences once, at spawn, and thereafter acts on
+        // them. Everything downstream — the demand curve, the clearing price,
+        // the observed income spread — must EMERGE from individuals holding
+        // these, never from a distribution recomputed and walked in aggregate.
+        /// <summary>This household's own share of income it will bid for
+        /// housing, drawn around its segment's archetype. Two families of the
+        /// same segment genuinely differ in how much rent they will carry.</summary>
+        public double RentShare;
+        /// <summary>This household's own tolerance for high density, drawn
+        /// around its segment's archetype (0..1).</summary>
+        public double DensityTol;
+
+        /// <summary>Draw this household's personal attributes once, at spawn.
+        /// Deterministic in the household id so a run is reproducible and an
+        /// attribute never silently re-rolls: re-drawing per tick would make
+        /// the "individual" a sampling artifact of a distribution, which is
+        /// exactly the aggregate-first modelling this architecture rejects.</summary>
+        public void DrawAtBirth(CS2Econ.Core.Segment seg)
+        {
+            double u = SplitMix64.Hash01((ulong)Id * 2654435761UL + 11UL);
+            double v = SplitMix64.Hash01((ulong)Id * 2654435761UL + 29UL);
+            // Symmetric ±25% spread on the willingness to commit income, and
+            // ±0.2 on density tolerance — heterogeneity a segment mean hides.
+            RentShare = seg.MaxRentShare * (0.75 + 0.5 * u);
+            DensityTol = MathUtil.Clamp(seg.DensityTolerance + 0.4 * (v - 0.5), 0, 1);
+        }
+
+        /// <summary>How much this household values a unit of the given density
+        /// — its OWN tolerance, not its segment's. Same floor rationale as
+        /// Segment.DensityAppeal (preference, never permission).</summary>
+        public double DensityAppeal(ZoneKind kind)
+            => kind == ZoneKind.ResidentialHigh
+                ? CS2Econ.Core.Segment.DensityFloor + (1 - CS2Econ.Core.Segment.DensityFloor) * MathUtil.Clamp(DensityTol, 0, 1)
+                : 1.0;
         public double ChargedAssessment; // per-tick S+tax+wedge currently being charged
         public double MovingCostDraw;    // within-segment heterogeneity draw (§4.4)
         public long TenureStart;

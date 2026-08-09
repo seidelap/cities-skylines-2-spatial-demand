@@ -473,3 +473,91 @@ Recorded rather than tuned away: the honest reading is that the labor
 market now has working clearing mechanisms on the migration and
 insolvency margins, and a genuine missing circular-flow channel on the
 firm side.
+
+## Individuals act; the distribution is whatever they turn out to be
+
+The previous section described building a within-segment income
+*distribution* — a binomial convolution over a geometric job ladder,
+quantile-binned per (segment, cluster) — and having the clearing price
+walk those bins. That was the wrong architecture, and it is gone.
+
+The governing principle now: **individuals act on their own attributes,
+and every aggregate falls out of what they do.** A distribution may enter
+in exactly one place — personal attributes handed to an individual once,
+at birth — and never as a curve fitted to a population and then fed back
+into that population's decisions.
+
+What changed concretely:
+
+- **`Household.DrawAtBirth`** gives each household its own `RentShare`
+  (±25% around its segment's archetype) and its own `DensityTol` (±0.2),
+  drawn once, deterministic in the household id so an attribute can never
+  silently re-roll. Two families of the same segment now genuinely differ.
+  Density appeal is read from the household's own tolerance, not its
+  segment's.
+- **`AccessState.BidLadder[kind][segment]`** is every living household's
+  own bid base — its own rent share × its own income × its own density
+  appeal — sorted descending. It is the population, counted. Nothing is
+  fitted.
+- **The clearing price inverts the real cumulative demand.** A
+  household's WTP at a location factorizes as (its own bid base) × (one
+  per-segment location multiplier), so the eight sorted ladders can be
+  searched directly: the price is found by bisection on P, counting via
+  binary search how many real households would pay at least P. The
+  answer is the WTP of the **actual marginal household** — no synthetic
+  tranches, no interpolation between fitted bins. Cost is ~34 bisection
+  steps × 8 binary searches, comparable to the sort it replaced.
+- **`Income.Build` is deleted.** `Income.JobLevels` survives because it is
+  a wage-by-job-level price list plus the draw a household makes once for
+  its own career level — a table and a birth draw, not a population
+  distribution.
+- **`ExpectedIncome` is now emergent**: the mean income of the segment's
+  actual households living in that cluster (citywide segment mean where a
+  cluster holds none), computed by adding individuals up rather than by
+  evaluating a formula.
+
+The observed spreads are now measurements rather than parameters
+(seed 20260806, t=300):
+
+| segment | n | p10 | p50 | p90 | observed spread |
+|---|---|---|---|---|---|
+| StudentLow | 357 | 3.00 | 4.50 | 12.85 | 4.3× |
+| SingleBasic | 299 | 1.00 | 7.30 | 9.85 | 9.9× |
+| SingleSkill | 307 | 1.00 | 3.00 | 16.94 | 16.9× |
+| FamilyBasic | 478 | 7.00 | 13.85 | 20.70 | 3.0× |
+| FamilySkill | 530 | 7.00 | 16.55 | 34.88 | 5.0× |
+| FamilyEdu | 566 | 7.00 | 24.58 | 56.58 | 8.1× |
+| SeniorLow | 282 | 8.00 | 8.00 | 8.00 | 1.0× |
+| SeniorMid | 247 | 13.00 | 13.00 | 13.00 | 1.0× |
+
+Two things worth reading off that table, both of which a fitted
+distribution would have hidden: the senior segments are exactly flat
+because their income is pension only — the model is not manufacturing
+spread where none exists — and the `p10 = 1.00` entries are the
+`m_ResidentialMinimumEarnings` floor, i.e. long-term unemployed
+households whose benefit has expired, showing up in the demand curve as
+the genuinely marginal bidders they are.
+
+### What still aggregates, stated plainly
+
+Three decision models remain aggregate-first and are NOT yet compliant
+with the principle:
+
+- **Location choice.** `SegmentKindShare` is a logit over (kind, cluster)
+  computed per SEGMENT, so every household of a segment is assumed to
+  want the same places in the same proportions. A compliant version gives
+  each household its own access weights and lets the share fall out as
+  the fraction whose own evaluation lands there; the obstacle is that
+  `AccessValue` is currently precomputed per (segment, cluster), and
+  making it per-household means decomposing it into per-cluster
+  components each household weights itself.
+- **Employment.** `EmploymentRate` is an IPF-balanced aggregate and each
+  household's earner count is then DRAWN from it — aggregate to
+  individual, the wrong direction. The IPF is defensible as market
+  clearing; the draw is not a job search.
+- **Migration.** Attractiveness is per-segment and arrivals/departures are
+  Poisson draws from a rate, so no individual ever decides to move.
+
+These are recorded rather than quietly left: the demand side now obeys
+the principle end to end, the location, labor and migration sides do not
+yet.

@@ -136,25 +136,38 @@ namespace CS2Econ.Core
             double addUnits = 0, double minSupply = 0)
         {
             fillRatio = 1.0;
-            Span<double> wtp = stackalloc double[Segment.Count * Income.Bins];
-            Span<double> mass = stackalloc double[Segment.Count * Income.Bins];
-            int n = 0;
             bool highDensity = kind == ZoneKind.ResidentialHigh;
+            int ki = highDensity ? 1 : 0;
             double quality = p.Quality(level) / p.Quality(1);
-            int K = Income.Bins;
+
+            // The demand curve is the POPULATION, not a distribution fitted to
+            // it. acc.BidLadder[kind][segment] holds every living household's
+            // own bid base (its own rent share × its own income × its own
+            // density appeal), sorted descending. A household's willingness to
+            // pay here is that base times one per-segment location multiplier,
+            // so the curve at this (cluster, level) is the merge of eight real,
+            // already-sorted ladders — and the price is the WTP of the actual
+            // marginal household, found by inverting the cumulative count.
+            //
+            // segmentPresence stays a per-segment WEIGHT on that population, so
+            // callers that price a counterfactual demand (construction's
+            // seekers, the checks' scaled presence) still work: it scales how
+            // many of these real bidders are in this market, never what they
+            // would pay.
+            Span<double> mult = stackalloc double[Segment.Count];
+            Span<double> massPer = stackalloc double[Segment.Count];
+            bool haveLadder = acc.BidLadder.Length == 2;
+            double maxBid = 0, totalMass = 0;
             for (int s = 0; s < Segment.Count; s++)
             {
+                mult[s] = 0; massPer[s] = 0;
                 double pres = segmentPresence[s];
                 if (pres < 1) continue;
                 var seg = Segment.All[s];
-                // Density enters as a PREFERENCE discount on willingness to pay,
-                // not as a gate: a family will pay for an apartment, just less
-                // than for a house of the same access and quality. The old hard
-                // exclusion left high-density stock with no legal bidders and
-                // therefore no land rent (see Segment.DensityAppeal).
-                double appeal = seg.DensityAppeal(kind);
                 // Convex premium: location differences must be strong enough to
                 // produce level geography (ℓ* gradients), not a flat ±20% band.
+                // Density appeal is NOT here — it is each household's own, and
+                // is already baked into its rung of the ladder.
                 double rel = acc.AccessValue[s][cluster] / acc.MeanAccess;
                 double premium = MathUtil.Clamp(Math.Pow(Math.Max(0.05, rel), p.PremiumExponent), 0.2, 4.0);
                 // How many of this segment want THIS (kind, cluster) — the
@@ -162,128 +175,98 @@ namespace CS2Econ.Core
                 // commensurate with the per-kind stock below. A per-cluster
                 // share here double-counts every density-tolerant household
                 // across both queues.
-                int ki = highDensity ? 1 : 0;
                 double share = acc.SegmentKindShare.Length > s
                                && acc.SegmentKindShare[s][ki].Length > cluster
                     ? acc.SegmentKindShare[s][ki][cluster] : 0;
                 if (share <= 0) continue;
-                double common = seg.MaxRentShare * premium * p.BidAccessScale * quality * appeal;
+                int nHh = haveLadder && acc.BidLadder[ki][s] != null ? acc.BidLadder[ki][s].Length : 0;
+                if (nHh == 0) continue;
 
-                // One tranche per INCOME BIN, not one per segment: a segment is
-                // a distribution (Income.cs), and its poorest bin bids a small
-                // fraction of what its richest bin bids. This is what makes the
-                // demand curve strictly decreasing.
-                int b0 = (s * acc.C + cluster) * K;
-                bool haveBins = acc.IncomeBinInc.Length >= b0 + K;
-                for (int k = 0; k < K; k++)
-                {
-                    double inc = haveBins ? acc.IncomeBinInc[b0 + k] : acc.ExpectedIncome(s, cluster, p);
-                    double w = haveBins ? acc.IncomeBinWt[b0 + k] : 1.0 / K;
-                    double bidK = common * inc;
-                    // Neither a zero-WTP nor a zero-MASS entry is a bidder: the
-                    // first demands no unit at any positive price, the second is
-                    // a price with nobody behind it (a capacity-0 cluster has
-                    // every share at exactly 0 and used to anchor the flat tail
-                    // with paper land rent — measured bid 3.49 / LR 4.88).
-                    if (bidK <= 1e-12) continue;
-                    double m = pres * share * w;
-                    if (m <= 1e-12) continue;
-                    wtp[n] = bidK; mass[n] = m; n++;
-                }
+                mult[s] = premium * p.BidAccessScale * quality;
+                // Each real household carries the caller's presence weight
+                // spread over the population actually standing behind it.
+                massPer[s] = share * (pres / nHh);
+                totalMass += massPer[s] * nHh;
+                double top = acc.BidLadder[ki][s][0] * mult[s];
+                if (top > maxBid) maxBid = top;
             }
-            if (n == 0) return 0;
-
-            // Descending by WTP (insertion sort; n ≤ Segment.Count).
-            for (int i = 1; i < n; i++)
-            {
-                double kw = wtp[i], km = mass[i];
-                int j = i - 1;
-                while (j >= 0 && wtp[j] < kw) { wtp[j + 1] = wtp[j]; mass[j + 1] = mass[j]; j--; }
-                wtp[j + 1] = kw; mass[j + 1] = km;
-            }
+            if (maxBid <= 1e-12 || totalMass <= 1e-12) return 0;
 
             double stock = acc.HousingStock.Length == 2 && acc.HousingStock[highDensity ? 1 : 0].Length > cluster
                 ? acc.HousingStock[highDensity ? 1 : 0][cluster] : 0;
             double supply = Math.Max(stock, minSupply) + Math.Max(0, addUnits);
-            if (supply <= 1e-9) return wtp[0];        // nothing to fill: top bidder
+            if (supply <= 1e-9) return maxBid;        // nothing to fill: top bidder
 
-            // Read the demand curve at the first EXCLUDED tranche, not the
+            // Read the demand curve at the first EXCLUDED position, not the
             // last admitted bidder (EconParams.ClearingBand): the price is
             // what the challenger who did NOT get a unit would pay.
             double band = 1.0 + Math.Max(0, p.ClearingBand);
             double readAt = supply * band;
 
-            double cum = 0;
-            for (int i = 0; i < n; i++)
+            // Cumulative demand at price P: how many real households, across
+            // all eight ladders, would pay at least P here. Each ladder is
+            // sorted, so this is eight binary searches — and because it is
+            // monotone in P, the clearing price is recovered by bisection.
+            // The result is the WTP of the ACTUAL marginal household, with no
+            // interpolation over synthetic tranches.
+            var ladders = acc.BidLadder[ki];
+            static double Cum(double price, Span<double> mult_, Span<double> massPer_, double[][] lads)
             {
-                double prev = cum;
-                cum += mass[i];
-                if (cum >= readAt)
+                double c = 0;
+                for (int s = 0; s < Segment.Count; s++)
                 {
-                    // CLEARED regime: position lies inside segment i's mass;
-                    // interpolate from the segment above so the demand curve
-                    // is continuous rather than an 8-step staircase.
-                    double frac = mass[i] > 1e-12 ? (readAt - prev) / mass[i] : 1.0;
-                    double above = i > 0 ? wtp[i - 1] : wtp[0];
-                    return above + (wtp[i] - above) * MathUtil.Clamp(frac, 0, 1);
+                    if (massPer_[s] <= 0) continue;
+                    var lad = lads[s];
+                    double need = price / mult_[s];
+                    // Descending array: count entries >= need.
+                    int lo = 0, hi = lad.Length;
+                    while (lo < hi) { int mid = (lo + hi) >> 1; if (lad[mid] >= need) lo = mid + 1; else hi = mid; }
+                    c += massPer_[s] * lo;
                 }
+                return c;
             }
 
-            // EXCESS-SUPPLY regime: demand exhausts before the stock fills.
-            // Price FLAT at the deepest positive bidder BACKED BY REAL MASS —
-            // cutting below the last real bidder gains no tenant that exists,
-            // so it is pure revenue loss (the revenue-max argument at the
-            // only point it binds monotonically). The shortfall surfaces as
-            // VACANCY, reported via fillRatio.
-            //
-            // The anchor walks back from the curve's end accumulating mass
-            // and stops at the deepest tranche with at least MinTailMass
-            // behind it. Without this, the anchor was a pure VALUE with no
-            // mass requirement, and the review measured two pathologies:
-            // (a) a segment's citywide presence crossing the ≥1 gate removed
-            // its tranche and jumped every excess submarket's price to the
-            // next tranche up — 1.08 → 2.69 → 4.30 → 7.34 → 21.96 as a
-            // shrinking population crossed successive gates, i.e. demand
-            // falling and price rising 20×; (b) a tranche with positive WTP
-            // but exactly zero mass could anchor a positive price on a
-            // market with no demand at all.
-            //
-            // MinTailMass is a DUST guard, deliberately small: real thin
-            // tranches in emptied submarkets carry mass ~0.1–1, and a floor
-            // of 0.5 skipped them — measured: the anchor jumped OVER the
-            // thin tail, the price ROSE as occupancy collapsed (boundary
-            // continuity broken) and the demand ladder went non-monotone.
-            // At 0.05 the floor excludes zero-mass tranches and most gate
-            // remnants while real bidders, however thin, still anchor —
-            // and where the tail tranche is real the price is bit-identical
-            // to the plain deepest-bidder rule, preserving continuity at
-            // the regime boundary. Composition remains a real margin:
-            // extinction of a segment with REAL mass still re-rates the
-            // tail — that is the market actually changing, not an artifact.
-            //
-            // The old proportional decay was ALSO continuous at the regime
-            // boundary and weakly monotone under mass scaling; the flat tail
-            // is distinguished by the no-pointless-discount principle, plus
-            // the jump the unconstrained revenue-max showed it must not have
-            // (supply×2 read 2.71 vs 1.77 at ×0.5 — measured, reverted).
-            // fillRatio uses the same challenger convention as the read
-            // (n × band positions), so in the sliver where cum lies between
-            // supply and supply×band it understates realizable fill by up
-            // to the band width — a documented convention, not a bug.
-            const double MinTailMass = 0.05;
-            double accMass = 0;
-            for (int i = n - 1; i >= 0; i--)
+            if (Cum(0, mult, massPer, ladders) < readAt)
             {
-                accMass += mass[i];
-                if (accMass >= MinTailMass)
+                // EXCESS-SUPPLY regime: demand exhausts before the stock fills.
+                // Price FLAT at the deepest real bidder — cutting below the
+                // last household that exists gains no tenant, so it is pure
+                // revenue loss (the revenue-max argument at the only point it
+                // binds monotonically), and pricing ABOVE the cleared boundary
+                // would invert supply monotonicity (measured, reverted).
+                // MinTailMass is a dust guard so a near-empty ladder tail
+                // cannot anchor a price nobody is behind.
+                const double MinTailMass = 0.05;
+                double lowest = double.MaxValue, accMass = 0;
+                // Walk the merged tail upward until real mass accumulates.
+                for (double frac = 1e-4; frac <= 1.0; frac *= 2)
                 {
-                    fillRatio = MathUtil.Clamp(cum / band / supply, 0, 1);
-                    return wtp[i];
+                    double probe = maxBid * frac;
+                    accMass = Cum(probe, mult, massPer, ladders);
+                    if (accMass >= MinTailMass) { lowest = probe; break; }
                 }
+                if (lowest == double.MaxValue) { fillRatio = 0; return 0; }
+                // Refine: the deepest price whose cumulative mass still clears
+                // the dust floor is the marginal real bidder's WTP.
+                double loP = lowest / 2, hiP = lowest;
+                for (int it = 0; it < 34; it++)
+                {
+                    double mid = 0.5 * (loP + hiP);
+                    if (Cum(mid, mult, massPer, ladders) >= MinTailMass) hiP = mid; else loP = mid;
+                }
+                fillRatio = MathUtil.Clamp(Cum(hiP, mult, massPer, ladders) / band / supply, 0, 1);
+                return hiP;
             }
-            // Less than half a real bidder routed here: no market, no price.
-            fillRatio = 0;
-            return 0;
+
+            // CLEARED regime: bisect for the price at which exactly readAt
+            // households remain willing — the marginal challenger.
+            double lo2 = 0, hi2 = maxBid;
+            for (int it = 0; it < 34; it++)
+            {
+                double mid = 0.5 * (lo2 + hi2);
+                if (Cum(mid, mult, massPer, ladders) >= readAt) lo2 = mid; else hi2 = mid;
+            }
+            return lo2;
         }
 
         /// <summary>Firm bid per job slot for a hypothetical occupant of (cluster,

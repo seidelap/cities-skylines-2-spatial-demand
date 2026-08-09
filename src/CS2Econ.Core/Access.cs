@@ -29,40 +29,111 @@ namespace CS2Econ.Core
         // Labor market outcomes (doubly-constrained balancing, §4.2)
         public double[][] EmploymentRate = Array.Empty<double[]>();  // [class][home cluster]
 
-        // ---- within-segment income distribution (Income.cs) -----------------
-        // Flat [(segment*C + cluster)*Income.Bins + bin]; bins are sorted
-        // DESCENDING by income and their weights sum to 1 per (segment,
-        // cluster). Rebuilt once per refresh from EmploymentRate — never in the
-        // pricing hot path, which just reads them.
-        public double[] IncomeBinInc = Array.Empty<double>();
-        public double[] IncomeBinWt = Array.Empty<double>();
-        /// <summary>[segment*C + cluster] mean of the distribution above — what
-        /// ExpectedIncome reports, so aggregates and tranches never disagree.</summary>
+        // ---- the demand side, as REAL HOUSEHOLDS ----------------------------
+        // [kind 0=Low,1=High][segment] → every living household of that segment,
+        // as its own bid base `RentShare_h × income_h × densityAppeal_h(kind)`,
+        // sorted DESCENDING. Nothing here is a fabricated distribution: it is
+        // the population, counted. A household's willingness to pay at a given
+        // (cluster, level) is its own bid base times one per-segment location
+        // multiplier, so this ladder is all the pricing path needs and the
+        // observed income spread is whatever the individuals happen to be.
+        //
+        // This replaced a parametric per-(segment, cluster) income distribution
+        // — a binomial convolution over a geometric job ladder, quantile-binned
+        // — that the clearing price walked instead of the actual people. Only
+        // PERSONAL ATTRIBUTES may come from a distribution, and only once, at
+        // birth (Household.DrawAtBirth).
+        public double[][][] BidLadder = Array.Empty<double[][]>();
+        /// <summary>[segment*C + cluster] mean income of the segment's actual
+        /// households living there (citywide segment mean where a cluster holds
+        /// none) — an emergent summary for migration and construction, computed
+        /// by adding individuals up rather than by evaluating a formula.</summary>
         public double[] IncomeMean = Array.Empty<double>();
 
-        /// <summary>Recompute the per-(segment, cluster) income distributions.
-        /// Called at the end of Refresh, after EmploymentRate; exposed so tests
-        /// can perturb employment and re-derive without a full refresh.</summary>
-        public void RebuildIncomeDistributions(EconParams p)
+        /// <summary>Rebuild the household bid ladders and the emergent income
+        /// means. Once per refresh; the pricing hot path only reads them.</summary>
+        public void RebuildHouseholdLadders(WorldState w, EconParams p)
         {
-            int nSeg = Segment.Count, K = Income.Bins;
-            int need = nSeg * C * K;
-            if (IncomeBinInc.Length != need) { IncomeBinInc = new double[need]; IncomeBinWt = new double[need]; }
+            int nSeg = Segment.Count;
+            if (BidLadder.Length != 2)
+            {
+                BidLadder = new double[2][][];
+                for (int k = 0; k < 2; k++) BidLadder[k] = new double[nSeg][];
+            }
             if (IncomeMean.Length != nSeg * C) IncomeMean = new double[nSeg * C];
-            Span<double> bi = stackalloc double[Income.Bins];
-            Span<double> bw = stackalloc double[Income.Bins];
+
+            var perSeg = new List<double>[2][];
+            for (int k = 0; k < 2; k++)
+            {
+                perSeg[k] = new List<double>[nSeg];
+                for (int s = 0; s < nSeg; s++) perSeg[k][s] = new List<double>();
+            }
+            var sumBySegCluster = new double[nSeg * C];
+            var cntBySegCluster = new double[nSeg * C];
+            var sumBySeg = new double[nSeg];
+            var cntBySeg = new double[nSeg];
+
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0) continue;
+                var seg = Segment.All[h.Segment];
+                // An unhoused household bids on what it would earn once housed
+                // — its OWN earners and job level, valued at the market's
+                // employment odds. Employment odds are a market outcome, not a
+                // personal attribute, so reading them here is legitimate.
+                double income = AccessState.HouseholdIncomeEstimate(h, seg, p);
+                if (h.HomeParcel < 0 && seg.Adults > 0 && h.Earners == 0)
+                    income = Math.Max(income, HouseholdProspectiveIncome(h, seg, p));
+                double baseBid = h.RentShare * income;
+                perSeg[0][h.Segment].Add(baseBid * h.DensityAppeal(ZoneKind.ResidentialLow));
+                perSeg[1][h.Segment].Add(baseBid * h.DensityAppeal(ZoneKind.ResidentialHigh));
+                sumBySeg[h.Segment] += income; cntBySeg[h.Segment]++;
+                if (h.HomeParcel >= 0)
+                {
+                    int c = w.Parcels[h.HomeParcel].Cluster;
+                    sumBySegCluster[h.Segment * C + c] += income;
+                    cntBySegCluster[h.Segment * C + c]++;
+                }
+            }
+
+            for (int k = 0; k < 2; k++)
+                for (int s = 0; s < nSeg; s++)
+                {
+                    var arr = perSeg[k][s].ToArray();
+                    Array.Sort(arr);
+                    Array.Reverse(arr);                     // descending
+                    BidLadder[k][s] = arr;
+                }
             for (int s = 0; s < nSeg; s++)
             {
-                var seg = Segment.All[s];
+                double segMean = cntBySeg[s] > 0 ? sumBySeg[s] / cntBySeg[s] : 0;
                 for (int c = 0; c < C; c++)
                 {
-                    double emp = seg.Participation > 0 ? EmploymentRate[(int)seg.Labor][c] : 0;
-                    IncomeMean[s * C + c] = Income.Build(seg, emp, p, bi, bw);
-                    int b0 = (s * C + c) * K;
-                    for (int k = 0; k < K; k++) { IncomeBinInc[b0 + k] = bi[k]; IncomeBinWt[b0 + k] = bw[k]; }
+                    int i = s * C + c;
+                    IncomeMean[i] = cntBySegCluster[i] > 0 ? sumBySegCluster[i] / cntBySegCluster[i] : segMean;
                 }
             }
         }
+
+        /// <summary>What this household would earn if it found work at the
+        /// market's current odds for its labor class — its own job level and
+        /// adult count, priced by an emergent market rate.</summary>
+        private double HouseholdProspectiveIncome(Household h, Segment seg, EconParams p)
+        {
+            Span<double> lw = stackalloc double[5];
+            Span<double> lwage = stackalloc double[5];
+            int levels = Income.JobLevels(seg, p, lw, lwage);
+            double rate = 0; int n = 0;
+            for (int c = 0; c < C; c++) { rate += EmploymentRate[(int)seg.Labor][c]; n++; }
+            rate = n > 0 ? rate / n : 0;
+            double expectedEarners = seg.Adults * MathUtil.Clamp(seg.Participation * rate, 0, 1);
+            double wage = expectedEarners * lwage[Math.Min(h.JobLevel, levels - 1)]
+                          * (1 - p.IncomeTax(seg.Labor));
+            double benefit = Math.Max(0, seg.Adults - expectedEarners) * p.UnemploymentBenefit
+                             * MathUtil.Clamp(seg.Participation, 0, 1);
+            return Math.Max(p.ResidentialMinimumEarnings, wage + benefit + seg.Transfer);
+        }
+
         public double[][] JobFillRate = Array.Empty<double[]>();     // [class][job cluster]
         public double[][] ResidualJobs = Array.Empty<double[]>();    // unfilled positions after balancing
 
@@ -372,11 +443,11 @@ namespace CS2Econ.Core
                                                    : MathUtil.Ema(FillEma[k][c], target, FillEmaAlpha);
                 }
 
-            // Income distributions BEFORE demand shares: the shares read
+            // Household ladders BEFORE demand shares: the shares read
             // AccessValue only, but ExpectedIncome (used downstream by
             // migration and construction in the same tick) must already be
-            // backed by this refresh's employment rates.
-            RebuildIncomeDistributions(p);
+            // backed by this refresh's population.
+            RebuildHouseholdLadders(w, p);
             RebuildDemandShares();
         }
 

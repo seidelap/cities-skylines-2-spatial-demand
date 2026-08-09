@@ -430,7 +430,7 @@ namespace CS2Econ.Harness
             // fails loudly and gets restated rather than silently passing.
             // A constant-price mutant fails both ends.
             var pRich = new EconParams { WageBasic = p.WageBasic * 2, WageSkilled = p.WageSkilled * 2, WageEducated = p.WageEducated * 2 };
-            acc.RebuildIncomeDistributions(pRich);
+            acc.RebuildHouseholdLadders(sim.W, pRich);
             double richHi = SweepAt(Math.Max(0.5, stock * 0.03), pRich);
             var pAll = new EconParams
             {
@@ -438,9 +438,9 @@ namespace CS2Econ.Harness
                 UnemploymentBenefit = p.UnemploymentBenefit * 2,
                 ResidentialMinimumEarnings = p.ResidentialMinimumEarnings * 2,
             };
-            acc.RebuildIncomeDistributions(pAll);
+            acc.RebuildHouseholdLadders(sim.W, pAll);
             double allLo = SweepAt(stock * 30, pAll);
-            acc.RebuildIncomeDistributions(p);
+            acc.RebuildHouseholdLadders(sim.W, p);
             bool tracksIncome = richHi > sweepHi * 1.5 && allLo > sweepLo * 1.3;
 
             // (d) population collapse: with the flat-tail excess price the

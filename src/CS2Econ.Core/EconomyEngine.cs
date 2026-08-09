@@ -731,6 +731,7 @@ namespace CS2Econ.Core
                         MovingCostDraw = P.MovingCostMean * (0.4 + 1.2 * W.Rng.NextDouble())
                                          * (owner ? P.OwnerMovingCostMult : 1.0),
                     };
+                    h.DrawAtBirth(seg);
                     W.Households.Add(h);
                     W.Ledger.Transfer(Account.OutsideWorld, Account.Households, savings);
                 }
