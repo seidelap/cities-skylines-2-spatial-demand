@@ -381,46 +381,51 @@ namespace CS2Econ.Harness
             bool demandMonotone = dLow <= dMid + 1e-9 && dMid <= dHigh + 1e-9 && dHigh > dLow + 1e-6
                 && (dLow < dMid - 1e-9 || fdLow < fdMid - 1e-9);
 
-            // (c) the excess price is pinned to the DEMAND CURVE, not to any
-            // constant or marked-up level. In a single-segment market the
-            // demand curve is one flat tranche, so the cleared read (small
-            // stock) and the flat-tail excess anchor (huge stock) must be
-            // EQUAL — a glut priced even a few percent above its own
-            // scarcity price re-opens the reverted inversion — and the level
-            // must differ across segments of different means. Both mutants
-            // that survived the previous suite ('return 1.0' and
-            // 'wtp[n-1] * 1.05') die on these two assertions. Runs BEFORE
-            // the population-collapse leg: the cull halves presence, and a
-            // typical single segment's mass at c0 then no longer covers even
-            // the stock-1 read, so every probe would be skipped as vacuous.
-            bool tailPinned = true; int tailChecked = 0;
-            double tailRich = 0, tailPoor = double.MaxValue;
-            var presOne = new double[Segment.Count];
-            for (int s = 0; s < Segment.Count; s++)
+            // (c) the price is pinned to the DEMAND CURVE across BOTH regimes.
+            // Sweep supply over four orders of magnitude and require the price
+            // to be non-increasing at every step — including across the
+            // cleared→excess transition, where an excess rule priced above its
+            // own scarcity price (the reverted revenue-max inversion, and the
+            // surviving 'wtp[n-1] * 1.05' mutant) shows up as an UPWARD step.
+            // Then require a large total decline, and require the whole curve
+            // to scale with wages — together these kill the 'return 1.0'
+            // constant mutant, which is weakly monotone but neither declines
+            // nor tracks the bidders' incomes.
+            //
+            // This replaces a single-segment equality that assumed one flat
+            // tranche per segment — true only while a segment was one point
+            // income, and false (by design) now that each carries a real
+            // income distribution (Income.cs).
+            double SweepAt(double units, EconParams pp)
             {
-                if (pres[s] < 50) continue;
-                Array.Clear(presOne, 0, presOne.Length);
-                presOne[s] = pres[s];
-                double savedStock = acc.HousingStock[0][c0];
-                acc.HousingStock[0][c0] = 1;            // scarce: cleared inside the flat tranche
-                double cleared1 = LandAccounting.ResidentialBidPerUnit(
-                    acc, c0, ZoneKind.ResidentialLow, 2, presOne, p, out double fillC);
-                acc.HousingStock[0][c0] = 1e6;          // glut: flat-tail anchor, same tranche
-                double excess1 = LandAccounting.ResidentialBidPerUnit(
-                    acc, c0, ZoneKind.ResidentialLow, 2, presOne, p, out double fillOne);
-                acc.HousingStock[0][c0] = savedStock;
-                // Only segments that produce a GENUINE contrast count: the
-                // scarce read must actually clear and the glut read must
-                // actually be excess, else the equality is vacuous (both
-                // sides through the same branch would hide a uniform markup).
-                if (cleared1 <= 0 || fillC < 1.0 - 1e-9 || fillOne >= 0.5) continue;
-                tailChecked++;
-                if (Math.Abs(excess1 - cleared1) > 1e-9 * Math.Max(1, cleared1))
-                    tailPinned = false;
-                tailRich = Math.Max(tailRich, excess1);
-                tailPoor = Math.Min(tailPoor, excess1);
+                double saved0 = acc.HousingStock[0][c0];
+                acc.HousingStock[0][c0] = units;
+                double v = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, pp);
+                acc.HousingStock[0][c0] = saved0;
+                return v;
             }
-            bool tailDiffers = tailChecked >= 2 && tailRich > tailPoor * 1.05;
+            bool sweepMonotone = true; int upSteps = 0;
+            double sweepHi = 0, sweepLo = 0, prevSweep = double.MaxValue;
+            for (int i = 0; i <= 24; i++)
+            {
+                double units = Math.Max(0.5, stock * Math.Pow(10, -1.5 + 3.0 * i / 24.0));
+                double v = SweepAt(units, p);
+                if (i == 0) sweepHi = v;
+                sweepLo = v;
+                // Tolerance is relative and tiny: real steps are smooth, a
+                // markup at the regime boundary is a step change.
+                if (v > prevSweep * (1 + 1e-9) + 1e-12) { sweepMonotone = false; upSteps++; }
+                prevSweep = v;
+            }
+            bool sweepDeclines = sweepHi > sweepLo * 1.5 && sweepLo > 0;
+            // Wage scaling: double every wage, the whole curve must roughly
+            // double (transfers do not scale, so the tail moves less — require
+            // a substantial, not exact, response).
+            var pRich = new EconParams { WageBasic = p.WageBasic * 2, WageSkilled = p.WageSkilled * 2, WageEducated = p.WageEducated * 2 };
+            acc.RebuildIncomeDistributions(pRich);
+            double richLo = SweepAt(stock * 30, pRich), richHi = SweepAt(Math.Max(0.5, stock * 0.03), pRich);
+            acc.RebuildIncomeDistributions(p);
+            bool tracksWages = richHi > sweepHi * 1.5 && richLo > sweepLo * 1.3;
 
             // (d) population collapse: with the flat-tail excess price the
             // response is regime-dependent — price falls while the submarket
@@ -444,13 +449,14 @@ namespace CS2Econ.Harness
                            || (fillAfter < fillBefore - 0.02 && after < before * 1.10);
 
             Check("clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)",
-                  supplyMonotone && demandMonotone && killed > 100 && softens && tailPinned && tailDiffers,
+                  supplyMonotone && demandMonotone && killed > 100 && softens
+                  && sweepMonotone && sweepDeclines && tracksWages,
                   $"supply×{{0.5,2,8}} → {pLow:F2}/{pMid:F2}/{pHigh:F2} (fill {fMid:F2}→{fHigh:F2}); " +
                   $"demand×{{0.5,1,2}} → {dLow:F2}/{dMid:F2}/{dHigh:F2} (fill {fdLow:F2}→{fdMid:F2}); " +
                   $"after {killed} citywide exits bid {before:F2} → {after:F2}, fill {fillBefore:F2} → {fillAfter:F2}; " +
-                  $"single-segment glut == scarcity price on {tailChecked} segments " +
-                  $"({(tailPinned ? "pinned" : "NOT pinned")}" +
-                  $"{(tailChecked >= 2 ? $", tail spans {tailPoor:F2}–{tailRich:F2}" : "")})");
+                  $"25-point supply sweep {sweepHi:F2}→{sweepLo:F2} " +
+                  $"({(sweepMonotone ? "monotone" : $"{upSteps} UPWARD steps")}), " +
+                  $"wages×2 → {richHi:F2}/{richLo:F2}");
         }
 
         private static void OccupiedStockCarriesRent(ulong seed)

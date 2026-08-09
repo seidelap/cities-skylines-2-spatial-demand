@@ -342,6 +342,13 @@ namespace CS2Econ.Mod
         private struct HhAgg
         {
             public int Children, Adults, AdultStudents, Elderly, Workers, MaxEdu;
+            /// <summary>Highest Game.Citizens.Worker.m_Level held in the
+            /// household — the JOB level, which is what CS2 pays for
+            /// (m_Wage0..m_Wage4), not the citizen's education. Over-qualified
+            /// citizens hold levels below their tier because FreeWorkplaces is
+            /// per-tier and runs out; reading the level rather than assuming it
+            /// is what makes our income spread match the game's.</summary>
+            public int MaxJobLevel;
         }
 
         private Dictionary<Entity, HhAgg> ScanCitizens(EntityManager em)
@@ -360,13 +367,18 @@ namespace CS2Econ.Mod
                 int age = Verify_CitizenAgeGroup(cz);            // 0 Child .. 3 Elderly
                 int edu = Verify_CitizenEducation(cz);           // 0..4
                 bool student = em.HasComponent<Game.Citizens.Student>(e);              // §3 tag
-                bool worker = em.HasComponent<Game.Citizens.Worker>(e)                 // §3: m_Workplace
-                    && em.GetComponentData<Game.Citizens.Worker>(e).m_Workplace != Entity.Null;
+                bool worker = false; int jobLevel = 0;
+                if (em.HasComponent<Game.Citizens.Worker>(e))                          // §3: m_Workplace, m_Level
+                {
+                    var wk = em.GetComponentData<Game.Citizens.Worker>(e);
+                    worker = wk.m_Workplace != Entity.Null;
+                    jobLevel = Verify_WorkerJobLevel(wk);
+                }
                 agg.TryGetValue(hh, out var a);
                 if (age <= 1) a.Children++;
                 else if (age == 2) { a.Adults++; if (student) a.AdultStudents++; }
                 else a.Elderly++;
-                if (worker) a.Workers++;
+                if (worker) { a.Workers++; if (jobLevel > a.MaxJobLevel) a.MaxJobLevel = jobLevel; }
                 if (age >= 2 && edu > a.MaxEdu) a.MaxEdu = edu;
                 agg[hh] = a;
             }
@@ -405,7 +417,14 @@ namespace CS2Econ.Mod
                 Id = w.Households.Count,
                 Segment = SegmentOf(a),
                 Money = hh.m_Resources,
+                // Real earner count and job level, not a bool: these are the
+                // two dispersion sources the income distribution is built on
+                // (Income.cs). Earners is capped at the segment's modelled
+                // adult count so a 3-earner household cannot out-earn the
+                // distribution the price is walking.
+                Earners = (byte)Math.Min(a.Workers, Math.Max(0, Segment.All[SegmentOf(a)].Adults)),
                 Employed = a.Workers > 0,
+                JobLevel = (byte)Math.Max(0, a.MaxJobLevel),
                 ArrivedTick = w.Tick,
                 TenureStart = w.Tick,
                 MovingCostDraw = p.MovingCostMean * (0.4 + 1.2 * w.Rng.NextDouble()),
@@ -759,6 +778,18 @@ namespace CS2Econ.Mod
         /// the CitizenAge enum ordered Child, Teen, Adult, Elderly — confirm
         /// the method AND that ordering (our convention: 0..3).</summary>
         private static int Verify_CitizenAgeGroup(Game.Citizens.Citizen c) => (int)c.GetAge();
+
+        /// <summary>// VERIFY-INGAME: Worker.m_Level is dump-listed as a byte
+        /// (research notes §3) but its RANGE is decompile knowledge: it is read
+        /// here as CS2's 0..4 job level, the index into
+        /// EconomyParameterData.m_Wage0..m_Wage4. On the game machine confirm
+        /// (a) the range is 0..4 and not a 0..100 progress counter, and (b) that
+        /// the wage paid is indexed by THIS and not by citizen education — if it
+        /// is education-indexed, feed Verify_CitizenEducation here instead and
+        /// the distribution's job-level leg collapses to a point (the earner
+        /// count and employment legs are unaffected either way).</summary>
+        private static int Verify_WorkerJobLevel(Game.Citizens.Worker w)
+            => Math.Max(0, Math.Min(4, (int)w.m_Level));
 
         /// <summary>// VERIFY-INGAME: education is packed into Citizen.m_State
         /// flags. Guess: Citizen.GetEducationLevel() returns int 0..4 (the

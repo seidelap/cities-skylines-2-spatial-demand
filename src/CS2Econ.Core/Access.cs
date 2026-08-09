@@ -28,6 +28,41 @@ namespace CS2Econ.Core
 
         // Labor market outcomes (doubly-constrained balancing, §4.2)
         public double[][] EmploymentRate = Array.Empty<double[]>();  // [class][home cluster]
+
+        // ---- within-segment income distribution (Income.cs) -----------------
+        // Flat [(segment*C + cluster)*Income.Bins + bin]; bins are sorted
+        // DESCENDING by income and their weights sum to 1 per (segment,
+        // cluster). Rebuilt once per refresh from EmploymentRate — never in the
+        // pricing hot path, which just reads them.
+        public double[] IncomeBinInc = Array.Empty<double>();
+        public double[] IncomeBinWt = Array.Empty<double>();
+        /// <summary>[segment*C + cluster] mean of the distribution above — what
+        /// ExpectedIncome reports, so aggregates and tranches never disagree.</summary>
+        public double[] IncomeMean = Array.Empty<double>();
+
+        /// <summary>Recompute the per-(segment, cluster) income distributions.
+        /// Called at the end of Refresh, after EmploymentRate; exposed so tests
+        /// can perturb employment and re-derive without a full refresh.</summary>
+        public void RebuildIncomeDistributions(EconParams p)
+        {
+            int nSeg = Segment.Count, K = Income.Bins;
+            int need = nSeg * C * K;
+            if (IncomeBinInc.Length != need) { IncomeBinInc = new double[need]; IncomeBinWt = new double[need]; }
+            if (IncomeMean.Length != nSeg * C) IncomeMean = new double[nSeg * C];
+            Span<double> bi = stackalloc double[Income.Bins];
+            Span<double> bw = stackalloc double[Income.Bins];
+            for (int s = 0; s < nSeg; s++)
+            {
+                var seg = Segment.All[s];
+                for (int c = 0; c < C; c++)
+                {
+                    double emp = seg.Participation > 0 ? EmploymentRate[(int)seg.Labor][c] : 0;
+                    IncomeMean[s * C + c] = Income.Build(seg, emp, p, bi, bw);
+                    int b0 = (s * C + c) * K;
+                    for (int k = 0; k < K; k++) { IncomeBinInc[b0 + k] = bi[k]; IncomeBinWt[b0 + k] = bw[k]; }
+                }
+            }
+        }
         public double[][] JobFillRate = Array.Empty<double[]>();     // [class][job cluster]
         public double[][] ResidualJobs = Array.Empty<double[]>();    // unfilled positions after balancing
 
@@ -164,7 +199,14 @@ namespace CS2Econ.Core
                 if (h.HomeParcel < 0) continue;
                 var seg = Segment.All[h.Segment];
                 int c = w.Parcels[h.HomeParcel].Cluster;
-                if (seg.Participation > 0) WorkersByClass[(int)seg.Labor][c] += seg.Participation;
+                // Labor SUPPLY is per-adult participation × adults — the same
+                // quantity the household's wage income is paid on, so the
+                // matched-jobs wage bill charged to firms and the wages paid to
+                // households stay in balance (paying per-earner while supplying
+                // one worker per household double-charged every firm and killed
+                // all industry — measured).
+                if (seg.Participation > 0 && seg.Adults > 0)
+                    WorkersByClass[(int)seg.Labor][c] += seg.Participation * seg.Adults;
                 double income = HouseholdIncomeEstimate(h, seg, p);
                 SpendMass[c] += income * p.BaseConsumptionShare;
             }
@@ -330,6 +372,11 @@ namespace CS2Econ.Core
                                                    : MathUtil.Ema(FillEma[k][c], target, FillEmaAlpha);
                 }
 
+            // Income distributions BEFORE demand shares: the shares read
+            // AccessValue only, but ExpectedIncome (used downstream by
+            // migration and construction in the same tick) must already be
+            // backed by this refresh's employment rates.
+            RebuildIncomeDistributions(p);
             RebuildDemandShares();
         }
 
@@ -407,20 +454,49 @@ namespace CS2Econ.Core
             return captured;
         }
 
-        /// <summary>Expected household income at a cluster: employment-probability-
-        /// weighted wage NET OF INCOME TAX plus transfers. Net-of-tax is what makes
-        /// the §4.3 incidence chain live: taxes reduce disposable income → lower
-        /// bids → lower land values and LVT base (scrutiny finding #3). Never
-        /// reads realized rents (§3 circularity guard).</summary>
+        /// <summary>Expected household income at a cluster: the MEAN of the
+        /// within-segment income distribution (Income.Build) — employment-
+        /// weighted wages net of income tax, plus benefits and transfers.
+        /// Net-of-tax is what makes the §4.3 incidence chain live: taxes reduce
+        /// disposable income → lower bids → lower land values and LVT base
+        /// (scrutiny finding #3). Never reads realized rents (§3 guard).
+        ///
+        /// Reading the distribution's own mean (rather than recomputing a
+        /// closed form) keeps every aggregate consumer — migration's income
+        /// term, construction's affordability proxy — exactly consistent with
+        /// the tranches the clearing price walks.</summary>
         public double ExpectedIncome(int segment, int cluster, EconParams p)
         {
-            var seg = Segment.All[segment];
-            double emp = seg.Participation > 0 ? EmploymentRate[(int)seg.Labor][cluster] : 0;
-            return seg.Participation * emp * p.Wage(seg.Labor) * (1 - p.IncomeTax(seg.Labor)) + seg.Transfer;
+            int idx = segment * C + cluster;
+            if (IncomeMean.Length > idx) return IncomeMean[idx];
+            // Pre-refresh fallback (same distribution, computed on the spot).
+            Span<double> bi = stackalloc double[Income.Bins];
+            Span<double> bw = stackalloc double[Income.Bins];
+            var seg0 = Segment.All[segment];
+            double emp0 = seg0.Participation > 0 && EmploymentRate.Length == 3
+                ? EmploymentRate[(int)seg0.Labor][cluster] : 0;
+            return Income.Build(seg0, emp0, p, bi, bw);
         }
 
+        /// <summary>Per-household income: EARNERS × the wage of the job level
+        /// this household actually holds, plus benefit for its non-earning
+        /// adults, plus transfers, floored at m_ResidentialMinimumEarnings.
+        /// This is the individual draw from the same distribution the clearing
+        /// price aggregates — allocation and pricing now share one income
+        /// model (they did not before: pricing used a segment point estimate
+        /// while allocation used a per-household bool).</summary>
         public static double HouseholdIncomeEstimate(Household h, Segment seg, EconParams p)
-            => (h.Employed ? p.Wage(seg.Labor) * (1 - p.IncomeTax(seg.Labor)) : 0) + seg.Transfer;
+        {
+            Span<double> lw = stackalloc double[5];
+            Span<double> lwage = stackalloc double[5];
+            int levels = Income.JobLevels(seg, p, lw, lwage);
+            int lvl = Math.Min(h.JobLevel, levels - 1);
+            int earners = Math.Min(h.Earners, Math.Max(0, seg.Adults));
+            double wage = earners * lwage[lvl] * (1 - p.IncomeTax(seg.Labor));
+            double benefit = Math.Max(0, seg.Adults - earners) * p.UnemploymentBenefit
+                             * MathUtil.Clamp(seg.Participation, 0, 1);
+            return Math.Max(p.ResidentialMinimumEarnings, wage + benefit + seg.Transfer);
+        }
 
         /// <summary>Income flow plus annuitized savings — what housing decisions
         /// (search caps, exit thresholds) compare against assessments.</summary>

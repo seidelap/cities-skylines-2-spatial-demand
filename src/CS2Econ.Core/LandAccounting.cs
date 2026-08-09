@@ -136,11 +136,12 @@ namespace CS2Econ.Core
             double addUnits = 0, double minSupply = 0)
         {
             fillRatio = 1.0;
-            Span<double> wtp = stackalloc double[Segment.Count];
-            Span<double> mass = stackalloc double[Segment.Count];
+            Span<double> wtp = stackalloc double[Segment.Count * Income.Bins];
+            Span<double> mass = stackalloc double[Segment.Count * Income.Bins];
             int n = 0;
             bool highDensity = kind == ZoneKind.ResidentialHigh;
             double quality = p.Quality(level) / p.Quality(1);
+            int K = Income.Bins;
             for (int s = 0; s < Segment.Count; s++)
             {
                 double pres = segmentPresence[s];
@@ -152,38 +153,43 @@ namespace CS2Econ.Core
                 // exclusion left high-density stock with no legal bidders and
                 // therefore no land rent (see Segment.DensityAppeal).
                 double appeal = seg.DensityAppeal(kind);
-                double income = acc.ExpectedIncome(s, cluster, p);
                 // Convex premium: location differences must be strong enough to
                 // produce level geography (ℓ* gradients), not a flat ±20% band.
                 double rel = acc.AccessValue[s][cluster] / acc.MeanAccess;
                 double premium = MathUtil.Clamp(Math.Pow(Math.Max(0.05, rel), p.PremiumExponent), 0.2, 4.0);
-                // MarginalIncomeQuantile: the marginal member of a segment
-                // earns below its mean; see the EconParams doc.
-                wtp[n] = seg.MaxRentShare * income * p.MarginalIncomeQuantile
-                         * premium * p.BidAccessScale * quality * appeal;
-                // A zero-WTP entry is not a bidder: it demands no unit at any
-                // positive price, so its mass must neither fake market depth
-                // (pulling the cleared-regime read into worthless tranches)
-                // nor pad the queue.
-                if (wtp[n] <= 1e-12) continue;
                 // How many of this segment want THIS (kind, cluster) — the
                 // share is normalized over kind AND cluster, so it is
                 // commensurate with the per-kind stock below. A per-cluster
                 // share here double-counts every density-tolerant household
-                // across both queues. A zero-MASS entry is not a bidder
-                // either: a cluster with no capacity of this kind has every
-                // share at exactly 0, and an entry with WTP but no mass used
-                // to anchor the flat tail with a price nobody was actually
-                // bidding — paper land rent on a market with no demand mass
-                // (adversarial review, measured: bid 3.49 / LR 4.88 on a
-                // capacity-0 cluster, fillRatio 0).
+                // across both queues.
                 int ki = highDensity ? 1 : 0;
                 double share = acc.SegmentKindShare.Length > s
                                && acc.SegmentKindShare[s][ki].Length > cluster
                     ? acc.SegmentKindShare[s][ki][cluster] : 0;
-                mass[n] = pres * share;
-                if (mass[n] <= 1e-12) continue;
-                n++;
+                if (share <= 0) continue;
+                double common = seg.MaxRentShare * premium * p.BidAccessScale * quality * appeal;
+
+                // One tranche per INCOME BIN, not one per segment: a segment is
+                // a distribution (Income.cs), and its poorest bin bids a small
+                // fraction of what its richest bin bids. This is what makes the
+                // demand curve strictly decreasing.
+                int b0 = (s * acc.C + cluster) * K;
+                bool haveBins = acc.IncomeBinInc.Length >= b0 + K;
+                for (int k = 0; k < K; k++)
+                {
+                    double inc = haveBins ? acc.IncomeBinInc[b0 + k] : acc.ExpectedIncome(s, cluster, p);
+                    double w = haveBins ? acc.IncomeBinWt[b0 + k] : 1.0 / K;
+                    double bidK = common * inc;
+                    // Neither a zero-WTP nor a zero-MASS entry is a bidder: the
+                    // first demands no unit at any positive price, the second is
+                    // a price with nobody behind it (a capacity-0 cluster has
+                    // every share at exactly 0 and used to anchor the flat tail
+                    // with paper land rent — measured bid 3.49 / LR 4.88).
+                    if (bidK <= 1e-12) continue;
+                    double m = pres * share * w;
+                    if (m <= 1e-12) continue;
+                    wtp[n] = bidK; mass[n] = m; n++;
+                }
             }
             if (n == 0) return 0;
 

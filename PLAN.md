@@ -207,6 +207,22 @@ the departure is recorded here rather than by editing the design.
   apartment discount into a house subsidy); zero-WTP segments are not bidders (they were
   anchoring the excess-supply price at exactly 0); the price is read at the excluded
   challenger (`ClearingBand`), the rule as originally specified.
+- **§4.2 segments carry an income DISTRIBUTION, not a point income.** The design's
+  segments are (income × education × lifecycle) archetypes; the implementation priced each
+  as one number (segment mean × a hand-tuned `MarginalIncomeQuantile`). Implemented
+  instead (`Income.cs`): each segment carries a within-segment household income
+  distribution built from CS2's own income model — `m_Wage0..m_Wage4` indexed by the JOB
+  level held (`Game.Citizens.Worker.m_Level`, not education: over-qualification is normal
+  because `FreeWorkplaces` is per-tier and runs out), `m_UnemploymentBenefit` for
+  non-earning adults, `m_ResidentialMinimumEarnings` as a floor, and the household's
+  actual earner count (0..Adults). The demand curve becomes 40 strictly-decreasing
+  tranches instead of an 8-step staircase, so the clearing price slides continuously with
+  quantity instead of jumping when a whole segment leaves the queue. Dispersion is added
+  at **constant mean** (the job-level ladder is normalized to `Wage(class)`, and
+  per-adult `Participation` is halved for the 2-adult Family segments), so no calibrated
+  aggregate moves. `MarginalIncomeQuantile` is retired — the marginal bidder is now found,
+  not approximated. Allocation and pricing finally share one income model; previously
+  allocation saw individual households while pricing saw 8 point masses.
 - **§4.3 excess-supply price: proportional decay → flat tail.** Where demand exhausts
   before the stock fills, the price floors FLAT at the deepest positive bidder's WTP
   instead of decaying toward zero: cutting below the last real bidder buys no tenant

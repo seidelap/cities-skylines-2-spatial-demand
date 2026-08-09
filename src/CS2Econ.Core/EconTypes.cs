@@ -96,8 +96,21 @@ namespace CS2Econ.Core
         public readonly string Name;
         public readonly Lifecycle Life;
         public readonly LaborClass Labor;
-        public readonly double Participation;   // labor-force share (seniors 0, students partial)
-        public readonly double Transfer;        // exogenous per tick (seniors, students)
+        /// <summary>PER-ADULT labor-force participation. Household labor supply
+        /// is Adults × Participation, so the Family segments (2 adults × 0.5)
+        /// supply the same one worker-equivalent they always did: the earner
+        /// count 0/1/2 is added as DISPERSION at constant mean, leaving the job
+        /// supply the synthetic city and CS2 both provide unchanged. In-game
+        /// this is measurable directly (Worker members ÷ adult members).</summary>
+        public readonly double Participation;
+        /// <summary>Non-wage household transfer per tick. Maps to CS2's
+        /// Game.Prefabs.EconomyParameterData taps: m_Pension (Senior segments),
+        /// m_FamilyAllowance × children (Family segments), student stipend
+        /// (StudentLow). One calibrated aggregate rather than three taps because
+        /// the segments are already composition archetypes. The per-adult
+        /// unemployment benefit is NOT here — it varies WITHIN a segment and so
+        /// belongs to the distribution (EconParams.UnemploymentBenefit).</summary>
+        public readonly double Transfer;
         public readonly double JobAccessW;      // weight on job access
         public readonly double GoodsAccessW;    // weight on shopping access
         public readonly double SchoolAccessW;
@@ -143,13 +156,22 @@ namespace CS2Econ.Core
         public const double DensityFloor = 0.6;
         public readonly double MaxRentShare;    // fraction of income bid for housing
 
+        /// <summary>Working-age adults in a typical household of this segment —
+        /// the EARNER COUNT, and the largest single source of within-segment
+        /// income spread (a two-earner family out-earns a one-earner family of
+        /// the same education by ~2×). Read from the game as the adult members
+        /// of Game.Citizens.Household (HouseholdMember buffer); seniors are 0
+        /// (pension only). See Income.Build.</summary>
+        public readonly int Adults;
+
         public Segment(string name, Lifecycle life, LaborClass labor, double participation, double transfer,
                        double jobW, double goodsW, double schoolW, double amenW, double healthW,
-                       double pollW, double densTol, double rentShare)
+                       double pollW, double densTol, double rentShare, int adults)
         {
             Name = name; Life = life; Labor = labor; Participation = participation; Transfer = transfer;
             JobAccessW = jobW; GoodsAccessW = goodsW; SchoolAccessW = schoolW; AmenityW = amenW;
             HealthW = healthW; PollutionW = pollW; DensityTolerance = densTol; MaxRentShare = rentShare;
+            Adults = adults;
         }
 
         /// <summary>The fixed segment table. Index = segment id everywhere. Wages
@@ -157,15 +179,15 @@ namespace CS2Econ.Core
         /// through participation, transfers, and weights.</summary>
         public static readonly Segment[] All = new[]
         {
-            //           name          life               labor                part  transfer jobW  goodsW schoolW amenW healthW pollW densTol rentShare
-            new Segment("StudentLow",  Lifecycle.Student, LaborClass.Basic,    0.5,  3.0,     0.5,  0.6,   1.5,    0.6,  0.2,    0.5,  1.0,    0.40),
-            new Segment("SingleBasic", Lifecycle.Single,  LaborClass.Basic,    1.0,  0.0,     1.2,  0.8,   0.0,    0.7,  0.2,    0.6,  1.0,    0.34),
-            new Segment("SingleSkill", Lifecycle.Single,  LaborClass.Skilled,  1.0,  0.0,     1.2,  1.0,   0.0,    1.0,  0.2,    0.8,  0.9,    0.32),
-            new Segment("FamilyBasic", Lifecycle.Family,  LaborClass.Basic,    1.0,  1.0,     1.0,  1.0,   1.2,    0.9,  0.5,    1.0,  0.35,   0.30),
-            new Segment("FamilySkill", Lifecycle.Family,  LaborClass.Skilled,  1.0,  1.0,     1.0,  1.1,   1.3,    1.1,  0.5,    1.1,  0.30,   0.28),
-            new Segment("FamilyEdu",   Lifecycle.Family,  LaborClass.Educated, 1.0,  1.0,     1.0,  1.2,   1.4,    1.3,  0.5,    1.2,  0.30,   0.26),
-            new Segment("SeniorLow",   Lifecycle.Senior,  LaborClass.Basic,    0.0,  8.0,     0.05, 0.9,   0.0,    1.4,  1.5,    1.0,  0.5,    0.32),
-            new Segment("SeniorMid",   Lifecycle.Senior,  LaborClass.Skilled,  0.0, 13.0,     0.05, 1.0,   0.0,    1.6,  1.6,    1.1,  0.4,    0.30),
+            //           name          life               labor                part  transfer jobW  goodsW schoolW amenW healthW pollW densTol rentShare adults
+            new Segment("StudentLow",  Lifecycle.Student, LaborClass.Basic,    0.5,  3.0,     0.5,  0.6,   1.5,    0.6,  0.2,    0.5,  1.0,    0.40,     1),
+            new Segment("SingleBasic", Lifecycle.Single,  LaborClass.Basic,    1.0,  0.0,     1.2,  0.8,   0.0,    0.7,  0.2,    0.6,  1.0,    0.34,     1),
+            new Segment("SingleSkill", Lifecycle.Single,  LaborClass.Skilled,  1.0,  0.0,     1.2,  1.0,   0.0,    1.0,  0.2,    0.8,  0.9,    0.32,     1),
+            new Segment("FamilyBasic", Lifecycle.Family,  LaborClass.Basic,    0.5,  1.0,     1.0,  1.0,   1.2,    0.9,  0.5,    1.0,  0.35,   0.30,     2),
+            new Segment("FamilySkill", Lifecycle.Family,  LaborClass.Skilled,  0.5,  1.0,     1.0,  1.1,   1.3,    1.1,  0.5,    1.1,  0.30,   0.28,     2),
+            new Segment("FamilyEdu",   Lifecycle.Family,  LaborClass.Educated, 0.5,  1.0,     1.0,  1.2,   1.4,    1.3,  0.5,    1.2,  0.30,   0.26,     2),
+            new Segment("SeniorLow",   Lifecycle.Senior,  LaborClass.Basic,    0.0,  8.0,     0.05, 0.9,   0.0,    1.4,  1.5,    1.0,  0.5,    0.32,     0),
+            new Segment("SeniorMid",   Lifecycle.Senior,  LaborClass.Skilled,  0.0, 13.0,     0.05, 1.0,   0.0,    1.6,  1.6,    1.1,  0.4,    0.30,     0),
         };
 
         public static int Count => All.Length;
@@ -261,15 +283,18 @@ namespace CS2Econ.Core
         /// ℓ* and thinning land rent. Heterogeneity and surplus now come from
         /// where they belong — the queue.
         ///
-        /// Calibration anchor: scale × MarginalIncomeQuantile = 1.0, the
-        /// effective price level every §6 target was validated at. The
-        /// adversarial-review corrections (appeal on the WTP leg only,
-        /// zero-WTP bidders excluded, excluded-challenger read) shifted the
-        /// mean clearing bid about −25% at unchanged parameters — mechanism
-        /// fixes, not price-level decisions — so the scale absorbs the
-        /// difference: 0.75 quantile × 1.33 restores the validated level
-        /// (at product 0.75 the level-map Spearman fell to 0.28 and the
-        /// monoculture bend to 29% — both §6 misses).</summary>
+        /// Calibration anchor. This USED to be half of a product — scale ×
+        /// MarginalIncomeQuantile = 1.0 — where the quantile stood in for the
+        /// within-segment income distribution the model did not carry. With
+        /// Income.cs carrying the real distribution the quantile is retired and
+        /// this is the whole anchor. The value did not need re-tuning: the
+        /// distribution is built at CONSTANT MEAN, and the marginal bidder the
+        /// price now FINDS on the real curve sits close to where the retired
+        /// 0.75 approximation put it (measured, same fixture: supply×{0.5,2,8}
+        /// → 2.61/1.42/1.42 against 2.71/1.36/1.36 before). What did change is
+        /// the SLOPE — a real distribution makes the curve much steeper, so
+        /// scarcity bites harder and gluts price softer than a point estimate
+        /// allowed.</summary>
         public double BidAccessScale = 1.33;
         /// <summary>How far PAST the last filled unit the clearing walk reads
         /// the demand curve: price = WTP at queue position supply×(1+band) —
@@ -287,24 +312,18 @@ namespace CS2Econ.Core
         /// explosion. With the band, every admitted tenant strictly prefers
         /// staying by at least the WTP gap down to the excluded tranche.</summary>
         public double ClearingBand = 0.10;
-        /// <summary>Income of the MARGINAL renter within a segment, as a
-        /// fraction of the segment's expected income. ExpectedIncome averages
-        /// employed and unemployed members (rate×wage + transfer), but the
-        /// clearing price is paid by a PERSON, and the person on the margin of
-        /// a segment earns less than its mean — person-level pricing would
-        /// produce this dispersion automatically; the segment aggregation
-        /// hides it. This is NOT the old BidAccessScale double discount (that
-        /// scaled the whole bid for surplus the clearing mechanism already
-        /// provides). Calibration honesty: this was cut to 0.55 to damp an
-        /// emigration "turnstile"; churnprobe then showed 98% of those exits
-        /// were arrivals that never found a unit — an absorption-budget bug
-        /// (see HousingTurnoverRate), not a price-level effect — while the
-        /// cut itself halved assessments and stalled construction (starts
-        /// 265 → 42 in the debug fixture; commercial/industrial development
-        /// to zero). With the churn justification disproven the cut was
-        /// reverted; 0.75 keeps the dispersion story at its original,
-        /// A/B-validated level.</summary>
-        public double MarginalIncomeQuantile = 0.75;
+        // MarginalIncomeQuantile RETIRED. It was a scalar ("the marginal member
+        // of a segment earns ~75% of its mean") standing in for the within-
+        // segment income distribution the model did not carry. Income.cs now
+        // carries the real distribution — built from CS2's own income model —
+        // so the marginal bidder is FOUND by walking the demand curve rather
+        // than approximated by a hand-tuned discount. Its calibration history
+        // is worth remembering: it was cut 0.75 → 0.55 to damp an emigration
+        // "turnstile", churnprobe then showed 98% of those exits were arrivals
+        // that never found a unit (an absorption-budget bug), and the cut had
+        // meanwhile halved assessments and stalled construction. A parameter
+        // standing in for a missing mechanism attracts exactly that kind of
+        // misattributed tuning.
         public double CommercialMarkup = 0.35;    // gross margin on captured spending
         public double OfficeOutputPrice = 3.1;    // near-exogenous (design §4.2)
 
@@ -379,7 +398,29 @@ namespace CS2Econ.Core
         public double CondFactor(double condition) => CondBidFloor + (1 - CondBidFloor) * condition;
 
         // ---- wages by labor class (education → qualification → wage, §1.1) ---
+        // These are the class MEANS. The job-level ladder below disperses around
+        // them at constant mean, so every aggregate calibrated on these is
+        // untouched by the introduction of the distribution.
         public double WageBasic = 10.0, WageSkilled = 16.0, WageEducated = 26.0;
+
+        // ---- within-segment income dispersion (CS2's own income model) -------
+        // Research notes §3, Game.Prefabs.EconomyParameterData. See Income.cs.
+        /// <summary>Wage ratio between adjacent JOB levels — the shape of CS2's
+        /// m_Wage0..m_Wage4 ladder. Only the ratio matters: Income.JobLevels
+        /// rescales the ladder so its weighted mean is exactly Wage(class).</summary>
+        public double JobLevelSpread = 1.35;
+        /// <summary>Weight decay per level BELOW a worker's top qualification —
+        /// over-qualification. CS2 produces it structurally: FreeWorkplaces is
+        /// per-education-tier and runs out, so citizens take lower jobs. 0.5 =
+        /// each step down half as likely as the step above.</summary>
+        public double JobLevelDownshift = 0.5;
+        /// <summary>m_UnemploymentBenefit: what a working-age adult with no job
+        /// receives. Previously missing entirely, which gave unemployed Single
+        /// households an income of exactly ZERO — the zero-WTP tranches the
+        /// clearing price had to filter out by hand.</summary>
+        public double UnemploymentBenefit = 3.0;
+        /// <summary>m_ResidentialMinimumEarnings: floor under household earnings.</summary>
+        public double ResidentialMinimumEarnings = 1.0;
         public double Wage(LaborClass c) => c switch
         {
             LaborClass.Basic => WageBasic,

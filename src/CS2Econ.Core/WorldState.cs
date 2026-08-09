@@ -82,7 +82,22 @@ namespace CS2Econ.Core
         public int Segment;
         public double Money;
         public int HomeParcel = -1;      // -1 = unhoused (arriving or sheltered)
+        /// <summary>True iff at least one adult holds a job (Earners > 0).
+        /// Kept for the many read sites that only ask "does anyone here work";
+        /// income uses Earners and JobLevel.</summary>
         public bool Employed;
+        /// <summary>How many of this household's adults hold a job. From the
+        /// game: the count of Game.Citizens.Worker members with a workplace
+        /// (EconReader.HhAgg.Workers). A two-earner family out-earns a
+        /// one-earner family of identical education — the largest single
+        /// source of within-segment income spread.</summary>
+        public byte Earners;
+        /// <summary>The job LEVEL this household's earners hold (CS2's
+        /// Game.Citizens.Worker.m_Level, which is the job taken — not the
+        /// citizen's education: over-qualification is normal when the matching
+        /// tier's FreeWorkplaces run out). Stable per household; drawn from the
+        /// segment's job-level distribution (Income.JobLevels).</summary>
+        public byte JobLevel;
         public double ChargedAssessment; // per-tick S+tax+wedge currently being charged
         public double MovingCostDraw;    // within-segment heterogeneity draw (§4.4)
         public long TenureStart;

@@ -219,6 +219,66 @@ namespace CS2Econ.Harness
             return 0;
         }
 
+        /// <summary>`harness incomeprobe` — show the within-segment income
+        /// distribution the clearing price now walks (Income.cs): per segment,
+        /// the quantile bins at a representative cluster, the mean, and the
+        /// spread. Answers "is the demand curve actually a curve now, or still
+        /// a staircase" with the numbers rather than an argument.</summary>
+        public static int IncomeProbe(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(ticks);
+            var acc = sim.Engine.Access; var pres = sim.Engine.SegmentPresence;
+
+            int c0 = 0;
+            for (int c = 1; c < acc.C; c++)
+                if (acc.HousingStock[0][c] > acc.HousingStock[0][c0]) c0 = c;
+            Console.WriteLine($"income distribution at cluster {c0} (emp rates "
+                + $"{acc.EmploymentRate[0][c0]:P0}/{acc.EmploymentRate[1][c0]:P0}/{acc.EmploymentRate[2][c0]:P0} by class):");
+            int K = Income.Bins;
+            for (int s = 0; s < Segment.Count; s++)
+            {
+                var seg = Segment.All[s];
+                int b0 = (s * acc.C + c0) * K;
+                var parts = new List<string>();
+                for (int k = 0; k < K; k++)
+                    parts.Add($"{acc.IncomeBinInc[b0 + k]:F1}@{acc.IncomeBinWt[b0 + k]:P0}");
+                double hi = acc.IncomeBinInc[b0], lo = acc.IncomeBinInc[b0 + K - 1];
+                Console.WriteLine($"  {seg.Name,-12} adults={seg.Adults} mean={acc.ExpectedIncome(s, c0, p),6:F2} "
+                    + $"spread={(lo > 1e-9 ? hi / lo : 0),5:F1}x  bins: {string.Join(" ", parts)}");
+            }
+
+            // The demand curve the price walks, as (cumulative mass, WTP) steps.
+            Console.WriteLine($"\ndemand curve at cluster {c0} (ResidentialLow, level 2), stock={acc.HousingStock[0][c0]:F0}:");
+            var pts = new List<(double wtp, double mass, string who)>();
+            for (int s = 0; s < Segment.Count; s++)
+            {
+                if (pres[s] < 1) continue;
+                var seg = Segment.All[s];
+                double rel = acc.AccessValue[s][c0] / acc.MeanAccess;
+                double prem = MathUtil.Clamp(Math.Pow(Math.Max(0.05, rel), p.PremiumExponent), 0.2, 4.0);
+                double common = seg.MaxRentShare * prem * p.BidAccessScale
+                                * (p.Quality(2) / p.Quality(1)) * seg.DensityAppeal(ZoneKind.ResidentialLow);
+                double share = acc.SegmentKindShare[s][0][c0];
+                int b0 = (s * acc.C + c0) * K;
+                for (int k = 0; k < K; k++)
+                    pts.Add((common * acc.IncomeBinInc[b0 + k], pres[s] * share * acc.IncomeBinWt[b0 + k], seg.Name));
+            }
+            pts.Sort((x, y) => y.wtp.CompareTo(x.wtp));
+            double cum = 0;
+            foreach (var t in pts.Take(16))
+            {
+                cum += t.mass;
+                Console.WriteLine($"    wtp {t.wtp,7:F3}  mass {t.mass,7:F2}  cum {cum,8:F2}  ({t.who})");
+            }
+            Console.WriteLine($"    ... {pts.Count} tranches total, total mass {pts.Sum(t => t.mass):F1}");
+            double bid = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out double fill);
+            Console.WriteLine($"  → clearing bid {bid:F3}, expected fill {fill:P0}");
+            return 0;
+        }
+
         public static int PriceProbe(ulong seed, int ticks)
         {
             var p = new EconParams();

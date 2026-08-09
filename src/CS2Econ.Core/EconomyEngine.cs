@@ -111,11 +111,14 @@ namespace CS2Econ.Core
             // failed ARRIVALS (see churnprobe), not spell-bankrupted tenants.
             // The i.i.d. epoch draw tracks the current rate immediately, which
             // is what a young or recovering labor market needs.
+            Span<double> lw = stackalloc double[5];
+            Span<double> lwage = stackalloc double[5];
             foreach (var h in W.Households)
             {
                 if (h.ExitedTick >= 0) continue;
                 var seg = Segment.All[h.Segment];
-                if (h.HomeParcel < 0 || seg.Participation <= 0) { h.Employed = false; continue; }
+                if (h.HomeParcel < 0 || seg.Participation <= 0 || seg.Adults <= 0)
+                { h.Employed = false; h.Earners = 0; continue; }
                 int c = W.Parcels[h.HomeParcel].Cluster;
                 double rate = Access.EmploymentRate[(int)seg.Labor][c] * seg.Participation;
                 // Epoch-hashed draw: employment persists ~60 ticks, then the job
@@ -124,7 +127,27 @@ namespace CS2Econ.Core
                 // no citywide re-roll tick (design §3; scrutiny finding #21).
                 long offset = (long)(SplitMix64.Hash((ulong)h.Id * 13UL) % 60UL);
                 ulong epoch = (ulong)((W.Tick + offset) / 60);
-                h.Employed = SplitMix64.Hash01((ulong)h.Id * 7919UL + epoch * 104729UL + 3) < rate;
+                // Each ADULT draws independently, so a two-adult household can
+                // be fully employed, half employed, or out of work — the earner
+                // count is the dispersion the segment distribution aggregates.
+                int earners = 0;
+                for (int a = 0; a < seg.Adults; a++)
+                    if (SplitMix64.Hash01((ulong)h.Id * 7919UL + epoch * 104729UL + (ulong)a * 31UL + 3) < rate)
+                        earners++;
+                h.Earners = (byte)earners;
+                h.Employed = earners > 0;
+                // Job level: stable per household (a career, not a lottery each
+                // epoch), drawn from the segment's job-level distribution.
+                int levels = Income.JobLevels(seg, P, lw, lwage);
+                double u = SplitMix64.Hash01((ulong)h.Id * 6151UL + 17UL);
+                int lvl = levels - 1;
+                double cumL = 0;
+                for (int l = levels - 1; l >= 0; l--)
+                {
+                    cumL += lw[l];
+                    if (u <= cumL) { lvl = l; break; }
+                }
+                h.JobLevel = (byte)lvl;
             }
 
             // Seekers = unhoused + sheltered now, EMA-smoothed (expected near-term demand).
@@ -187,12 +210,22 @@ namespace CS2Econ.Core
             // Households receive wages/transfers; firms are charged their wage
             // bill pro-rata to filled slots (exact conservation on the household side).
             var wageByClass = new double[3];
+            Span<double> lwIT = stackalloc double[5];
+            Span<double> lwageIT = stackalloc double[5];
             foreach (var h in W.Households)
             {
                 if (h.ExitedTick >= 0) continue;
                 var seg = Segment.All[h.Segment];
-                double wage = h.Employed ? P.Wage(seg.Labor) : 0;
-                double transfer = seg.Transfer;
+                // Gross wage bill: earners × the wage of the job level held.
+                int levelsIT = Income.JobLevels(seg, P, lwIT, lwageIT);
+                double wage = h.Earners > 0
+                    ? h.Earners * lwageIT[Math.Min(h.JobLevel, levelsIT - 1)] : 0;
+                // Non-earning adults in the labor force draw the benefit
+                // (CS2 m_UnemploymentBenefit) — a national-counterparty tap,
+                // paid alongside the segment transfer below.
+                double transfer = seg.Transfer
+                    + Math.Max(0, seg.Adults - h.Earners) * P.UnemploymentBenefit
+                      * MathUtil.Clamp(seg.Participation, 0, 1);
                 if (wage > 0)
                 {
                     double tax = wage * P.IncomeTax(seg.Labor);
@@ -265,7 +298,7 @@ namespace CS2Econ.Core
             {
                 if (h.ExitedTick >= 0) continue;
                 var seg = Segment.All[h.Segment];
-                double income = (h.Employed ? P.Wage(seg.Labor) * (1 - P.IncomeTax(seg.Labor)) : 0) + seg.Transfer;
+                double income = AccessState.HouseholdIncomeEstimate(h, seg, P);
                 double disposable = Math.Max(0, income - h.ChargedAssessment);
                 double cut = h.Stage >= InsolvencyStage.CutConsumption ? P.ConsumptionCutFactor : 1.0;
                 double spend = Math.Min(h.Money, P.BaseConsumptionShare * disposable * cut);

@@ -15,35 +15,35 @@ Seed: 20260806.
 - ✅ **road export law concave (d=2), rail linear (d=1)**: road drops 0.5368>0.4119; rail drops 0.216000≈0.216000
 - ✅ **multimodal composition = horizontal summation (vs brute force)**: clear 2502.35 vs brute 2502.35 (clear/brute per exit: e0:150/150 e1:175/175 e2:275/275)
 - ✅ **transient impact layer decays at resilience rate**: burst 490.0 -> 416.5
-- ✅ **Weber: extraction follows geology; recipes follow input sourcing**: 11 extractors (100 % on best raw); 13 single-input industrials (100 % on cheapest-sourced recipe); 3 distinct industrial outputs
+- ✅ **Weber: extraction follows geology; recipes follow input sourcing**: 10 extractors (100 % on best raw); 20 single-input industrials (75 % on cheapest-sourced recipe); 3 distinct industrial outputs
 - ✅ **vacancy kernel: V=1 conservation, suppression density falls with distance**: evicted 60 → total suppression 60.000000; per-cluster density within 1.5λ: 4.382 (n=9), beyond: 0.226 (n=91)
-- ✅ **claim↔vacancy wash: pipeline and completed-vacant suppress identically**: 20 claimed vs 14 vacated: worst per-unit gap 1.8E-016; local retention claim 27 % vs vacancy 27 %; low-channel share claim 83 % vs vacancy 83 %
-- ✅ **occupancy channel: realized vacancy softens rent (price while cleared, deeper vacancy once floored)**: FillEma tracks measured occupancy on 89 submarkets (mean err 0.004, worst 0.14); cluster 32 (cleared) bid 1.271 (fill 1.00) at full occupancy → 1.006 (fill 0.48) at 20 % (price leg)
-- ✅ **clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)**: supply×{0.5,2,8} → 2.71/1.36/1.36 (fill 0.31→0.08); demand×{0.5,1,2} → 1.36/1.36/2.71 (fill 0.31→0.61); after 420 citywide exits bid 1.36 → 1.34, fill 0.61 → 0.31; single-segment glut == scarcity price on 2 segments (pinned, tail spans 3.26–5.41)
-- ✅ **occupied stock carries land rent in BOTH densities (per-kind commensurability)**: high: best-access quartile 48/48 with LR>0, ΣLR 4232.1, 185/192 overall at 99 % occupancy; low: quartile 94/96, ΣLR 323.0, 320/387 overall at 100 %
+- ✅ **claim↔vacancy wash: pipeline and completed-vacant suppress identically**: 20 claimed vs 14 vacated: worst per-unit gap 1.3E-016; local retention claim 27 % vs vacancy 27 %; low-channel share claim 83 % vs vacancy 83 %
+- ✅ **occupancy channel: realized vacancy softens rent (price while cleared, deeper vacancy once floored)**: FillEma tracks measured occupancy on 89 submarkets (mean err 0.000, worst 0.01); cluster 32 (cleared) bid 2.185 (fill 1.00) at full occupancy → 0.650 (fill 0.47) at 20 % (price leg)
+- ✅ **clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)**: supply×{0.5,2,8} → 2.61/1.42/1.42 (fill 0.30→0.07); demand×{0.5,1,2} → 1.42/1.42/2.61 (fill 0.30→0.59); after 419 citywide exits bid 1.42 → 1.43, fill 0.59 → 0.31; 25-point supply sweep 30.17→1.42 (monotone), wages×2 → 58.23/2.20
+- ✅ **occupied stock carries land rent in BOTH densities (per-kind commensurability)**: high: best-access quartile 48/48 with LR>0, ΣLR 4656.5, 191/193 overall at 99 % occupancy; low: quartile 97/97, ΣLR 456.4, 344/391 overall at 100 %
 - ✅ **co-op re-rate: one price per unit, tracking the live market assessment**: 133/133 multi-tenant parcels uniform; worst |charged − market|/market = 0.0E+000
-- ✅ **circularity guard: assessment blind to own realized rent**: LR 33.8236 (> 0) unchanged under 17.5× realized-rent perturbation
-- ✅ **ledger conservation: money neither created nor destroyed**: max |drift| over 300 ticks = 3.90E-007
+- ✅ **circularity guard: assessment blind to own realized rent**: LR 40.6463 (> 0) unchanged under 17.5× realized-rent perturbation
+- ✅ **ledger conservation: money neither created nor destroyed**: max |drift| over 300 ticks = 1.60E-006
 - ✅ **shadow accounting: assessed + logged, nothing levied (stage 3)**: assessments computed: True, escrow balance: 0.00
 - ✅ **insolvency pipeline: staged, ordered, terminates**: stages: Solvent→CutConsumption→SortDown→Sheltered
-- ✅ **no stuck homeless population (vanilla bug-class regression)**: longest non-decreasing shelter streak 27 ticks
-- ✅ **feature flags: vanilla-mode fallback runs (every tier revertible)**: pop 1704 (sane bounds), drift -1.8E-006
-- ✅ **determinism: same seed → identical telemetry hash**: h(seed)=CE3ADC3242E02858 twice, h(seed+1)=99950CD3A2A2F215
+- ✅ **no stuck homeless population (vanilla bug-class regression)**: longest non-decreasing shelter streak 0 ticks
+- ✅ **feature flags: vanilla-mode fallback runs (every tier revertible)**: pop 1706 (sane bounds), drift -2.7E-006
+- ✅ **determinism: same seed → identical telemetry hash**: h(seed)=F1D4B32C3DE32E0 twice, h(seed+1)=596895E5E0C41763
 
 ## Acceptance scenarios (10 targets, 9 passing)
 
 | §6 target | result | measured |
 |---|---|---|
-| vacancy suppression concentrates at the shock (vanilla: uniform) | ❌ | spatial: spatial-excess suppression interior 1.9/cluster vs beyond-spillover -0.4 → contrast 1.9 units/cluster (raw 2.6/1.0, level 0.6/1.4); interior unit-starts 26 concentrated vs 18 same-size uniform exits (67 no-shock); beyond 26→27 (26 treated / 64 buffered); vanilla: spatial-excess suppression interior 3.8/cluster vs beyond-spillover -0.9 → contrast 3.8 units/cluster (raw 3.1/-0.9, level -0.7/-0.0); interior unit-starts 60 concentrated vs 36 same-size uniform exits (168 no-shock); beyond 474→114 (26 treated / 64 buffered) |
-| level map correlates with access (rank corr vs ℓ*, not grind) | ✅ | Spearman(realized level, ℓ*) spatial 0.51 vs vanilla 0.03 |
-| fiscal loop: transit raises LR revenue along its corridor | ✅ | corridor +86.2% vs control -31.9% within 60 ticks |
-| monoculture export bends marginal price ≥30% below flat | ✅ | sustained 141/tick, marginal 1.54 vs flat 2.60 → bend 41 % |
+| vacancy suppression concentrates at the shock (vanilla: uniform) | ❌ | spatial: spatial-excess suppression interior 0.2/cluster vs beyond-spillover -0.2 → contrast 0.2 units/cluster (raw 2.5/1.5, level 2.3/1.7); interior unit-starts 6 concentrated vs 48 same-size uniform exits (16 no-shock); beyond 0→85 (26 treated / 64 buffered); vanilla: spatial-excess suppression interior 1.3/cluster vs beyond-spillover -0.8 → contrast 1.3 units/cluster (raw 1.3/-0.3, level -0.1/0.5); interior unit-starts 30 concentrated vs 44 same-size uniform exits (142 no-shock); beyond 434→154 (26 treated / 64 buffered) |
+| level map correlates with access (rank corr vs ℓ*, not grind) | ✅ | Spearman(realized level, ℓ*) spatial 0.47 vs vanilla 0.01 |
+| fiscal loop: transit raises LR revenue along its corridor | ✅ | corridor +51.4% vs control -11.9% within 60 ticks |
+| monoculture export bends marginal price ≥30% below flat | ✅ | sustained 125/tick, marginal 1.63 vs flat 2.60 → bend 37 % |
 | truck→rail→backstop progression by volume; concurrent marginals equalize | ✅ | export ramp 8→950/tick: road 72 % at <60 (n=50) → 22 % at ≥600; rail 28 %→59 % at mid (n=172); sea 30 % at top (n=336); concurrent marginal gap 0.0 % |
-| boom/bust asymmetry: inflow reacts faster than outflow | ✅ | migration-margin response +1008 vs departure response +1 over equal windows/pulse (2185 arrivals realized after absorption) |
-| no synchronized displacement: exit times form a distribution | ✅ | 9114 exits (131 housed displaced, 8716 failed arrivals, 267 relocations), worst single tick 0.3 % (cliff would be ≫5%) |
-| stalled construction appears in engineered busts | ✅ | 14 abandoned mid-build after demand collapse; at bust 24 in flight of which 15 early-stage (140 lifetime starts) |
-| overlay honesty: correction factors bounded and settling | ✅ | 122 realized-vs-predicted observations; factor range [0.99,1.07], late swing 0.05 |
-| Tier B refresh scales with clusters, not parcel count | ✅ | refresh 3.8 ms at 8 parcels/cluster vs 4.3 ms at 16 → ratio 1.13 (cluster count fixed) |
+| boom/bust asymmetry: inflow reacts faster than outflow | ✅ | migration-margin response +1267 vs departure response +1 over equal windows/pulse (2233 arrivals realized after absorption) |
+| no synchronized displacement: exit times form a distribution | ✅ | 8800 exits (57 housed displaced, 8607 failed arrivals, 136 relocations), worst single tick 0.3 % (cliff would be ≫5%) |
+| stalled construction appears in engineered busts | ✅ | 63 abandoned mid-build after demand collapse; at bust 18 in flight of which 6 early-stage (243 lifetime starts) |
+| overlay honesty: correction factors bounded and settling | ✅ | 127 realized-vs-predicted observations; factor range [1.00,1.16], late swing 0.00 |
+| Tier B refresh scales with clusters, not parcel count | ✅ | refresh 4.3 ms at 8 parcels/cluster vs 5.5 ms at 16 → ratio 1.30 (cluster count fixed) |
 
 ## What the audit changed (and what it caught)
 
@@ -119,12 +119,18 @@ The review fixes shifted the mean clearing bid about −25% at unchanged
 parameters. They are mechanism corrections, not price-level decisions, so
 the level was re-anchored where the §6 targets were validated:
 `BidAccessScale (1.33) × MarginalIncomeQuantile (0.75) = 1.0` — the
-quantile carries the within-segment dispersion story, the scale carries
-the absolute calibration. At product 0.75 the level-map Spearman fell to
+quantile carrying the within-segment dispersion story, the scale the
+absolute calibration. At product 0.75 the level-map Spearman fell to
 0.28 and the monoculture bend to 29%; at product 1.0 they are 0.50 and
 30%. (An interim cut of the quantile to 0.55, tuned against the
 misdiagnosed "turnstile", halved assessments and stalled construction —
 reverted once churnprobe disproved its justification.)
+
+**Superseded**: `MarginalIncomeQuantile` has since been retired — the
+within-segment dispersion it stood in for is now carried by a real income
+distribution (see the last section). `BidAccessScale` = 1.33 is the whole
+anchor, and it needed no re-tuning because the distribution is built at
+constant mean.
 
 ## The one open target
 
@@ -259,3 +265,100 @@ builds. The honest statement: the kernel's contribution is real but
 modest, and establishing (or refuting) the dose-response now requires a
 multi-seed design; the single-seed table is no longer evidence of a
 monotone gradient.
+
+## Segments carry an income distribution, built from CS2's own income model
+
+The discrete-jump behavior the previous pass documented — the excess price
+being the poorest *segment's* WTP, so a segment's disappearance re-rated
+every glut submarket at once — was not a harness artifact. `Segment.All`
+ships in Core, and the mod adapter (`ResourceMap.SegmentFor`) folds CS2's
+5 education tiers × 4 age groups many-to-one into those 8 buckets. The
+discreteness was ours, imposed on a game whose population is smoother
+than our representation of it — and the adapter was already reading the
+smoothness and discarding it (earner count collapsed to a bool, job level
+unread, household savings stored but unused for pricing).
+
+Each segment now carries a within-segment household income
+**distribution** (`Income.cs`), built from the fields CS2 actually
+exposes (`Game.Prefabs.EconomyParameterData`, research notes §3):
+
+- `m_Wage0..m_Wage4` — wages by **job level**, i.e.
+  `Game.Citizens.Worker.m_Level`, the job actually held rather than the
+  citizen's education. Over-qualification is structural in CS2 because
+  `FreeWorkplaces` is per-education-tier and runs out.
+- `m_UnemploymentBenefit` — what a working-age adult with no job
+  receives. Previously **missing entirely**, which is why unemployed
+  single households had an income of exactly zero and the clearing price
+  needed a hand-written zero-WTP filter.
+- `m_ResidentialMinimumEarnings` — floor under household earnings.
+- Earner count 0..Adults, from the household's actual `Worker` members.
+
+Measured distributions (seed 20260806, t=300, best-stocked cluster):
+
+| segment | adults | mean | spread | bins (income @ share) |
+|---|---|---|---|---|
+| StudentLow | 1 | 7.89 | 2.9× | 12.9 11.6 6.0 4.5 4.5 |
+| SingleBasic | 1 | 8.43 | 1.9× | 9.9 9.9 9.9 7.3 5.3 |
+| SingleSkill | 1 | 10.97 | 5.6× | 16.9 16.6 12.1 6.2 3.0 |
+| FamilyBasic | 2 | 10.79 | 4.8× | 19.1 12.4 11.5 6.9 4.0 |
+| FamilySkill | 2 | 13.05 | 6.4× | 25.8 18.9 12.6 4.0 4.0 |
+| FamilyEdu | 2 | 24.85 | 12.3× | 49.2 31.0 26.5 13.5 4.0 |
+| SeniorLow | 0 | 8.00 | 1.0× | pension only |
+| SeniorMid | 0 | 13.00 | 1.0× | pension only |
+
+The within-segment spread (up to 12×) now exceeds the between-segment
+spread, which is the point: it was always there in the population and the
+model was averaging it away. The demand curve at a cluster went from 8
+steps to **40 strictly-decreasing tranches**, so the clearing price slides
+continuously with quantity instead of jumping when a segment leaves the
+queue.
+
+**Dispersion added at constant mean.** The job-level ladder is normalized
+so its weighted mean is exactly `Wage(class)`, and per-adult
+`Participation` is halved for the 2-adult Family segments so household
+labor supply is unchanged. Nothing calibrated on the aggregates moved:
+the same fixture reads supply×{0.5,2,8} → 2.61/1.42/1.42 against
+2.71/1.36/1.36 before. What did change is the **slope** — a real
+distribution makes the curve much steeper, so scarcity bites harder and
+gluts price softer than a point estimate allowed.
+
+`MarginalIncomeQuantile` is **retired**. It was a scalar ("the marginal
+member earns ~75% of the segment mean") standing in for exactly this
+distribution; the marginal bidder is now found by walking the real curve.
+Its calibration history is the cautionary tale: it was cut 0.75 → 0.55 to
+damp an emigration "turnstile" that churnprobe later showed was an
+absorption-budget bug, and the cut had meanwhile halved assessments and
+stalled construction. A parameter standing in for a missing mechanism
+attracts exactly that kind of misattributed tuning.
+
+**A real bug this surfaced.** Paying per-earner while the labor market
+still counted one worker per household double-charged every firm's wage
+bill and killed all industry (Weber: 0 industrials). Labor supply is now
+`Adults × Participation` — the same quantity the wage income is paid on —
+so the matched-jobs wage bill and the wages paid stay in balance.
+
+**Effects measured.** Housed insolvency displacement fell from 54 to **9**
+per 300 ticks: poor households are no longer charged against a segment
+mean they never earned, and non-earning adults now receive the benefit
+CS2 pays them. Population 4,112.
+
+**Check strengthened.** The mutant-killing "single-segment glut ==
+scarcity price" assertion assumed one flat tranche per segment — true only
+while a segment was one point income. It is replaced by a 25-point supply
+sweep that must be monotone non-increasing across the cleared→excess
+transition (an excess markup shows up as an upward step), must decline
+substantially end to end, and must scale with wages. Shipped: sweep
+30.17 → 1.42 monotone, wages×2 → 58.23/2.20.
+
+**What CS2 does NOT give us**, checked rather than assumed: there is no
+per-citizen wage field. Wages come from the `m_Wage0..m_Wage4` ladder
+indexed by worker level, so our 3-class table still supplies the level;
+the dispersion comes from earners × employment × job level. And the other
+per-citizen statistics (`m_WellBeing`, `m_Health`, `m_LeisureCounter`) are
+outcomes of location quality feeding `CitizenHappinessSystem`, not
+preference parameters — the preference axes CS2 actually differentiates on
+are education and age group, both of which the segment table already
+carries. One `VERIFY-INGAME` marker was added: `Worker.m_Level` is
+dump-listed as a byte but its range (0..4 job level vs a progress counter)
+and whether the wage is indexed by it rather than by education both need a
+decompile check on the game machine.
