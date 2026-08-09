@@ -428,6 +428,28 @@ namespace CS2Econ.Core
         public double UnemploymentBenefit = 3.0;
         /// <summary>m_ResidentialMinimumEarnings: floor under household earnings.</summary>
         public double ResidentialMinimumEarnings = 1.0;
+        /// <summary>How long the unemployment benefit is paid before it stops.
+        /// This is CS2's `Unemployment Allowance Max Days` and it is the game's
+        /// LABOR-MARKET CLEARING mechanism: "if you don't provide them with
+        /// suitable jobs, they will eventually have no other option than to
+        /// leave the city". Without it, benefits are permanent, unemployment is
+        /// comfortably survivable, and a city can sit at 55% unemployment
+        /// forever while still growing — measured before this existed: employment
+        /// flat at 43–46% over 400 ticks with departures of exactly zero.
+        ///
+        /// CS2's own value is 10 in-game days. Ours is 60 ticks because the job
+        /// search re-rolls on a 60-tick epoch (EconomyEngine): a shorter limit
+        /// would cut support off before the household had a single genuine
+        /// chance to find work. One full search cycle, then the insolvency
+        /// pipeline takes over.</summary>
+        public int UnemploymentAllowanceTicks = 60;
+        /// <summary>m_UnemploymentEffect / m_NeutralUnemployment: how strongly
+        /// citywide unemployment above its natural rate damps in-migration.
+        /// Vanilla puts unemployment DIRECTLY into its demand calculation; we
+        /// had it only indirectly through mean income, which is far too weak a
+        /// brake — arrivals kept pouring into a city with no jobs.</summary>
+        public double UnemploymentEffect = 3.0;
+        public double NeutralUnemployment = 0.08;
         public double Wage(LaborClass c) => c switch
         {
             LaborClass.Basic => WageBasic,

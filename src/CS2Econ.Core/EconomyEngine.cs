@@ -136,6 +136,8 @@ namespace CS2Econ.Core
                         earners++;
                 h.Earners = (byte)earners;
                 h.Employed = earners > 0;
+                // Unemployment spell length: what the benefit's expiry reads.
+                h.UnemployedTicks = earners > 0 ? 0 : h.UnemployedTicks + P.RefreshInterval;
                 // Job level: stable per household (a career, not a lottery each
                 // epoch), drawn from the segment's job-level distribution.
                 int levels = Income.JobLevels(seg, P, lw, lwage);
@@ -221,11 +223,15 @@ namespace CS2Econ.Core
                 double wage = h.Earners > 0
                     ? h.Earners * lwageIT[Math.Min(h.JobLevel, levelsIT - 1)] : 0;
                 // Non-earning adults in the labor force draw the benefit
-                // (CS2 m_UnemploymentBenefit) — a national-counterparty tap,
-                // paid alongside the segment transfer below.
+                // (CS2 m_UnemploymentBenefit) — a national-counterparty tap —
+                // but only until the allowance runs out. After that the
+                // household is on its transfers alone and the insolvency
+                // pipeline decides whether it sorts down or leaves, which is
+                // how CS2 clears a labor surplus.
                 double transfer = seg.Transfer
-                    + Math.Max(0, seg.Adults - h.Earners) * P.UnemploymentBenefit
-                      * MathUtil.Clamp(seg.Participation, 0, 1);
+                    + (h.UnemployedTicks <= P.UnemploymentAllowanceTicks
+                        ? Math.Max(0, seg.Adults - h.Earners) * P.UnemploymentBenefit
+                          * MathUtil.Clamp(seg.Participation, 0, 1) : 0);
                 if (wage > 0)
                 {
                     double tax = wage * P.IncomeTax(seg.Labor);
@@ -697,7 +703,19 @@ namespace CS2Econ.Core
                 W.FreedUnitsThisTick[k] = 0;
             }
 
-            LastFlows = Migration.Step(W, Access, AvgRentBySeg, distressShare, TurnoverEma, P, Flags.TierA_Migration);
+            // Citywide unemployment among housed households WITH working-age
+            // adults — the labor force, not the population. Vanilla's demand
+            // reads the same quantity (m_NeutralUnemployment is a rate).
+            double laborForce = 0, jobless = 0;
+            foreach (var h in W.Households)
+            {
+                if (h.ExitedTick < 0 && h.HomeParcel >= 0 && Segment.All[h.Segment].Adults > 0)
+                { laborForce++; if (h.Earners == 0) jobless++; }
+            }
+            double unemploymentRate = laborForce > 0 ? jobless / laborForce : 0;
+
+            LastFlows = Migration.Step(W, Access, AvgRentBySeg, distressShare, unemploymentRate,
+                                       TurnoverEma, P, Flags.TierA_Migration);
 
             for (int s = 0; s < Segment.Count; s++)
             {

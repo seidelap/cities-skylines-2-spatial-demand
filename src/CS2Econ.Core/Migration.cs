@@ -22,7 +22,8 @@ namespace CS2Econ.Core
         /// distressed before they shelter, so a pure homeless share was blind
         /// to an insolvency conveyor and kept arrivals flowing (turnstile).</summary>
         public static double Attractiveness(
-            WorldState w, AccessState acc, int segment, double avgRentBySeg, double distressShare, EconParams p)
+            WorldState w, AccessState acc, int segment, double avgRentBySeg, double distressShare,
+            double unemploymentRate, EconParams p)
         {
             var seg = Segment.All[segment];
             // Population-weighted mean access value for the segment.
@@ -46,10 +47,18 @@ namespace CS2Econ.Core
             double rentBurden = meanIncome > 0.1 ? avgRentBySeg / (seg.MaxRentShare * meanIncome) : 2.0;
             // Absolute scale: a citywide amenity/access improvement MUST move the
             // migration margin (normalizing by the city mean would cancel it).
+            // Unemployment above its natural rate is a DIRECT brake, as in
+            // vanilla (DemandParameterData.m_UnemploymentEffect against
+            // m_NeutralUnemployment). Routing it only through mean income —
+            // which is what we did — is far too weak: the city sat at 55%
+            // unemployment for 400 ticks while still taking arrivals and
+            // never sending a single departure (measured).
+            double slack = Math.Max(0, unemploymentRate - p.NeutralUnemployment);
             return meanAccess / 4.0
                    + 0.35 * meanIncome / p.WageBasic
                    - 0.55 * rentBurden
-                   - 2.0 * distressShare;
+                   - 2.0 * distressShare
+                   - p.UnemploymentEffect * slack;
         }
 
         public struct Flows
@@ -65,7 +74,7 @@ namespace CS2Econ.Core
 
         public static Flows Step(
             WorldState w, AccessState acc, double[] avgRentBySeg, double distressShare,
-            double[] measuredTurnover, EconParams p, bool endogenousOutside)
+            double unemploymentRate, double[] measuredTurnover, EconParams p, bool endogenousOutside)
         {
             var m = w.Migration;
             int nSeg = Segment.Count;
@@ -144,7 +153,7 @@ namespace CS2Econ.Core
             double desiredTotal = 0;
             for (int s = 0; s < nSeg; s++)
             {
-                double attract = Attractiveness(w, acc, s, avgRentBySeg[s], distressShare, p);
+                double attract = Attractiveness(w, acc, s, avgRentBySeg[s], distressShare, unemploymentRate, p);
                 m.SegmentAttractEma[s] = MathUtil.Ema(m.SegmentAttractEma[s], attract, 0.05);
 
                 double outsideU = BaseOutsideUtility + (endogenousOutside ? m.ReservationThreshold[s] : 0);

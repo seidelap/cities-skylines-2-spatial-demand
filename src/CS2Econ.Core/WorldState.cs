@@ -98,6 +98,11 @@ namespace CS2Econ.Core
         /// tier's FreeWorkplaces run out). Stable per household; drawn from the
         /// segment's job-level distribution (Income.JobLevels).</summary>
         public byte JobLevel;
+        /// <summary>Consecutive ticks with no earner, for a household that has
+        /// working-age adults. CS2 pays the unemployment benefit only up to
+        /// `Unemployment Allowance Max Days`, after which the household has no
+        /// support and leaves; this is the counter that expiry reads.</summary>
+        public int UnemployedTicks;
         public double ChargedAssessment; // per-tick S+tax+wedge currently being charged
         public double MovingCostDraw;    // within-segment heterogeneity draw (§4.4)
         public long TenureStart;

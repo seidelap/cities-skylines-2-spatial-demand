@@ -493,8 +493,12 @@ namespace CS2Econ.Core
             int lvl = Math.Min(h.JobLevel, levels - 1);
             int earners = Math.Min(h.Earners, Math.Max(0, seg.Adults));
             double wage = earners * lwage[lvl] * (1 - p.IncomeTax(seg.Labor));
-            double benefit = Math.Max(0, seg.Adults - earners) * p.UnemploymentBenefit
-                             * MathUtil.Clamp(seg.Participation, 0, 1);
+            // The benefit stops at the allowance limit — so a long-term
+            // unemployed household's affordability, stress and exit decisions
+            // all see the cliff (CS2's labor-market clearing mechanism).
+            double benefit = h.UnemployedTicks <= p.UnemploymentAllowanceTicks
+                ? Math.Max(0, seg.Adults - earners) * p.UnemploymentBenefit
+                  * MathUtil.Clamp(seg.Participation, 0, 1) : 0;
             return Math.Max(p.ResidentialMinimumEarnings, wage + benefit + seg.Transfer);
         }
 

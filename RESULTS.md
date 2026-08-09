@@ -415,3 +415,61 @@ pricing) is intact, the engineered-monoculture premise is weaker in a
 labor-rich city. If the bar matters as stated, it needs either a
 fixture that suppresses local processing or a dedicated calibration
 pass; what it does not need is a quiet knob-turn to buy 4 points.
+
+## Labor-market clearing: two missing CS2 mechanisms, and what they exposed
+
+Doubling family labor supply left the city at ~55% unemployment,
+**stable over 400 ticks and still growing** — 43→46% employment,
+population 3075→3439, departures of exactly **zero**, and every firm
+100% staffed. A labor market that never clears is not an equilibrium; it
+means nothing was pushing on either margin. Two mechanisms CS2 has and
+we did not:
+
+- **The unemployment benefit never expired.** CS2 pays it up to
+  `Unemployment Allowance Max Days`, after which "they will eventually
+  have no other option than to leave the city" — that expiry IS the
+  game's labor-market clearing mechanism. Ours paid forever, so an
+  unemployed two-adult family drew 7.0/tick against an assessment of
+  ~2.0: comfortable indefinitely, never stressed, never leaving. Now
+  capped at `UnemploymentAllowanceTicks` (60 = one full job-search
+  epoch; a shorter limit would cut support before the household had a
+  single genuine chance to find work), after which the insolvency
+  pipeline decides between sorting down and leaving.
+- **Unemployment did not enter the migration signal.** Vanilla puts it
+  directly into demand (`m_UnemploymentEffect` against
+  `m_NeutralUnemployment`); we had only the weak indirect channel
+  through mean income, so arrivals kept pouring into a city with no
+  jobs.
+
+Effect: growth into unemployment stops. Population goes from 3439 and
+climbing to 3128 and flat; employment 45→47%; housed-insolvency exits
+rise 35→50 per 300 ticks.
+
+### What that did NOT fix, and why it is worth naming
+
+Employment settles near 47%, not near the 8% natural rate. The
+arithmetic says why: 116 commercial + 16 industrial + 57 office + 3
+extractor parcels supply ≈1,900 job slots against ≈3,300 working-age
+adults. The city is short about half the jobs its labor force needs.
+
+Land is **not** the constraint — 1,063 of 1,960 parcels are zoned and
+standing empty. Demand is. Commercial profitability depends on captured
+consumer spending, consumer spending depends on household income, and
+household income is depressed by exactly the unemployment more shops
+would relieve. That is a coherent demand-deficient trap, and the
+fixture starts inside it.
+
+One defect holds the trap open and should be fixed before any
+recalibration: **firms accumulate cash without limit and never recycle
+it.** Commercial firms hold $1.3M by t=400 and rising monotonically,
+with no dividend to households and no reinvestment into new
+establishments. Money that leaves household circulation and never
+returns cannot come back as spending, so the consumption channel that
+would justify more shops is permanently starved. Until firm cash has an
+exit, the jobs side of this economy cannot bootstrap, and adding zoned
+land or tuning the fixture's job mix would only paper over it.
+
+Recorded rather than tuned away: the honest reading is that the labor
+market now has working clearing mechanisms on the migration and
+insolvency margins, and a genuine missing circular-flow channel on the
+firm side.
