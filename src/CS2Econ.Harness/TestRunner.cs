@@ -644,7 +644,7 @@ namespace CS2Econ.Harness
             void Reprice(double fill)
             {
                 acc.FillEma[0][c0] = fill; acc.FillEma[1][c0] = fill;
-                acc.RebuildDemandShares();      // same recompute the refresh does
+                acc.RebuildDemandShares(sim.W, p);   // same recompute the refresh does
             }
             Reprice(1.0);
             double bidFull = LandAccounting.ResidentialBidPerUnit(
@@ -653,7 +653,7 @@ namespace CS2Econ.Harness
             double bidEmpty = LandAccounting.ResidentialBidPerUnit(
                 acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out double fillEmpty);
             acc.FillEma[0][c0] = saved[0]; acc.FillEma[1][c0] = saved[1];
-            acc.RebuildDemandShares();
+            acc.RebuildDemandShares(sim.W, p);
 
             // Two-regime economics: while the submarket CLEARS, the thinner
             // demand share reads deeper down the curve and the PRICE falls.

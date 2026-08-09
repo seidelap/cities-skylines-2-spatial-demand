@@ -392,6 +392,27 @@ namespace CS2Econ.Core
 
         // ---- engine cadence -------------------------------------------------
         public int RefreshInterval = 5;            // ticks between Tier B refreshes
+        /// <summary>Weight on a household's own consumption value when it
+        /// judges a location: its location utility carries
+        /// ConsumptionWeight·log(1 − rent/income), so what is left to live on
+        /// after rent is part of the decision. This is what makes the location
+        /// choice a MARKET decision — dear places lose bidders, which lowers
+        /// their next clearing price — rather than a pure attractiveness
+        /// ranking, and the log's curvature is what sorts households across
+        /// price levels instead of shifting everyone by the same amount.</summary>
+        public double ConsumptionWeight = 1.5;
+        /// <summary>How much a household values not moving, in the units of its
+        /// location taste shock (Gumbel, σ = π/√6 ≈ 1.28), at the mean moving
+        /// cost. Each household scales this by its OWN MovingCostDraw. This is
+        /// a genuine knob and it is load-bearing: too small and everyone shops
+        /// at once so demand piles onto a handful of favourites; too large and
+        /// sitting tenants are unmovable and no submarket's price responds to
+        /// anything.</summary>
+        public double MoveInertia = 1.5;
+        /// <summary>Smoothing on the posted price households read when judging
+        /// affordability. The price they react to is the price their reaction
+        /// sets, so the loop needs damping or it rings.</summary>
+        public double PostedPriceAlpha = 0.35;
         public int AssessSlices = 10;              // parcels assessed 1/N per tick (staggered)
         public int ScrapePressureTicks = 60;       // sustained-gap requirement before warehousing
         public double CondBidFloor = 0.45;         // bid factor at condition 0

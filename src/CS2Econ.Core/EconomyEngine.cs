@@ -376,11 +376,29 @@ namespace CS2Econ.Core
                 ZoneKind.Office => new[] { 0.0, 0.3, 0.7 },
                 _ => new[] { 1.0, 0.0, 0.0 },
             };
+            // Staff from the households that ACTUALLY work here. The firm's
+            // workforce used to be JobSlots × mix × JobFillRate[class][cluster]
+            // — a cluster average, so every firm in a cluster was staffed
+            // identically and no worker was ever matched to a workplace, while
+            // the same aggregate was independently disaggregated onto
+            // households by a second unlinked draw. Members is the assignment
+            // (EconomyEngine.AssignWorkplaces), so the two sides now agree.
+            Array.Clear(f.FilledByClass, 0, 3);
             f.WorkersFilled = 0;
-            for (int cl = 0; cl < 3; cl++)
+            foreach (int hid in f.Members)
             {
-                f.FilledByClass[cl] = f.JobSlots * mix[cl] * Access.JobFillRate[cl][c];
-                f.WorkersFilled += f.FilledByClass[cl];
+                var hh = W.Households[hid];
+                if (hh.ExitedTick >= 0 || hh.Earners == 0) continue;
+                int cl = (int)Segment.All[hh.Segment].Labor;
+                f.FilledByClass[cl] += hh.Earners;
+                f.WorkersFilled += hh.Earners;
+            }
+            // Never claim more staff than the structure holds.
+            if (f.WorkersFilled > f.JobSlots && f.WorkersFilled > 0)
+            {
+                double scale = f.JobSlots / f.WorkersFilled;
+                for (int cl = 0; cl < 3; cl++) f.FilledByClass[cl] *= scale;
+                f.WorkersFilled = f.JobSlots;
             }
         }
 

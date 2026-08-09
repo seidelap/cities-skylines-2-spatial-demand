@@ -52,6 +52,10 @@ namespace CS2Econ.Core
 
         /// <summary>Rebuild the household bid ladders and the emergent income
         /// means. Once per refresh; the pricing hot path only reads them.</summary>
+        /// <summary>Living households per segment — a count, rebuilt with the
+        /// ladders so the posted-price pass has a presence vector.</summary>
+        public double[] presenceScratch = new double[Segment.Count];
+
         public void RebuildHouseholdLadders(WorldState w, EconParams p)
         {
             int nSeg = Segment.Count;
@@ -73,9 +77,11 @@ namespace CS2Econ.Core
             var sumBySeg = new double[nSeg];
             var cntBySeg = new double[nSeg];
 
+            Array.Clear(presenceScratch, 0, presenceScratch.Length);
             foreach (var h in w.Households)
             {
                 if (h.ExitedTick >= 0) continue;
+                presenceScratch[h.Segment]++;
                 var seg = Segment.All[h.Segment];
                 // An unhoused household bids on what it would earn once housed
                 // — its OWN earners and job level, valued at the market's
@@ -448,67 +454,198 @@ namespace CS2Econ.Core
             // migration and construction in the same tick) must already be
             // backed by this refresh's population.
             RebuildHouseholdLadders(w, p);
-            RebuildDemandShares();
+            // Post the price each submarket cleared at, so households judge
+            // affordability against a real posted price rather than against
+            // nothing. Read from the ladders just rebuilt; the intents built
+            // next consume it. Previous-refresh prices for the parcels being
+            // priced now — tâtonnement, and the loop is negative.
+            bool firstPost = PostedPrice.Length != 2;
+            if (firstPost)
+            {
+                PostedPrice = new double[2][];
+                for (int k = 0; k < 2; k++) PostedPrice[k] = new double[C];
+            }
+            for (int k = 0; k < 2; k++)
+            {
+                if (PostedPrice[k].Length != C) { PostedPrice[k] = new double[C]; firstPost = true; }
+                var kind = k == 1 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
+                for (int c = 0; c < C; c++)
+                {
+                    double post = LandAccounting.ResidentialBidPerUnit(
+                        this, c, kind, 2, presenceScratch, p);
+                    PostedPrice[k][c] = firstPost
+                        ? post : MathUtil.Ema(PostedPrice[k][c], post, p.PostedPriceAlpha);
+                }
+            }
+            RebuildDemandShares(w, p);
         }
 
         /// <summary>Recompute SegmentKindShare from AccessValue, capacity,
         /// fill and density appeal. Called at the end of Refresh; exposed so
         /// tests can perturb one input (e.g. FillEma) and re-derive the
         /// demand field without re-running a whole refresh.</summary>
-        public void RebuildDemandShares()
+        /// <summary>Count where households actually WANT to live, by asking
+        /// each of them. Every living household evaluates each (density kind,
+        /// cluster) with its OWN attributes — its own density tolerance, its
+        /// own affordability against the posted price, and its own
+        /// idiosyncratic taste for that specific place — and picks its argmax.
+        /// SegmentKindShare is then the COUNT of those choices, normalized per
+        /// segment.
+        ///
+        /// This replaced a per-segment logit evaluated from segment constants
+        /// (`exp(AccessValue/1.5) * capacity * fill`, normalized), which
+        /// allocated a real headcount by a formula rather than by asking
+        /// anybody: measured 31–53% total-variation distance from where the
+        /// population actually was, and it disagreed with the per-household
+        /// location choice the allocator was already making.
+        ///
+        /// The idiosyncratic term is a Gumbel draw keyed to (household, kind,
+        /// cluster) — stable forever, so it is a draw at birth in the sense
+        /// that matters: an individual's taste for a place never re-rolls.
+        /// Counting argmaxes of (systematic utility + Gumbel) reproduces the
+        /// multinomial logit IN EXPECTATION, which is the point: the share is
+        /// now the emergent consequence of individuals choosing, not an
+        /// assumed functional form, and it carries the finite-sample texture a
+        /// closed form smooths away.
+        ///
+        /// Price enters each household's own affordability, so this is a real
+        /// market feedback: dear places lose bidders, which lowers their
+        /// clearing price. It reads the PREVIOUS refresh's posted price
+        /// (tâtonnement), and the loop is negative — the §3 guard forbids the
+        /// self-reinforcing kind, not stabilizing price↔quantity adjustment.</summary>
+        public void RebuildDemandShares(WorldState w, EconParams p)
         {
             int C = this.C, nc = Segment.Count;
-            // Where each segment WANTS to live, over (kind × cluster) jointly:
-            // access logit × capacity, restricted to the densities that segment
-            // can occupy, normalized so each segment's shares sum to 1 over the
-            // whole feasible market. See SegmentKindShare's doc for why the
-            // joint normalization and the capacity weight are both required.
             if (SegmentKindShare.Length != nc)
             {
                 SegmentKindShare = new double[nc][][];
-                for (int s = 0; s < nc; s++)
-                    SegmentKindShare[s] = new double[2][];
+                for (int s = 0; s < nc; s++) SegmentKindShare[s] = new double[2][];
             }
             for (int s = 0; s < nc; s++)
-            {
-                var seg = Segment.All[s];
-                double tot = 0;
                 for (int k = 0; k < 2; k++)
                 {
                     if (SegmentKindShare[s][k] == null || SegmentKindShare[s][k].Length != C)
                         SegmentKindShare[s][k] = new double[C];
-                    var row = SegmentKindShare[s][k];
-                    // Density appeal deliberately does NOT weight the share:
-                    // it lives on the WTP leg of ResidentialBidPerUnit only.
-                    // With the joint (kind × cluster) normalization, an appeal
-                    // weight here renormalizes the discounted high-density mass
-                    // INTO the low-density rows — the apartment haircut becomes
-                    // a house subsidy and the calibrated discount applies twice
-                    // (adversarial review, measured A/B: low bids +40% from the
-                    // renormalization alone).
+                    else Array.Clear(SegmentKindShare[s][k], 0, C);
+                }
+
+            // Systematic part of the location term, shared by everyone of a
+            // segment because geography and the segment's weighting of it are
+            // shared; what differs per household is tolerance, affordability
+            // and taste.
+            var sizeTerm = new double[2][];
+            for (int k = 0; k < 2; k++)
+            {
+                sizeTerm[k] = new double[C];
+                for (int c = 0; c < C; c++)
+                {
+                    double attract = HousingCapacity[k][c]
+                                     * (OccupancyFloor + (1 - OccupancyFloor) * FillEma[k][c]);
+                    sizeTerm[k][c] = attract > 1e-9 ? Math.Log(attract) : -50;
+                }
+            }
+
+            var counts = new double[nc];
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0) continue;
+                int s = h.Segment;
+                var seg = Segment.All[s];
+                double income = Math.Max(1e-6, HouseholdIncomeEstimate(h, seg, p));
+                // Where this household currently lives.
+                int homeC = h.HomeParcel >= 0 ? w.Parcels[h.HomeParcel].Cluster : -1;
+                int homeK = h.HomeParcel >= 0
+                    ? (w.Parcels[h.HomeParcel].Use == ZoneKind.ResidentialHigh ? 1 : 0) : -1;
+                // Moving cost expressed in the same units as the taste shock
+                // (Gumbel, σ = π/√6 ≈ 1.28), scaled by this household's own
+                // draw. Written as MovingCostDraw/budget it divided a lump-sum
+                // cost by a per-tick flow and came out at 1–40 against σ = 1.28,
+                // which pinned every tenant to its home: the occupancy channel
+                // then moved a submarket's demand by 9% where the old segment
+                // logit moved it by 60%, and the price stopped responding to
+                // vacancy at all (measured).
+                double stayBonus = p.MoveInertia
+                                   * (h.MovingCostDraw / Math.Max(1e-6, p.MovingCostMean));
+
+                // Two bids, both discrete acts by this one household.
+                //
+                //   RENEWAL — a sitting tenant is demand for its own unit. It
+                //   will pay to stay rather than be homeless, whatever it would
+                //   prefer. Counting only first choices lost this: at cluster
+                //   20, 14 households lived in 14 units and only 9 named it, so
+                //   a fully-let submarket read as excess supply and priced at
+                //   its poorest bidder (measured).
+                //
+                //   SHOPPING — it also bids on the one place it would rather
+                //   be, if any place beats home by more than its own moving
+                //   cost. That bid is real: it is what a landlord there sees in
+                //   the queue, and it is why a desirable submarket is
+                //   over-subscribed and clears above its own sitting tenants.
+                //
+                // Over-subscription is therefore endogenous — mass is the
+                // population plus however many households are actually restless
+                // — rather than a search-breadth knob.
+                counts[s] += 1;                       // households, not bids
+                if (homeC >= 0) SegmentKindShare[s][homeK][homeC] += 1;
+
+                double homeU = double.NegativeInfinity;
+                double bestU = double.NegativeInfinity; int bestK = 0, bestC = -1;
+                for (int k = 0; k < 2; k++)
+                {
+                    double appealTerm = Math.Log(Math.Max(1e-6, h.DensityAppeal(k == 1 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow)));
                     for (int c = 0; c < C; c++)
                     {
-                        // Fill-weighted capacity: demand follows housing that is
-                        // ACTUALLY being taken up, so a submarket sitting vacant
-                        // sheds estimated demand and its clearing price falls —
-                        // the occupancy channel. Damped by the EMA and floored,
-                        // and the loop is negative (dear → vacant → cheaper →
-                        // refills), so it settles rather than spirals.
-                        double fill = FillEma[k][c];
-                        double attract = HousingCapacity[k][c]
-                                         * (OccupancyFloor + (1 - OccupancyFloor) * fill);
-                        row[c] = Math.Exp(AccessValue[s][c] / 1.5) * attract;
-                        tot += row[c];
+                        if (sizeTerm[k][c] <= -49) continue;      // nothing there to want
+                        // Own affordability against the price posted last
+                        // refresh. Rent comes out of income before anything
+                        // else, so what is left to live on is (income − rent),
+                        // and its log is this household's own consumption
+                        // value: mildly negative while rent is a small share of
+                        // the paycheque, steeply negative as it eats it, and a
+                        // place whose rent exceeds this household's income is
+                        // not a place it can live at all. That curvature is
+                        // what sorts households across price levels; a flat
+                        // −λ·price/budget penalty could not.
+                        double price = PostedPrice.Length == 2 && PostedPrice[k].Length > c ? PostedPrice[k][c] : 0;
+                        bool home = k == homeK && c == homeC;
+                        double left = 1 - price / income;
+                        double afford;
+                        if (left <= 0.02) { if (!home) continue; afford = -50; }
+                        else afford = p.ConsumptionWeight * Math.Log(left);
+                        double u = AccessValue[s][c] / 1.5 + sizeTerm[k][c] + appealTerm + afford;
+                        // This household's own permanent taste for this exact
+                        // place (Gumbel via the inverse-CDF of a stable hash).
+                        double e = SplitMix64.Hash01((ulong)h.Id * 1000003UL + (ulong)k * 7919UL + (ulong)c * 31UL + 5);
+                        u += -Math.Log(-Math.Log(Math.Min(1 - 1e-12, Math.Max(1e-12, e))));
+                        if (home) { homeU = u + stayBonus; continue; }
+                        if (u > bestU) { bestU = u; bestK = k; bestC = c; }
                     }
                 }
-                if (tot > 1e-12)
-                    for (int k = 0; k < 2; k++)
-                    {
-                        var row = SegmentKindShare[s][k];
-                        for (int c = 0; c < C; c++) row[c] /= tot;
-                    }
+                // Unhoused: homeU is −∞, so its best place always wins and it
+                // bids there. Housed: it bids away only where home loses.
+                if (bestC >= 0 && bestU > homeU) SegmentKindShare[s][bestK][bestC] += 1;
+            }
+
+            // Per HOUSEHOLD, not per bid: segmentPresence downstream is a
+            // headcount, so the share must be "bids per head of this segment".
+            // Normalizing by bids would divide the over-subscription straight
+            // back out and leave every submarket at demand ≈ occupancy — the
+            // degenerate case where no price can exceed the sitting tenants'.
+            for (int s = 0; s < nc; s++)
+            {
+                if (counts[s] <= 0) continue;
+                for (int k = 0; k < 2; k++)
+                {
+                    var row = SegmentKindShare[s][k];
+                    for (int c = 0; c < C; c++) row[c] /= counts[s];
+                }
             }
         }
+
+        /// <summary>[0=Low,1=High][cluster] the clearing price posted at the
+        /// last refresh — what households read when judging affordability, so
+        /// the market adjusts by tâtonnement rather than by a formula.</summary>
+        public double[][] PostedPrice = Array.Empty<double[]>();
 
         /// <summary>Phantom entrant (design §4.2): expected spending capture of a
         /// hypothetical new commercial firm of given mass at cluster c, inserted
