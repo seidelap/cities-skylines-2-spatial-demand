@@ -409,6 +409,33 @@ namespace CS2Econ.Core
         /// sitting tenants are unmovable and no submarket's price responds to
         /// anything.</summary>
         public double MoveInertia = 1.5;
+
+        // ---- housing assignment market (HousingAuction) ---------------------
+        /// <summary>How many (density, cluster) pairs a household carries into
+        /// the auction, ranked price-free. Bounded from below by the outside
+        /// option: a place worth less than leaving the city is never listed.</summary>
+        public int AuctionShortlist = 12;
+        /// <summary>Idiosyncratic taste for a specific place, as a fraction of
+        /// the household's own housing budget (Gumbel, σ ≈ 1.28, so this is
+        /// roughly the ± swing at one standard deviation).</summary>
+        public double AuctionTasteScale = 0.15;
+        /// <summary>Bid increment. Every eviction lifts a submarket's admitted
+        /// price by at least this, which is what makes the ascent finite; the
+        /// result is an ε-equilibrium (nobody envies another's place by more
+        /// than ε).</summary>
+        public double AuctionEpsilon = 0.002;
+        /// <summary>Bids per household before the solve gives up and reports
+        /// Converged = false. A backstop, not a target: a warm market settles in
+        /// a small multiple of one bid each.</summary>
+        public int AuctionBidBudget = 40;
+        /// <summary>Surplus from leaving the city, in the same money as a rent.
+        /// Zero means "a home is worth having if it beats its own reserve
+        /// price"; raising it makes the city pickier and emigration easier.</summary>
+        public double OutsideOption = 0.0;
+        /// <summary>Ticks a household spreads its moving cost over when it
+        /// values staying put. Turns a lump into a flow so it is commensurate
+        /// with a rent.</summary>
+        public int MoveAmortTicks = 60;
         /// <summary>How much a household favours the shop it already uses, in
         /// the units of its shop taste shock (Gumbel, σ ≈ 1.28). Switching
         /// friction: people go back to their usual shop unless another is
@@ -571,5 +598,12 @@ namespace CS2Econ.Core
         /// clearing-price check, and did so before this branch), 5/8 with it
         /// on (seeds 0 and 5 additionally fail Weber).</summary>
         public bool StoreLevelSpending = false;
+        /// <summary>Solve housing as ONE assignment market (HousingAuction):
+        /// prices and who-lives-where come out of the same ascending auction,
+        /// instead of a demand curve inverted for the price and a
+        /// first-come-first-served queue for the keys. See HousingAuction for
+        /// why the two-mechanism version could let the highest bidder lose a
+        /// unit to whoever had a lower household id.</summary>
+        public bool HousingAuction = false;
     }
 }

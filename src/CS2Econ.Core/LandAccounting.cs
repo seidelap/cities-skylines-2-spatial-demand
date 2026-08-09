@@ -124,8 +124,10 @@ namespace CS2Econ.Core
 
         public static double ResidentialBidPerUnit(
             AccessState acc, int cluster, ZoneKind kind, int level,
-            double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0)
-            => ResidentialBidPerUnit(acc, cluster, kind, level, segmentPresence, p, out _, addUnits, minSupply);
+            double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0,
+            bool realized = false)
+            => ResidentialBidPerUnit(acc, cluster, kind, level, segmentPresence, p, out _,
+                                     addUnits, minSupply, realized);
 
         /// <summary>Overload exposing the expected fill ratio at the returned
         /// price — 1.0 in the cleared regime (the stock fills), below 1.0 in
@@ -135,10 +137,56 @@ namespace CS2Econ.Core
         public static double ResidentialBidPerUnit(
             AccessState acc, int cluster, ZoneKind kind, int level,
             double[] segmentPresence, EconParams p, out double fillRatio,
-            double addUnits = 0, double minSupply = 0)
+            double addUnits = 0, double minSupply = 0, bool realized = false)
         {
             fillRatio = 1.0;
             System.Threading.Interlocked.Increment(ref AuditTotalPriced);
+
+            // The assignment market and this curve inversion answer DIFFERENT
+            // questions, and `realized` is the caller saying which one it wants.
+            //
+            //   realized: true  → what this stock actually lets for right now.
+            //                     That is the auction's posted price: the bid of
+            //                     the household actually turned away at that
+            //                     door. Assessment and the posted price want
+            //                     this, because a land value is capitalized from
+            //                     rent that is really collected.
+            //   realized: false → the FORECAST, which is all this curve ever
+            //                     was. Construction asking what a building it
+            //                     has not started would earn, or a check asking
+            //                     what happens if the population doubles, are
+            //                     questions about a world that does not exist,
+            //                     and no realized market can answer them.
+            //
+            // Overlays.cs compares the two on purpose — that is the honesty
+            // check on the forecast, and it only means anything while they stay
+            // separate.
+            var auction = realized ? acc.Auction : null;
+            if (auction != null && auction.C == acc.C)
+            {
+                int sub = auction.SubOf(cluster, kind, level);
+                if (sub >= 0)
+                {
+                    bool standing = auction.Capacity[sub] > 0
+                                    && addUnits <= 0 && minSupply <= auction.Capacity[sub];
+                    if (standing)
+                    {
+                        fillRatio = MathUtil.Clamp(
+                            auction.Filled[sub] / (double)auction.Capacity[sub], 0, 1);
+                        return auction.Price[sub];
+                    }
+                    // Units that are not standing — a renovation to a level this
+                    // cluster has none of, or a building that does not exist
+                    // yet — let at what the QUEUE would pay: the n-th best bid
+                    // waiting behind the door, from households that do not
+                    // already hold a slot there.
+                    int want = (int)Math.Ceiling(Math.Max(1, Math.Max(addUnits, minSupply)));
+                    double marginal = auction.ShadowAt(sub, want);
+                    fillRatio = MathUtil.Clamp(auction.ShadowCount[sub] / (double)want, 0, 1);
+                    return marginal;
+                }
+            }
+
             bool highDensity = kind == ZoneKind.ResidentialHigh;
             int ki = highDensity ? 1 : 0;
             double quality = p.Quality(level) / p.Quality(1);
@@ -390,9 +438,11 @@ namespace CS2Econ.Core
 
         public static double BidPerUnit(
             AccessState acc, IPriceContext prices, int cluster, ZoneKind use, int level,
-            double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0)
+            double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0,
+            bool realized = false)
             => use == ZoneKind.ResidentialLow || use == ZoneKind.ResidentialHigh
-                ? ResidentialBidPerUnit(acc, cluster, use, level, segmentPresence, p, addUnits, minSupply)
+                ? ResidentialBidPerUnit(acc, cluster, use, level, segmentPresence, p,
+                                        addUnits, minSupply, realized)
                 : FirmBidPerSlot(acc, prices, cluster, use, level, p);
 
         /// <summary>Permitted configurations for a parcel: its zoned kind at any
@@ -426,7 +476,7 @@ namespace CS2Econ.Core
                 // (it is Built); minSupply only guards the one refresh window
                 // where a just-completed building has not been counted yet.
                 double bidCur = BidPerUnit(acc, prices, c, parcel.Use, parcel.Level, segmentPresence, p,
-                                           addUnits: 0, minSupply: parcel.Units)
+                                           addUnits: 0, minSupply: parcel.Units, realized: true)
                                 * p.CondFactor(parcel.Condition);
                 currentResidual = (bidCur - SPerUnit(parcel.Level, parcel.Condition, p)) * parcel.Units;
             }
@@ -451,8 +501,10 @@ namespace CS2Econ.Core
                 bool alreadyInStock = parcel.State == ParcelState.Built
                                       && zonedUse == parcel.Use && units == parcel.Units;
                 double bid = alreadyInStock
-                    ? BidPerUnit(acc, prices, c, zonedUse, lvl, segmentPresence, p, addUnits: 0, minSupply: units)
-                    : BidPerUnit(acc, prices, c, zonedUse, lvl, segmentPresence, p, addUnits: units);
+                    ? BidPerUnit(acc, prices, c, zonedUse, lvl, segmentPresence, p,
+                                 addUnits: 0, minSupply: units, realized: true)
+                    : BidPerUnit(acc, prices, c, zonedUse, lvl, segmentPresence, p,
+                                 addUnits: units, realized: true);
                 double flow = (bid - SPerUnit(lvl, 1.0, p)) * units;
                 if (flow <= 0) continue;
 

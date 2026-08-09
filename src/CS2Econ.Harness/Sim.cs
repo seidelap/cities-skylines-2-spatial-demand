@@ -28,10 +28,13 @@ namespace CS2Econ.Harness
         /// FeatureFlags.StoreLevelSpending for every sim this process builds, so
         /// the experimental path can be measured without editing a default.</summary>
         public static bool ForceStoreLevelSpending;
+        /// <summary>Set by `--auction`: solve housing as one assignment market.</summary>
+        public static bool ForceHousingAuction;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
             if (ForceStoreLevelSpending) flags.StoreLevelSpending = true;
+            if (ForceHousingAuction) flags.HousingAuction = true;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);

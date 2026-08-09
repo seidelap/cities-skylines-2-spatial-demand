@@ -409,6 +409,97 @@ namespace CS2Econ.Harness
             return 0;
         }
 
+        /// <summary>`harness auctionprobe` — does the assignment market clear,
+        /// and does it clear at a sane price? Reports the solve's own telemetry
+        /// (bids, evictions, whether it reached an ε-equilibrium), the price
+        /// distribution, and the two equilibrium conditions that matter:
+        /// capacity is never oversubscribed, and no household would rather have
+        /// somebody else's place at the posted price (no envy).</summary>
+        public static int AuctionProbe(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+            sim.Run(ticks);
+            var w = sim.W; var a = sim.Engine.Auction; var acc = sim.Engine.Access;
+
+            int pop = 0, housed = 0;
+            foreach (var h in w.Households) { if (h.ExitedTick < 0) { pop++; if (h.HomeParcel >= 0) housed++; } }
+            double stock = 0;
+            for (int s = 0; s < a.Capacity.Length; s++) stock += a.Capacity[s];
+
+            Console.WriteLine($"solve: bids={a.Bids} evictions={a.Evictions} converged={a.Converged} "
+                + $"unassigned={a.Unassigned}");
+            Console.WriteLine($"world: pop={pop} housed={housed} lettable units={stock:F0} "
+                + $"({housed / Math.Max(1.0, stock):P0} of stock)");
+
+            // Price distribution over submarkets that hold stock.
+            var live = new List<int>();
+            for (int s = 0; s < a.Capacity.Length; s++) if (a.Capacity[s] > 0) live.Add(s);
+            var px = live.Select(s => a.Price[s]).OrderBy(x => x).ToList();
+            if (px.Count > 0)
+            {
+                double Pc(double q) => px[Math.Min(px.Count - 1, (int)(q * px.Count))];
+                Console.WriteLine($"price: {live.Count} live submarkets  p10={Pc(0.1):F2} p50={Pc(0.5):F2} "
+                    + $"p90={Pc(0.9):F2} ({Pc(0.9) / Math.Max(1e-9, Pc(0.1)):F1}×)  "
+                    + $"at reserve: {live.Count(s => a.Price[s] <= a.Reserve[s] + 1e-9)}");
+            }
+
+            // (1) capacity respected, (2) posted ≤ admitted (the marginal tenant
+            // keeps surplus), (3) fill.
+            int over = 0, inverted = 0; double filledSum = 0;
+            foreach (int s in live)
+            {
+                if (a.Filled[s] > a.Capacity[s]) over++;
+                if (a.Price[s] > a.Admitted[s] + 1e-9) inverted++;
+                filledSum += a.Filled[s];
+            }
+            Console.WriteLine($"invariants: oversubscribed={over} posted>admitted={inverted} "
+                + $"occupancy={filledSum / Math.Max(1, stock):P0}");
+
+            // (4) NO ENVY. At the posted prices, no household may strictly
+            // prefer another submarket it could have had. This is THE property
+            // that makes the outcome a competitive equilibrium, and it is the
+            // one the old two-mechanism model could not state, let alone hold.
+            int envy = 0, checkedHh = 0; double worstEnvy = 0;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick < 0 && h.HomeParcel >= 0) checkedHh++;
+            }
+            (envy, worstEnvy) = Debugging.EnvyCount(w, a, p);
+            Console.WriteLine($"no-envy: {envy} of {checkedHh} housed households would rather have "
+                + $"another submarket at its posted price (worst gain {worstEnvy:F3}, ε={p.AuctionEpsilon})");
+            return 0;
+        }
+
+        /// <summary>How many housed households would strictly gain by taking a
+        /// different submarket at ITS posted price, and by how much. Shared with
+        /// the acceptance check so both measure exactly the same thing.</summary>
+        public static (int count, double worst) EnvyCount(WorldState w, HousingAuction a, EconParams p)
+        {
+            int envy = 0; double worst = 0;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
+                if ((uint)h.Id >= (uint)a.Assignment.Length) continue;
+                int mine = a.Assignment[h.Id];
+                if (mine < 0) continue;
+                double myS = a.ValueOf(h.Id, mine, p) - a.Price[mine];
+                double best = myS; int bestSub = mine;
+                for (int q = 0; q < a.ShortlistCount(h.Id); q++)
+                    for (int l = 1; l <= HousingAuction.Levels; l++)
+                    {
+                        int sub = HousingAuction.Sub(a.ShortlistAt(h.Id, q), l, a.C);
+                        if (a.Capacity[sub] <= 0) continue;
+                        double s2 = a.ValueOf(h.Id, sub, p) - a.Price[sub];
+                        if (s2 > best) { best = s2; bestSub = sub; }
+                    }
+                if (bestSub != mine && best > myS + 1e-9)
+                { envy++; worst = Math.Max(worst, best - myS); }
+            }
+            return (envy, worst);
+        }
+
         public static int VacProbe(ulong seed, int ticks)
         {
             var p = new EconParams();

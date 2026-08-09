@@ -213,6 +213,11 @@ namespace CS2Econ.Core
         // Office agglomeration A(p)^γ
         public double[] OfficeAgglomMult = Array.Empty<double>();
 
+        /// <summary>The solved housing assignment market, when
+        /// FeatureFlags.HousingAuction is on; null otherwise. Set by the engine
+        /// after Refresh, read by LandAccounting for realized rents.</summary>
+        public HousingAuction? Auction;
+
         public void EnsureWeights(IAccessCosts costs, EconParams p)
         {
             if (_costVersion == costs.Version && C == costs.ClusterCount) return;
@@ -514,7 +519,7 @@ namespace CS2Econ.Core
                 for (int c = 0; c < C; c++)
                 {
                     double post = LandAccounting.ResidentialBidPerUnit(
-                        this, c, kind, 2, presenceScratch, p);
+                        this, c, kind, 2, presenceScratch, p, realized: true);
                     PostedPrice[k][c] = firstPost
                         ? post : MathUtil.Ema(PostedPrice[k][c], post, p.PostedPriceAlpha);
                 }

@@ -154,6 +154,7 @@ namespace CS2Econ.Core
 
             AssignWorkplaces();
             if (Flags.StoreLevelSpending) ChooseShops();
+            if (Flags.HousingAuction) SolveHousingMarket();
 
             // Seekers = unhoused + sheltered now, EMA-smoothed (expected near-term demand).
             var seekersNow = new double[Segment.Count];
@@ -220,6 +221,81 @@ namespace CS2Econ.Core
         /// payable to its own members only — and it is read straight off the
         /// game in-mod (Game.Citizens.Worker.m_Workplace), which the adapter
         /// was already reading and throwing away.</summary>
+        public readonly HousingAuction Auction = new HousingAuction();
+
+        /// <summary>Clear the housing market as one assignment problem, then
+        /// make the assignment true on the ground.
+        ///
+        /// The auction hands back a submarket per household. Turning that into
+        /// parcels has one rule that matters: a household assigned to the
+        /// submarket it ALREADY lives in does not move. Submarket granularity is
+        /// (density, cluster, level), and units inside one are interchangeable,
+        /// so re-winning your own submarket is renewing your own lease — not a
+        /// move to an identical flat next door. Without that the market would
+        /// report thousands of relocations a refresh that no household actually
+        /// experiences, and every one of them would wash through the vacancy
+        /// kernel and the turnover EMA.</summary>
+        private void SolveHousingMarket()
+        {
+            Access.Auction = Auction;
+            Auction.Solve(W, Access, P);
+
+            // Who has to leave the unit they are in: assigned somewhere else, or
+            // assigned nowhere. Vacate first, all of them, so the units they free
+            // are available to the households moving in.
+            Allocation.RebuildVacancies(W);
+            var movers = new List<int>();
+            foreach (var h in W.Households)
+            {
+                if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
+                if ((uint)h.Id >= (uint)Auction.Assignment.Length) continue;
+                int want = Auction.Assignment[h.Id];
+                var pl = W.Parcels[h.HomeParcel];
+                int have = Auction.SubOf(pl.Cluster, pl.Use, pl.Level);
+                if (want == have && have >= 0) continue;         // renewed in place
+                Allocation.Vacate(W, h);
+                if (want >= 0) movers.Add(h.Id);
+                // Assigned nowhere: it is unhoused now, and the insolvency
+                // pipeline takes it from there (shelter, then emigration). The
+                // auction does not evict anyone from the city directly — it only
+                // says no submarket beat their outside option.
+            }
+            // Unhoused households the auction placed also move in.
+            foreach (var h in W.Households)
+                if (h.ExitedTick < 0 && h.HomeParcel < 0
+                    && (uint)h.Id < (uint)Auction.Assignment.Length
+                    && Auction.Assignment[h.Id] >= 0)
+                    movers.Add(h.Id);
+
+            Allocation.RebuildVacancies(W);
+            foreach (int hid in movers)
+            {
+                var h = W.Households[hid];
+                if (h.HomeParcel >= 0) continue;
+                int sub = Auction.Assignment[hid];
+                int target = FirstVacantIn(sub);
+                // The auction sized every submarket by its lettable units, so a
+                // won slot has a unit behind it. It can still come up empty when
+                // stock changed between the solve and here (a completion, a
+                // scrape); the household simply stays unhoused this refresh.
+                if (target >= 0) Allocation.MoveIn(W, h, target, P);
+                else Auction.Assignment[hid] = -1;
+            }
+        }
+
+        private int FirstVacantIn(int sub)
+        {
+            int kc = HousingAuction.KcOf(sub), lvl = HousingAuction.LevelOf(sub);
+            int k = kc / Access.C, c = kc - k * Access.C;
+            var kind = k == 1 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
+            foreach (int pi in Allocation.VacantByCluster[c])
+            {
+                var pl = W.Parcels[pi];
+                if (pl.Use == kind && pl.Level == lvl && !pl.Warehousing && pl.Vacant > 0) return pi;
+            }
+            return -1;
+        }
+
         /// <summary>Every household picks the shop it uses. It ranks the real
         /// commercial firms on the map by how easy each is to reach from its own
         /// home and how much shop is there (slots × condition × level quality),

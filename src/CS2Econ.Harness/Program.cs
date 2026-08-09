@@ -19,6 +19,7 @@ namespace CS2Econ.Harness
             for (int i = 1; i < args.Length; i++)
             {
                 if (args[i] == "--store-level") { Sim.ForceStoreLevelSpending = true; continue; }
+                if (args[i] == "--auction") { Sim.ForceHousingAuction = true; continue; }
                 if (i + 1 >= args.Length) continue;
                 if (args[i] == "--seed") seed = ulong.Parse(args[i + 1]);
                 if (args[i] == "--only") only = args[i + 1];
@@ -91,6 +92,13 @@ namespace CS2Econ.Harness
                     for (int i = 1; i + 1 < args.Length; i += 2)
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.PriceProbe(seed, ticks);
+                }
+                case "auctionprobe":
+                {
+                    int ticks = 300;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                    return Debugging.AuctionProbe(seed, ticks);
                 }
                 case "levelprobe":
                 {
