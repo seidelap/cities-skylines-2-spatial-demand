@@ -148,6 +148,12 @@ namespace CS2Econ.Core
             => kind == ZoneKind.ResidentialHigh
                 ? CS2Econ.Core.Segment.DensityFloor + (1 - CS2Econ.Core.Segment.DensityFloor) * MathUtil.Clamp(DensityTol, 0, 1)
                 : 1.0;
+        /// <summary>The commercial firm this household actually shops at, or −1
+        /// for the out-of-town option. Chosen by the household itself at refresh
+        /// cadence and kept between refreshes: people have a usual shop and go
+        /// back to it until something changes. Its spending is the whole of that
+        /// firm's takings from it — no pooling, no pro-rata.</summary>
+        public int ShopFirm = -1;
         public double ChargedAssessment; // per-tick S+tax+wedge currently being charged
         public double MovingCostDraw;    // within-segment heterogeneity draw (§4.4)
         public long TenureStart;

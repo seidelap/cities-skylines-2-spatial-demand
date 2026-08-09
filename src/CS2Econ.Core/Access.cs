@@ -234,7 +234,7 @@ namespace CS2Econ.Core
 
         /// <summary>Full Tier B refresh: masses → labor balancing → capture →
         /// composite access. Runs at refresh cadence, not per tick.</summary>
-        public void Refresh(WorldState w, IAccessCosts costs, EconParams p)
+        public void Refresh(WorldState w, IAccessCosts costs, EconParams p, FeatureFlags? flags = null)
         {
             EnsureWeights(costs, p);
             int nc = Segment.Count;
@@ -273,19 +273,61 @@ namespace CS2Econ.Core
 
             foreach (var h in w.Households)
             {
-                if (h.HomeParcel < 0) continue;
                 var seg = Segment.All[h.Segment];
-                int c = w.Parcels[h.HomeParcel].Cluster;
-                // Labor SUPPLY is per-adult participation × adults — the same
-                // quantity the household's wage income is paid on, so the
-                // matched-jobs wage bill charged to firms and the wages paid to
-                // households stay in balance (paying per-earner while supplying
-                // one worker per household double-charged every firm and killed
-                // all industry — measured).
-                if (seg.Participation > 0 && seg.Adults > 0)
-                    WorkersByClass[(int)seg.Labor][c] += seg.Participation * seg.Adults;
+                if (h.HomeParcel >= 0)
+                {
+                    int c = w.Parcels[h.HomeParcel].Cluster;
+                    // Labor SUPPLY is per-adult participation × adults — the same
+                    // quantity the household's wage income is paid on, so the
+                    // matched-jobs wage bill charged to firms and the wages paid to
+                    // households stay in balance (paying per-earner while supplying
+                    // one worker per household double-charged every firm and killed
+                    // all industry — measured).
+                    if (seg.Participation > 0 && seg.Adults > 0)
+                        WorkersByClass[(int)seg.Labor][c] += seg.Participation * seg.Adults;
+                }
+                // SpendMass counts SETTLED residents only, while ChooseShops
+                // lets the unhoused spend too. That asymmetry is deliberate.
+                // SpendMass is what a developer capitalizes into a building that
+                // will stand for decades, and the shelter population is the most
+                // volatile thing on the map — it empties whenever arrivals stop
+                // being absorbed. Counting it in the entry field was tried:
+                // shops chase job centres on a catchment that evaporates, and
+                // commercial deaths went 187 → 217 over 2000 ticks while three
+                // more seeds fell out of the suite (measured). Unhoused
+                // spending is therefore upside a shop may earn, never a promise
+                // the entry decision is made on.
+                if (h.HomeParcel < 0) continue;
+                int origin = w.Parcels[h.HomeParcel].Cluster;
+                if ((uint)origin >= (uint)C) continue;
+                // Rent comes out first. SpendMass used gross income, which was
+                // near enough while the median clearing price was 0.19 against a
+                // median income of 10 — under 2% of the paycheque. Once the
+                // housing market cleared properly that gap became ~40% of every
+                // household's income, so the field promised developers half
+                // again as much retail spending as households can actually do,
+                // and they built shops that could not be fed. Housing is
+                // deducted at the household's OWN rent share — its personal
+                // attribute — not at its charged assessment, so this stays clear
+                // of the §3 guard: no realized rent enters the demand field.
+                // Rent comes out first — but only on the store-level path.
+                // SpendMass using GROSS income was near enough while the median
+                // clearing price was 0.19 against a median income of 10, under
+                // 2% of the paycheque. Once the housing market cleared properly
+                // that gap became ~40% of income, so the field promised
+                // developers half again as much retail spending as households
+                // can actually do and they built shops that could not be fed:
+                // deducting it took commercial deaths from 217 to 94 over 2000
+                // ticks. It is tied to the flag because on the POOLED path the
+                // same deduction is a pure ~30% cut to the entry signal that the
+                // pooled calibration was set against, and it costs three seeds
+                // in the suite. Housing is deducted at the household's OWN rent
+                // share — a personal attribute — not at its charged assessment,
+                // so no realized rent enters the demand field (§3 guard).
                 double income = HouseholdIncomeEstimate(h, seg, p);
-                SpendMass[c] += income * p.BaseConsumptionShare;
+                double afterHousing = flags != null && flags.StoreLevelSpending
+                    ? 1 - MathUtil.Clamp(h.RentShare, 0, 0.9) : 1.0;
+                SpendMass[origin] += income * afterHousing * p.BaseConsumptionShare;
             }
 
             // ---- labor market: one balanced matching per labor class --------

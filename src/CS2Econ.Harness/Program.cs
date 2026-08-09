@@ -16,8 +16,10 @@ namespace CS2Econ.Harness
             string cmd = args.Length > 0 ? args[0] : "all";
             ulong seed = 20260806;
             string? only = null;
-            for (int i = 1; i + 1 < args.Length; i += 2)
+            for (int i = 1; i < args.Length; i++)
             {
+                if (args[i] == "--store-level") { Sim.ForceStoreLevelSpending = true; continue; }
+                if (i + 1 >= args.Length) continue;
                 if (args[i] == "--seed") seed = ulong.Parse(args[i + 1]);
                 if (args[i] == "--only") only = args[i + 1];
             }

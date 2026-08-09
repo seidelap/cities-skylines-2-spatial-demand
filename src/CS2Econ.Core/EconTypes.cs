@@ -409,6 +409,11 @@ namespace CS2Econ.Core
         /// sitting tenants are unmovable and no submarket's price responds to
         /// anything.</summary>
         public double MoveInertia = 1.5;
+        /// <summary>How much a household favours the shop it already uses, in
+        /// the units of its shop taste shock (Gumbel, σ ≈ 1.28). Switching
+        /// friction: people go back to their usual shop unless another is
+        /// clearly better.</summary>
+        public double ShopLoyalty = 1.0;
         /// <summary>Smoothing on the posted price households read when judging
         /// affordability. The price they react to is the price their reaction
         /// sets, so the loop needs damping or it rings.</summary>
@@ -522,5 +527,49 @@ namespace CS2Econ.Core
         public bool TierD_Trade = true;          // finite-depth exits, parity bands
         public bool ConstructionRewire = true;   // residual-driven site selection
         public bool ShadowAccountingOnly = false;// stage 3: assess + log, levy nothing
+        /// <summary>Route each household's consumption to the ONE shop it chose,
+        /// instead of pooling all consumption citywide and handing it back out
+        /// pro-rata to (slots × cluster capture strength).
+        ///
+        /// OFF by default, and the reason is measured, not cautious. The
+        /// mechanism works and does what it says: a shop's takings become its own
+        /// customers' money, so revenue-per-slot stops being identical across the
+        /// sector (it varied by 1.8e-10 under the pool) and a shop with no
+        /// catchment dies. What follows it does not hold up yet. The commercial
+        /// sector settles ~30% smaller (108 → 76 firms) with commercial parcel
+        /// vacancy at 54% against 34%, because a discrete market kills the
+        /// marginal shops the pool was quietly subsidising and construction keeps
+        /// rebuilding them. Goods demand shrinks with it: the Weber invariant
+        /// (extraction follows geology, recipes follow input sourcing) fails on
+        /// 2 of 8 seeds — not on the extraction leg, which stays at 100%, but on
+        /// the industrial sector thinning to 3 firms or to a single output.
+        ///
+        /// Tried and rejected as fixes, all measured over 8 seeds and a 2000-tick
+        /// firm census: shop loyalty at 0/0.4/1.0 (churn unchanged); staggering
+        /// each household's shop review so catchments drift rather than step
+        /// (deaths 217 → 680 — new shops starve before they fill); counting the
+        /// unhoused in the entry field for consistency with the realized market
+        /// (deaths 187 → 217, three more seeds lost — the shelter population is
+        /// too volatile to capitalize a building against); and larger firm cash
+        /// buffers (working capital 20 → 45 ticks, dividend rate 0.02 → 0.008 —
+        /// deaths fall but the seed that matters does not recover).
+        ///
+        /// What DID work rides along with this flag: deducting housing from
+        /// SpendMass, which the new rent level made material (deaths 217 → 94).
+        /// It is tied here rather than made unconditional because on the pooled
+        /// path the same deduction is just a ~30% cut to an entry signal the
+        /// pooled calibration was set against, and it costs three seeds.
+        ///
+        /// The remaining gap is ENTRY. The phantom-entrant capture field still
+        /// describes a pooled market — it tells a developer it will earn its
+        /// proportional share of nearby spending — so developers keep building
+        /// shops the discrete market cannot feed. Closing that is the next step,
+        /// and it is what this flag is waiting on.
+        ///
+        /// Harness: `--store-level` on any command turns it on. Measured
+        /// verify over seeds 0–7: 7/8 with the flag off (seed 3 fails on the
+        /// clearing-price check, and did so before this branch), 5/8 with it
+        /// on (seeds 0 and 5 additionally fail Weber).</summary>
+        public bool StoreLevelSpending = false;
     }
 }

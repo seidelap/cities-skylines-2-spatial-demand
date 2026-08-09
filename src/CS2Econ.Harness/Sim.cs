@@ -24,8 +24,14 @@ namespace CS2Econ.Harness
 
         private int _lastStartedTotal;
 
+        /// <summary>Set by `--store-level` on any harness command: turns on
+        /// FeatureFlags.StoreLevelSpending for every sim this process builds, so
+        /// the experimental path can be measured without editing a default.</summary>
+        public static bool ForceStoreLevelSpending;
+
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
+            if (ForceStoreLevelSpending) flags.StoreLevelSpending = true;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);

@@ -92,7 +92,7 @@ namespace CS2Econ.Core
         private void RefreshTick()
         {
             W.RebuildIndices();
-            Access.Refresh(W, Costs, P);
+            Access.Refresh(W, Costs, P, Flags);
             Trade.Refresh(P);
 
             Array.Clear(SegmentPresence, 0, SegmentPresence.Length);
@@ -153,6 +153,7 @@ namespace CS2Econ.Core
             }
 
             AssignWorkplaces();
+            if (Flags.StoreLevelSpending) ChooseShops();
 
             // Seekers = unhoused + sheltered now, EMA-smoothed (expected near-term demand).
             var seekersNow = new double[Segment.Count];
@@ -219,6 +220,94 @@ namespace CS2Econ.Core
         /// payable to its own members only — and it is read straight off the
         /// game in-mod (Game.Citizens.Worker.m_Workplace), which the adapter
         /// was already reading and throwing away.</summary>
+        /// <summary>Every household picks the shop it uses. It ranks the real
+        /// commercial firms on the map by how easy each is to reach from its own
+        /// home and how much shop is there (slots × condition × level quality),
+        /// against the out-of-town option, and adds its own permanent taste for
+        /// each specific store; it goes to the best one. The choice is remade at
+        /// refresh cadence and kept in between, because people have a usual shop
+        /// and go back to it until something changes.
+        ///
+        /// This replaced a pool: every household's spending was summed citywide
+        /// and handed back out pro-rata to (slots × cluster capture strength), so
+        /// a household in one corner of the map funded a shop in the other and
+        /// every firm of a given size at a given cluster booked identical
+        /// takings — measured revenue-per-slot varied by 1.8e-10 across the whole
+        /// commercial sector, i.e. not at all. A shop's takings are now the
+        /// people who actually walk into it, so two identical shops in the same
+        /// cluster can have different fortunes, and a shop with no catchment
+        /// dies.
+        ///
+        /// The Layer-3 capture field (CaptureIncumbentPerMass) stays as it was:
+        /// that is the expectation a PROSPECTIVE entrant forms about a location
+        /// before it exists, which is legitimately an aggregate about a firm that
+        /// has no customers yet. Realized takings are these households.</summary>
+        private void ChooseShops()
+        {
+            // Candidate shops, with the mass each offers a shopper.
+            var idx = new List<int>(); var mass = new List<double>(); var cl = new List<int>();
+            for (int i = 0; i < W.Firms.Count; i++)
+            {
+                var f = W.Firms[i];
+                if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                var pl = W.Parcels[f.Parcel];
+                if ((uint)pl.Cluster >= (uint)Access.C) continue;
+                double m = f.JobSlots * Math.Max(0.2, pl.Condition) * P.Quality(pl.Level);
+                if (m <= 1e-9) continue;
+                idx.Add(i); mass.Add(m); cl.Add(pl.Cluster);
+            }
+            // The out-of-town option, on the same scale: a real alternative the
+            // household can always take, which is what makes leakage a CHOICE
+            // rather than a fixed fraction skimmed off the top.
+            double outU = Math.Log(Math.Max(1e-9,
+                Math.Exp(-P.ThetaShopping * P.OutsideShopMinutes) * P.OutsideShopMass));
+
+            foreach (var h in W.Households)
+            {
+                if (h.ExitedTick >= 0) { h.ShopFirm = -1; continue; }
+                // Shopping origin: home, or the workplace for a household that
+                // has not found housing yet. An unhoused household still eats,
+                // and it is in the city — sending it home-less straight to the
+                // outside option leaked its whole basket out of town. That was
+                // 19% of the population here, and it took the commercial sector
+                // from 107 firms to 70 with 61% of commercial parcels standing
+                // empty (measured). Where there is neither home nor job, it
+                // shops on size alone: it is somewhere, just nowhere we track.
+                int origin = h.HomeParcel >= 0 ? W.Parcels[h.HomeParcel].Cluster
+                           : h.WorkplaceParcel >= 0 ? W.Parcels[h.WorkplaceParcel].Cluster : -1;
+                if ((uint)origin >= (uint)Access.C) origin = -1;
+
+                double bestU = outU + Gumbel((ulong)h.Id * 2246822519UL + 7919UL);
+                int best = -1;
+                for (int j = 0; j < idx.Count; j++)
+                {
+                    double w = (origin >= 0 ? Access.WShop[origin, cl[j]] : 1.0) * mass[j];
+                    if (w <= 1e-12) continue;
+                    double u = Math.Log(w)
+                               + Gumbel((ulong)h.Id * 2246822519UL + (ulong)W.Firms[idx[j]].Id * 40503UL + 13UL);
+                    // You keep going to your usual shop unless another one is
+                    // clearly better. Without this every household re-shops from
+                    // scratch each refresh, so one new large store can take a
+                    // whole catchment at once and the incumbents it starves take
+                    // the goods market down with them — measured as extractors
+                    // mis-siting on 2 of 6 seeds through the price signal they
+                    // read at entry.
+                    if (idx[j] == h.ShopFirm) u += P.ShopLoyalty;
+                    if (u > bestU) { bestU = u; best = idx[j]; }
+                }
+                h.ShopFirm = best;
+            }
+        }
+
+        /// <summary>Gumbel(0,1) from a stable hash — the same inverse-CDF trick
+        /// the location choice uses, so a household's taste for a specific place
+        /// or shop never re-rolls.</summary>
+        private static double Gumbel(ulong key)
+        {
+            double e = SplitMix64.Hash01(key);
+            return -Math.Log(-Math.Log(Math.Min(1 - 1e-12, Math.Max(1e-12, e))));
+        }
+
         private void AssignWorkplaces()
         {
             foreach (var f in W.Firms) f.Members.Clear();
@@ -404,11 +493,16 @@ namespace CS2Econ.Core
 
         private void ConsumptionFlows()
         {
-            // Spending = share of income after taxes-and-housing; captured share
-            // goes to commercial firms (refresh-vintage capture shares, normalized
-            // for exact conservation), the rest leaks to the outside option.
+            // Spending = share of income after taxes-and-housing. Where it lands
+            // depends on FeatureFlags.StoreLevelSpending: at each household's own
+            // chosen shop, or pooled and handed back out pro-rata (see the flag).
             double totalCaptured = 0, totalLeaked = 0;
             double wOutside = Math.Exp(-P.ThetaShopping * P.OutsideShopMinutes) * P.OutsideShopMass;
+            bool perStore = Flags.StoreLevelSpending;
+            if (perStore)
+                foreach (var f in W.Firms)
+                    if (!f.Dead && f.Sector == ZoneKind.Commercial) f.RevenueThisTick = 0;
+
             foreach (var h in W.Households)
             {
                 if (h.ExitedTick >= 0) continue;
@@ -419,35 +513,57 @@ namespace CS2Econ.Core
                 double spend = Math.Min(h.Money, P.BaseConsumptionShare * disposable * cut);
                 if (spend <= 0) continue;
                 h.Money -= spend;
-                int c = h.HomeParcel >= 0 ? W.Parcels[h.HomeParcel].Cluster : 0;
-                double capShare = Access.IncumbentShopWeight.Length > c
-                    ? 1.0 - wOutside / Access.IncumbentShopWeight[c] : 0.5;
-                totalCaptured += spend * capShare;
-                totalLeaked += spend * (1 - capShare);
+
+                if (!perStore)
+                {
+                    int c = h.HomeParcel >= 0 ? W.Parcels[h.HomeParcel].Cluster : 0;
+                    double capShare = Access.IncumbentShopWeight.Length > c
+                        ? 1.0 - wOutside / Access.IncumbentShopWeight[c] : 0.5;
+                    totalCaptured += spend * capShare;
+                    totalLeaked += spend * (1 - capShare);
+                    continue;
+                }
+
+                // Its own shop takes the whole basket, or it goes out of town.
+                Firm? shop = null;
+                if ((uint)h.ShopFirm < (uint)W.Firms.Count)
+                {
+                    var cand = W.Firms[h.ShopFirm];
+                    if (!cand.Dead && cand.Sector == ZoneKind.Commercial && cand.Parcel >= 0) shop = cand;
+                    else h.ShopFirm = -1;      // it closed; re-picked next refresh
+                }
+                if (shop == null) { totalLeaked += spend; continue; }
+                shop.Money += spend;
+                shop.RevenueThisTick += spend;
+                totalCaptured += spend;
             }
-            // Distribute captured spending to commercial firms pro-rata to their
-            // capture strength (mass × per-mass capture at their cluster). With no
-            // commercial firm alive the "captured" share leaks outward too —
-            // credited money must land on real entities (scrutiny finding #5).
-            double weightSum = 0;
-            foreach (var f in W.Firms)
+
+            if (!perStore)
             {
-                if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
-                int c = W.Parcels[f.Parcel].Cluster;
-                weightSum += f.JobSlots * Access.CaptureIncumbentPerMass[c];
-            }
-            if (weightSum <= 1e-9) { totalLeaked += totalCaptured; totalCaptured = 0; }
-            W.Ledger.Transfer(Account.Households, Account.OutsideWorld, totalLeaked);
-            W.Ledger.Transfer(Account.Households, Account.Firms, totalCaptured);
-            if (weightSum > 1e-9)
+                // Pooled path: distribute captured spending to commercial firms
+                // pro-rata to their capture strength (mass × per-mass capture at
+                // their cluster). With no commercial firm alive the "captured"
+                // share leaks outward too — credited money must land on real
+                // entities (scrutiny finding #5).
+                double weightSum = 0;
                 foreach (var f in W.Firms)
                 {
                     if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
-                    int c = W.Parcels[f.Parcel].Cluster;
-                    double share = f.JobSlots * Access.CaptureIncumbentPerMass[c] / weightSum;
-                    f.Money += totalCaptured * share;
-                    f.RevenueThisTick = totalCaptured * share;
+                    weightSum += f.JobSlots * Access.CaptureIncumbentPerMass[W.Parcels[f.Parcel].Cluster];
                 }
+                if (weightSum <= 1e-9) { totalLeaked += totalCaptured; totalCaptured = 0; }
+                else
+                    foreach (var f in W.Firms)
+                    {
+                        if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                        double share = f.JobSlots
+                            * Access.CaptureIncumbentPerMass[W.Parcels[f.Parcel].Cluster] / weightSum;
+                        f.Money += totalCaptured * share;
+                        f.RevenueThisTick = totalCaptured * share;
+                    }
+            }
+            W.Ledger.Transfer(Account.Households, Account.OutsideWorld, totalLeaked);
+            W.Ledger.Transfer(Account.Households, Account.Firms, totalCaptured);
         }
 
         private void HousingPayments()
