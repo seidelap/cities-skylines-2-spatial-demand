@@ -250,8 +250,17 @@ namespace CS2Econ.Core
                 // totalMass − dust, the two branches meet: as demand thins to
                 // the boundary the cleared read and the tail read converge on
                 // the same household.
-                const double MinTailMass = 0.05;
-                double target = Math.Max(1e-9, totalAt0 - MinTailMass);
+                // The dust guard must be a FRACTION of the demand actually
+                // present, not an absolute mass. As an absolute (0.05),
+                // halving the caller's presence halves every household's mass,
+                // so the same 0.05 reached twice as far UP the ladder and the
+                // anchor climbed: demand ×0.5 priced at 0.59 against 0.46 at
+                // ×1.0 — halving demand RAISED the price, exactly the
+                // non-monotonicity the two-regime design exists to forbid
+                // (measured). As a fraction the anchor lands on the same
+                // household under any scaling of the caller's presence.
+                const double MinTailFraction = 0.005;
+                double target = Math.Max(1e-9, totalAt0 * (1 - MinTailFraction));
                 double loT = 0, hiT = maxBid;
                 for (int it = 0; it < 40; it++)
                 {
