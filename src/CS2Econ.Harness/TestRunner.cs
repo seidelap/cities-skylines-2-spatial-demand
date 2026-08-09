@@ -464,6 +464,9 @@ namespace CS2Econ.Harness
             bool softens = after < before * 0.98
                            || (fillAfter < fillBefore - 0.02 && after < before * 1.10);
 
+            Console.WriteLine($"    AUDIT supplyMonotone={supplyMonotone} demandMonotone={demandMonotone} "
+                + $"killed>100={killed > 100} softens={softens} sweepMonotone={sweepMonotone} "
+                + $"sweepDeclines={sweepDeclines} tracksIncome={tracksIncome} | dLow={dLow:F4} dMid={dMid:F4} dHigh={dHigh:F4}");
             Check("clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)",
                   supplyMonotone && demandMonotone && killed > 100 && softens
                   && sweepMonotone && sweepDeclines && tracksIncome,

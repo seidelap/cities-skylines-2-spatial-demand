@@ -332,6 +332,9 @@ namespace CS2Econ.Harness
                         + $"D/S={mass / stock,5:F2} fillEma={acc.FillEma[ki][c],4:F2} wtp[{wtpBot,5:F2}..{wtpTop,5:F2}] bid={bid,6:F3}");
                 }
             }
+            Console.WriteLine($"AUDIT priced={LandAccounting.AuditTotalPriced} excess={LandAccounting.AuditExcessCalls} "
+                + $"breakIter1={LandAccounting.AuditBreakIter1} ratio5e-5={LandAccounting.AuditRatio5e5} "
+                + $"allLadderAbove={LandAccounting.AuditAllAbove} dustZero={LandAccounting.AuditDustZero}");
             return 0;
         }
 

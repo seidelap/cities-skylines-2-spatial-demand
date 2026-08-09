@@ -152,6 +152,8 @@ namespace CS2Econ.Core
                 h.JobLevel = (byte)lvl;
             }
 
+            AssignWorkplaces();
+
             // Seekers = unhoused + sheltered now, EMA-smoothed (expected near-term demand).
             var seekersNow = new double[Segment.Count];
             foreach (var h in W.Households)
@@ -204,6 +206,95 @@ namespace CS2Econ.Core
                 if (Flags.TierC_LandAccounting)
                     LandAccounting.Assess(W, Access, Trade, pl, SegmentPresence, P);
                 else { pl.AssessedLR = 0; pl.Wedge = 0; pl.CurrentResidual = 0; pl.TargetLevel = pl.Level; pl.TargetUse = pl.Use; pl.TargetIsScrape = false; }
+            }
+        }
+
+        /// <summary>Place each employed household at a SPECIFIC firm. The
+        /// employment RATE is a market outcome (the IPF balance of workers
+        /// against slots); which employer you end up at is a decision the
+        /// household makes, weighted by its own commute from its own home and
+        /// bounded by the slots a firm actually has for its labor class.
+        ///
+        /// This link is what a worker collective needs — a firm's surplus is
+        /// payable to its own members only — and it is read straight off the
+        /// game in-mod (Game.Citizens.Worker.m_Workplace), which the adapter
+        /// was already reading and throwing away.</summary>
+        private void AssignWorkplaces()
+        {
+            foreach (var f in W.Firms) f.Members.Clear();
+            // Remaining slots per firm, by labor class.
+            var freeByFirm = new double[W.Firms.Count][];
+            var byCluster = new List<int>[Access.C];
+            for (int i = 0; i < W.Firms.Count; i++)
+            {
+                var f = W.Firms[i];
+                if (f.Dead || f.Parcel < 0) continue;
+                double[] mix = f.Sector switch
+                {
+                    ZoneKind.Commercial => new[] { 0.7, 0.3, 0.0 },
+                    ZoneKind.Industrial => new[] { 0.6, 0.4, 0.0 },
+                    ZoneKind.Office => new[] { 0.0, 0.3, 0.7 },
+                    _ => new[] { 1.0, 0.0, 0.0 },
+                };
+                freeByFirm[i] = new[] { f.JobSlots * mix[0], f.JobSlots * mix[1], f.JobSlots * mix[2] };
+                int fc = W.Parcels[f.Parcel].Cluster;
+                (byCluster[fc] ??= new List<int>()).Add(i);
+            }
+
+            foreach (var h in W.Households)
+            {
+                if (h.ExitedTick >= 0) continue;
+                if (h.Earners == 0 || h.HomeParcel < 0) { h.WorkplaceParcel = -1; continue; }
+                int cl = (int)Segment.All[h.Segment].Labor;
+                int home = W.Parcels[h.HomeParcel].Cluster;
+
+                // Keep a job you already hold if it still has room for you —
+                // people do not re-shop their employer every refresh.
+                if (h.WorkplaceParcel >= 0)
+                {
+                    int held = W.Parcels[h.WorkplaceParcel].OccupantFirm;
+                    if (held >= 0 && !W.Firms[held].Dead && freeByFirm[held] != null
+                        && freeByFirm[held][cl] >= h.Earners)
+                    {
+                        freeByFirm[held][cl] -= h.Earners;
+                        W.Firms[held].Members.Add(h.Id);
+                        continue;
+                    }
+                    h.WorkplaceParcel = -1;
+                }
+
+                // Otherwise search: softmax over the household's OWN commute
+                // weight across clusters that still have room for its class.
+                double best = -1; int bestFirm = -1;
+                double total = 0;
+                for (int c = 0; c < Access.C; c++)
+                {
+                    var lst = byCluster[c];
+                    if (lst == null) continue;
+                    double w = Access.WCommute[home, c];
+                    if (w <= 1e-9) continue;
+                    foreach (int fi in lst)
+                    {
+                        if (freeByFirm[fi] == null || freeByFirm[fi][cl] < h.Earners) continue;
+                        // Reservoir-style weighted pick, deterministic per household.
+                        total += w;
+                        double u = SplitMix64.Hash01((ulong)h.Id * 40503UL + (ulong)fi * 97UL + (ulong)W.Tick / 60UL);
+                        double key = u <= 0 ? 0 : w / u;      // exponential-race weighted sampling
+                        if (key > best) { best = key; bestFirm = fi; }
+                    }
+                }
+                if (bestFirm >= 0)
+                {
+                    freeByFirm[bestFirm][cl] -= h.Earners;
+                    W.Firms[bestFirm].Members.Add(h.Id);
+                    h.WorkplaceParcel = W.Firms[bestFirm].Parcel;
+                }
+                else
+                {
+                    // No slot anywhere for this class: the household holds a job
+                    // by the market rate but has no employer to be a member of.
+                    h.WorkplaceParcel = -1;
+                }
             }
         }
 
@@ -570,6 +661,38 @@ namespace CS2Econ.Core
                 }
                 f.ProfitEma = MathUtil.Ema(f.ProfitEma, f.RevenueThisTick, 0.05);
                 f.RevenueThisTick = 0; f.OutputThisTick = 0;
+
+                // Worker-collective distribution: surplus above the working
+                // capital reserve is paid to THIS firm's own members, split by
+                // the earners each household contributes. No pool, no citywide
+                // spread — the people who produced the surplus receive it, and
+                // the money re-enters household circulation where it can be
+                // spent, which is what closes the loop back to commercial
+                // demand and therefore to jobs.
+                if (f.Members.Count > 0)
+                {
+                    double wageBill = 0;
+                    for (int cl = 0; cl < 3; cl++) wageBill += f.FilledByClass[cl] * P.Wage((LaborClass)cl);
+                    double reserve = Math.Max(P.FirmSeedCapital, wageBill * P.FirmWorkingCapitalTicks);
+                    double surplus = f.Money - reserve;
+                    if (surplus > 0)
+                    {
+                        double payout = surplus * MathUtil.Clamp(P.FirmDividendRate, 0, 1);
+                        double totalEarners = 0;
+                        foreach (int hid in f.Members) totalEarners += Math.Max(1, (int)W.Households[hid].Earners);
+                        if (totalEarners > 0 && payout > 0)
+                        {
+                            foreach (int hid in f.Members)
+                            {
+                                double sharePaid = payout * Math.Max(1, (int)W.Households[hid].Earners) / totalEarners;
+                                W.Households[hid].Money += sharePaid;
+                            }
+                            f.Money -= payout;
+                            f.DividendsPaid += payout;
+                            W.Ledger.Transfer(Account.Firms, Account.Households, payout);
+                        }
+                    }
+                }
 
                 if (f.Money < P.CompanyBankruptcyLimit)
                 {

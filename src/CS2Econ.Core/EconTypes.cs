@@ -400,6 +400,21 @@ namespace CS2Econ.Core
         public double ArrivalSavingsMean = 100.0, ArrivalSavingsSd = 30.0;
         public double FirmSeedCapital = 200.0;
         public double CompanyBankruptcyLimit = -150.0;
+        /// <summary>Working capital a firm keeps before distributing surplus,
+        /// as a multiple of its per-tick wage bill. Below this it retains
+        /// everything — a collective does not pay itself into insolvency.</summary>
+        public double FirmWorkingCapitalTicks = 20.0;
+        /// <summary>Share of the surplus ABOVE that reserve paid out per tick
+        /// to the firm's own members. A WORKER COLLECTIVE: the surplus goes to
+        /// the people who work there, not to a pool and not spread across the
+        /// city. This is the circular-flow channel the economy was missing —
+        /// CS2 has one (Game.Simulation.CompanyDividendSystem) and we did not,
+        /// so firm cash rose monotonically ($1.3M in commercial by t=400),
+        /// permanently draining household spending and starving the
+        /// consumption → commercial → jobs loop. Our ledger conserves money
+        /// (CS2's deliberately does not), so un-recycled profit cannot
+        /// evaporate — it just piles up.</summary>
+        public double FirmDividendRate = 0.02;
         public double SeniorMortalityPerTick = 1.0 / 5475.0;  // ~15 sim-years
 
         public double CondFactor(double condition) => CondBidFloor + (1 - CondBidFloor) * condition;

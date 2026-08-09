@@ -120,6 +120,8 @@ namespace CS2Econ.Core
         /// the single calibrated haircut (Segment.DensityFloor) was applied
         /// roughly twice. One parameter, one channel: appeal prices the bid;
         /// the share stays kind-neutral (adversarial review, measured A/B).</summary>
+        public static long AuditExcessCalls, AuditBreakIter1, AuditRatio5e5, AuditAllAbove, AuditDustZero, AuditTotalPriced;
+
         public static double ResidentialBidPerUnit(
             AccessState acc, int cluster, ZoneKind kind, int level,
             double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0)
@@ -136,6 +138,7 @@ namespace CS2Econ.Core
             double addUnits = 0, double minSupply = 0)
         {
             fillRatio = 1.0;
+            System.Threading.Interlocked.Increment(ref AuditTotalPriced);
             bool highDensity = kind == ZoneKind.ResidentialHigh;
             int ki = highDensity ? 1 : 0;
             double quality = p.Quality(level) / p.Quality(1);
@@ -226,36 +229,38 @@ namespace CS2Econ.Core
                 return c;
             }
 
-            if (Cum(0, mult, massPer, ladders) < readAt)
+            double totalAt0 = Cum(0, mult, massPer, ladders);
+            if (totalAt0 < readAt)
             {
                 // EXCESS-SUPPLY regime: demand exhausts before the stock fills.
-                // Price FLAT at the deepest real bidder — cutting below the
-                // last household that exists gains no tenant, so it is pure
-                // revenue loss (the revenue-max argument at the only point it
-                // binds monotonically), and pricing ABOVE the cleared boundary
-                // would invert supply monotonicity (measured, reverted).
-                // MinTailMass is a dust guard so a near-empty ladder tail
-                // cannot anchor a price nobody is behind.
+                // Price at the DEEPEST real bidder — the lowest willingness to
+                // pay still backed by more than dust — because cutting below
+                // the last household that exists gains no tenant (pure revenue
+                // loss), and pricing above the cleared boundary would invert
+                // supply monotonicity.
+                //
+                // This is the same bisection as the cleared branch with the
+                // read position moved to the BOTTOM of the curve: at most
+                // MinTailMass of mass may lie strictly below the answer. An
+                // earlier version searched from the top for the price with
+                // MinTailMass ABOVE it, which is the opposite end of the curve
+                // — it made a thinning market price HIGHER than a full one
+                // (demand ×0.5 read 0.59 against 0.46 at ×1.0, measured) and
+                // broke continuity at the regime boundary. With the read at
+                // totalMass − dust, the two branches meet: as demand thins to
+                // the boundary the cleared read and the tail read converge on
+                // the same household.
                 const double MinTailMass = 0.05;
-                double lowest = double.MaxValue, accMass = 0;
-                // Walk the merged tail upward until real mass accumulates.
-                for (double frac = 1e-4; frac <= 1.0; frac *= 2)
+                double target = Math.Max(1e-9, totalAt0 - MinTailMass);
+                double loT = 0, hiT = maxBid;
+                for (int it = 0; it < 40; it++)
                 {
-                    double probe = maxBid * frac;
-                    accMass = Cum(probe, mult, massPer, ladders);
-                    if (accMass >= MinTailMass) { lowest = probe; break; }
+                    double mid = 0.5 * (loT + hiT);
+                    if (Cum(mid, mult, massPer, ladders) >= target) loT = mid; else hiT = mid;
                 }
-                if (lowest == double.MaxValue) { fillRatio = 0; return 0; }
-                // Refine: the deepest price whose cumulative mass still clears
-                // the dust floor is the marginal real bidder's WTP.
-                double loP = lowest / 2, hiP = lowest;
-                for (int it = 0; it < 34; it++)
-                {
-                    double mid = 0.5 * (loP + hiP);
-                    if (Cum(mid, mult, massPer, ladders) >= MinTailMass) hiP = mid; else loP = mid;
-                }
-                fillRatio = MathUtil.Clamp(Cum(hiP, mult, massPer, ladders) / band / supply, 0, 1);
-                return hiP;
+                if (loT <= 1e-12) { fillRatio = 0; return 0; }
+                fillRatio = MathUtil.Clamp(totalAt0 / band / supply, 0, 1);
+                return loT;
             }
 
             // CLEARED regime: bisect for the price at which exactly readAt

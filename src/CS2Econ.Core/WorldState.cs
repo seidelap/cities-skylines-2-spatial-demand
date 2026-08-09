@@ -103,6 +103,14 @@ namespace CS2Econ.Core
         /// `Unemployment Allowance Max Days`, after which the household has no
         /// support and leaves; this is the counter that expiry reads.</summary>
         public int UnemployedTicks;
+        /// <summary>The parcel this household's earners work at — CS2's
+        /// Game.Citizens.Worker.m_Workplace, which the adapter already reads
+        /// and used to discard. An individual holds a specific job at a
+        /// specific firm; that link is what makes a worker collective's
+        /// surplus payable to its own members, and what turns job placement
+        /// into a decision an individual makes rather than a rate it is
+        /// sampled from. -1 = not working anywhere.</summary>
+        public int WorkplaceParcel = -1;
 
         // ---- personal attributes, DRAWN AT BIRTH ---------------------------
         // The only place a distribution legitimately enters: an individual is
@@ -165,6 +173,16 @@ namespace CS2Econ.Core
         public double ProfitEma;
         public long EnteredTick;
         public bool Dead;
+        /// <summary>The households that actually work here. A firm is a WORKER
+        /// COLLECTIVE: its surplus above a working-capital reserve is paid out
+        /// to these members and to nobody else — not pooled, not spread across
+        /// the city. Rebuilt each refresh from individual job placements
+        /// (Household.WorkplaceParcel), so it is a summary of real people, not
+        /// an allocation rule.</summary>
+        public readonly List<int> Members = new List<int>();
+        /// <summary>Cumulative surplus this firm has distributed to its own
+        /// members — telemetry for the circular flow.</summary>
+        public double DividendsPaid;
 
         // Per-tick scratch (settlement + telemetry)
         public double RevenueThisTick;
