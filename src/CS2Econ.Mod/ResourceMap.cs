@@ -104,7 +104,13 @@ namespace CS2Econ.Mod
 
         /// <summary>Lifecycle promotion for multi-member households (see
         /// SegmentFor doc): SingleBasic→FamilyBasic, SingleSkill→FamilySkill;
-        /// everything else already carries its lifecycle.</summary>
+        /// everything else already carries its lifecycle. Fires on children OR
+        /// a second adult: the Family segments are the 2-adult archetypes
+        /// (Segment.Adults = 2), and mapping a childless working couple to a
+        /// Single segment silently discarded its second worker and that
+        /// worker's wage — CS2 job-seeking is per-citizen, so both adults
+        /// work. The cost is the Family school weight applying to households
+        /// without children; the alternative deletes real labor and income.</summary>
         public static int PromoteToFamily(int segment)
             => segment == 1 ? 3 : segment == 2 ? 4 : segment;
 

@@ -390,7 +390,10 @@ namespace CS2Econ.Mod
             bool retired = a.Adults == 0 && a.Elderly > 0;
             bool studentLed = a.Adults > 0 && a.AdultStudents == a.Adults;
             int seg = ResourceMap.SegmentFor(a.MaxEdu, retired ? 3 : 2, retired, studentLed);
-            return a.Children > 0 ? ResourceMap.PromoteToFamily(seg) : seg;
+            // Children OR a second adult: see PromoteToFamily's doc — the
+            // Family segments are the 2-adult archetypes, and a childless
+            // couple left in a Single segment loses its second earner.
+            return a.Children > 0 || a.Adults >= 2 ? ResourceMap.PromoteToFamily(seg) : seg;
         }
 
         // ------------------------------------------------------------------

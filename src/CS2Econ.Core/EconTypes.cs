@@ -96,12 +96,19 @@ namespace CS2Econ.Core
         public readonly string Name;
         public readonly Lifecycle Life;
         public readonly LaborClass Labor;
-        /// <summary>PER-ADULT labor-force participation. Household labor supply
-        /// is Adults × Participation, so the Family segments (2 adults × 0.5)
-        /// supply the same one worker-equivalent they always did: the earner
-        /// count 0/1/2 is added as DISPERSION at constant mean, leaving the job
-        /// supply the synthetic city and CS2 both provide unchanged. In-game
-        /// this is measurable directly (Worker members ÷ adult members).</summary>
+        /// <summary>PER-ADULT labor-force participation; household labor supply
+        /// is Adults × Participation. Family adults participate at 1.0 because
+        /// that is what CS2 does: job-seeking is per-citizen — "when a citizen
+        /// reaches working age, they look for a job" (CS2 wiki, Citizens) —
+        /// and there is no breadwinner/homemaker mechanic, so a two-adult
+        /// family supplies two workers, subject to unemployment. (An earlier
+        /// build set family adults to 0.5 to hold household labor supply at
+        /// its pre-distribution level; that was a calibration convenience
+        /// contradicting the game and was reverted — the labor market
+        /// re-equilibrates around the true supply instead.) StudentLow's 0.5
+        /// reflects student-led households where members study rather than
+        /// work; Seniors 0 (pension). In-game this is measurable directly
+        /// (Worker members ÷ adult members).</summary>
         public readonly double Participation;
         /// <summary>Non-wage household transfer per tick. Maps to CS2's
         /// Game.Prefabs.EconomyParameterData taps: m_Pension (Senior segments),
@@ -183,9 +190,9 @@ namespace CS2Econ.Core
             new Segment("StudentLow",  Lifecycle.Student, LaborClass.Basic,    0.5,  3.0,     0.5,  0.6,   1.5,    0.6,  0.2,    0.5,  1.0,    0.40,     1),
             new Segment("SingleBasic", Lifecycle.Single,  LaborClass.Basic,    1.0,  0.0,     1.2,  0.8,   0.0,    0.7,  0.2,    0.6,  1.0,    0.34,     1),
             new Segment("SingleSkill", Lifecycle.Single,  LaborClass.Skilled,  1.0,  0.0,     1.2,  1.0,   0.0,    1.0,  0.2,    0.8,  0.9,    0.32,     1),
-            new Segment("FamilyBasic", Lifecycle.Family,  LaborClass.Basic,    0.5,  1.0,     1.0,  1.0,   1.2,    0.9,  0.5,    1.0,  0.35,   0.30,     2),
-            new Segment("FamilySkill", Lifecycle.Family,  LaborClass.Skilled,  0.5,  1.0,     1.0,  1.1,   1.3,    1.1,  0.5,    1.1,  0.30,   0.28,     2),
-            new Segment("FamilyEdu",   Lifecycle.Family,  LaborClass.Educated, 0.5,  1.0,     1.0,  1.2,   1.4,    1.3,  0.5,    1.2,  0.30,   0.26,     2),
+            new Segment("FamilyBasic", Lifecycle.Family,  LaborClass.Basic,    1.0,  1.0,     1.0,  1.0,   1.2,    0.9,  0.5,    1.0,  0.35,   0.30,     2),
+            new Segment("FamilySkill", Lifecycle.Family,  LaborClass.Skilled,  1.0,  1.0,     1.0,  1.1,   1.3,    1.1,  0.5,    1.1,  0.30,   0.28,     2),
+            new Segment("FamilyEdu",   Lifecycle.Family,  LaborClass.Educated, 1.0,  1.0,     1.0,  1.2,   1.4,    1.3,  0.5,    1.2,  0.30,   0.26,     2),
             new Segment("SeniorLow",   Lifecycle.Senior,  LaborClass.Basic,    0.0,  8.0,     0.05, 0.9,   0.0,    1.4,  1.5,    1.0,  0.5,    0.32,     0),
             new Segment("SeniorMid",   Lifecycle.Senior,  LaborClass.Skilled,  0.0, 13.0,     0.05, 1.0,   0.0,    1.6,  1.6,    1.1,  0.4,    0.30,     0),
         };

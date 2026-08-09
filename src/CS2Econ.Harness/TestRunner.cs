@@ -418,14 +418,30 @@ namespace CS2Econ.Harness
                 prevSweep = v;
             }
             bool sweepDeclines = sweepHi > sweepLo * 1.5 && sweepLo > 0;
-            // Wage scaling: double every wage, the whole curve must roughly
-            // double (transfers do not scale, so the tail moves less — require
-            // a substantial, not exact, response).
+            // Income scaling, by the source each end of the curve actually
+            // prices: the TOP is wage earners, so doubling wages must move it
+            // strongly; the TAIL at equilibrium unemployment is benefit-income
+            // households (CS2 job-seeking is per-citizen, so ~half the adults
+            // are unemployed at the fixture's job stock and the poorest bins
+            // are UnemploymentBenefit + transfers — which correctly do NOT
+            // scale with wages; an earlier wage-only leg failed exactly there).
+            // Doubling every income source except the fixed segment transfer
+            // must move the tail; if transfers ever become the tail, this
+            // fails loudly and gets restated rather than silently passing.
+            // A constant-price mutant fails both ends.
             var pRich = new EconParams { WageBasic = p.WageBasic * 2, WageSkilled = p.WageSkilled * 2, WageEducated = p.WageEducated * 2 };
             acc.RebuildIncomeDistributions(pRich);
-            double richLo = SweepAt(stock * 30, pRich), richHi = SweepAt(Math.Max(0.5, stock * 0.03), pRich);
+            double richHi = SweepAt(Math.Max(0.5, stock * 0.03), pRich);
+            var pAll = new EconParams
+            {
+                WageBasic = p.WageBasic * 2, WageSkilled = p.WageSkilled * 2, WageEducated = p.WageEducated * 2,
+                UnemploymentBenefit = p.UnemploymentBenefit * 2,
+                ResidentialMinimumEarnings = p.ResidentialMinimumEarnings * 2,
+            };
+            acc.RebuildIncomeDistributions(pAll);
+            double allLo = SweepAt(stock * 30, pAll);
             acc.RebuildIncomeDistributions(p);
-            bool tracksWages = richHi > sweepHi * 1.5 && richLo > sweepLo * 1.3;
+            bool tracksIncome = richHi > sweepHi * 1.5 && allLo > sweepLo * 1.3;
 
             // (d) population collapse: with the flat-tail excess price the
             // response is regime-dependent — price falls while the submarket
@@ -450,13 +466,13 @@ namespace CS2Econ.Harness
 
             Check("clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)",
                   supplyMonotone && demandMonotone && killed > 100 && softens
-                  && sweepMonotone && sweepDeclines && tracksWages,
+                  && sweepMonotone && sweepDeclines && tracksIncome,
                   $"supply×{{0.5,2,8}} → {pLow:F2}/{pMid:F2}/{pHigh:F2} (fill {fMid:F2}→{fHigh:F2}); " +
                   $"demand×{{0.5,1,2}} → {dLow:F2}/{dMid:F2}/{dHigh:F2} (fill {fdLow:F2}→{fdMid:F2}); " +
                   $"after {killed} citywide exits bid {before:F2} → {after:F2}, fill {fillBefore:F2} → {fillAfter:F2}; " +
                   $"25-point supply sweep {sweepHi:F2}→{sweepLo:F2} " +
                   $"({(sweepMonotone ? "monotone" : $"{upSteps} UPWARD steps")}), " +
-                  $"wages×2 → {richHi:F2}/{richLo:F2}");
+                  $"wages×2 top → {richHi:F2}, all-income×2 tail → {allLo:F2}");
         }
 
         private static void OccupiedStockCarriesRent(ulong seed)

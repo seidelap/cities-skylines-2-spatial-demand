@@ -101,10 +101,14 @@ namespace CS2Econ.Core
         /// mean (which is what ExpectedIncome reports, so pricing and every
         /// aggregate consumer read the same distribution).
         ///
-        /// Simplification, documented: labor-force participation below 1 (only
-        /// StudentLow) is folded into the per-adult employment probability, and
-        /// a non-participating adult collects no benefit — exact on the wage
-        /// leg, an expectation on the small benefit leg.</summary>
+        /// Two simplifications, documented: (a) labor-force participation
+        /// below 1 (only StudentLow) is folded into the per-adult employment
+        /// probability, and a non-participating adult collects no benefit —
+        /// exact on the wage leg, an expectation on the small benefit leg;
+        /// (b) the enumeration draws each earner's job level INDEPENDENTLY,
+        /// while a realized household carries one JobLevel for all its earners
+        /// — the means agree exactly, realized incomes are slightly more
+        /// dispersed than the priced curve (assortative households).</summary>
         public static double Build(Segment seg, double empRate, EconParams p,
                                    Span<double> binInc, Span<double> binWt)
         {
