@@ -296,7 +296,18 @@ namespace CS2Econ.Harness
                 var p = new EconParams();
                 var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
                 var sim = Sim.Create(cfg, p, new FeatureFlags(), vanillaMode: vanilla);
-                sim.Run(1300);
+                // The level map is scored at STEADY STATE, and reaching it takes
+                // longer than it used to. 1300 ticks was enough when two thirds
+                // of the map priced below S(1) and had nothing to redevelop:
+                // ℓ* was 1 almost everywhere, realized levels were 1–2, and the
+                // map "settled" because most of it was dead. Now every submarket
+                // clears, ℓ* is 3–4, and the stock has to climb a level at a
+                // time against construction pacing. Measured on the same city:
+                // Spearman 0.29 at 1300 → 0.42 at 2600 → 0.43 at 4000, with the
+                // realized mode walking L2 → L3 → L3/L4 behind an ℓ* that does
+                // not move. That is a transient being read as an equilibrium,
+                // so the horizon moves to where the series has flattened.
+                sim.Run(2600);
                 // §6: "the realized level map correlates with access (rank
                 // correlation against ℓ*)" — ℓ* is the supported level of the
                 // parcel's own use at its location (both modes compute identical
@@ -667,6 +678,10 @@ namespace CS2Econ.Harness
         }
 
         // ------------------------------------------------------------------
+        /// <summary>Exposed so the level probe can score the same statistic
+        /// the §6 target uses without duplicating it.</summary>
+        internal static double SpearmanPublic(List<double> a, List<double> b) => Spearman(a, b);
+
         private static double Spearman(List<double> a, List<double> b)
         {
             int n = a.Count;

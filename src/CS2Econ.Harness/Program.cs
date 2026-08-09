@@ -90,6 +90,13 @@ namespace CS2Econ.Harness
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.PriceProbe(seed, ticks);
                 }
+                case "levelprobe":
+                {
+                    int ticks = 1300;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                    return Debugging.LevelProbe(seed, ticks);
+                }
                 case "vacprobe":
                 {
                     int ticks = 150;

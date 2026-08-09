@@ -343,6 +343,72 @@ namespace CS2Econ.Harness
         /// ticks: does the shock create persistent vacancies, does the kernel
         /// drive residual negative in the shocked set, and what refills it
         /// (arrivals vs internal chain moves)?</summary>
+        /// <summary>Where the level geography comes from: the spread of the
+        /// clearing price across clusters and the spread of the supported level
+        /// ℓ* it implies. A flat price field cannot produce a level map that
+        /// correlates with access, however good the construction rule is, so
+        /// when the level-map scenario slips this is the first thing to read.</summary>
+        public static int LevelProbe(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(ticks);
+            var acc = sim.Engine.Access; var pres = sim.Engine.SegmentPresence;
+
+            foreach (var (kind, ki) in new[] { (ZoneKind.ResidentialLow, 0), (ZoneKind.ResidentialHigh, 1) })
+            {
+                var bids = new List<double>(); var stars = new List<int>(); var prem = new List<double>();
+                for (int c = 0; c < acc.C; c++)
+                {
+                    if (acc.HousingStock[ki][c] < 4) continue;
+                    int lStar = 1; double best = double.NegativeInfinity;
+                    for (int l = 1; l <= p.MaxLevel; l++)
+                    {
+                        double b = LandAccounting.ResidentialBidPerUnit(acc, c, kind, l, pres, p);
+                        double v = b - LandAccounting.SPerUnit(l, 1.0, p);
+                        if (v > best) { best = v; lStar = l; }
+                    }
+                    bids.Add(LandAccounting.ResidentialBidPerUnit(acc, c, kind, 2, pres, p));
+                    stars.Add(lStar);
+                    double rel = acc.AccessValue[0][c] / acc.MeanAccess;
+                    prem.Add(MathUtil.Clamp(Math.Pow(Math.Max(0.05, rel), p.PremiumExponent), 0.2, 4.0));
+                }
+                if (bids.Count == 0) { Console.WriteLine($"{kind}: no stock"); continue; }
+                var sorted = bids.OrderBy(x => x).ToList();
+                double Pct(double q) => sorted[Math.Min(sorted.Count - 1, (int)(q * sorted.Count))];
+                var hist = new int[p.MaxLevel + 1];
+                foreach (int l in stars) hist[l]++;
+                Console.WriteLine($"{kind}: {bids.Count} clusters  bid p10={Pct(0.1):F2} p50={Pct(0.5):F2} "
+                    + $"p90={Pct(0.9):F2} (p90/p10 {Pct(0.9) / Math.Max(1e-9, Pct(0.1)):F1}×)  "
+                    + $"premium [{prem.Min():F2}..{prem.Max():F2}]");
+                Console.WriteLine("   ℓ* histogram: " + string.Join("  ",
+                    Enumerable.Range(1, p.MaxLevel).Select(l => $"L{l}={hist[l]}")));
+                var built = new int[p.MaxLevel + 1];
+                foreach (var pl in sim.W.Parcels)
+                    if (pl.State == ParcelState.Built && pl.Use == kind) built[pl.Level]++;
+                Console.WriteLine("   realized:     " + string.Join("  ",
+                    Enumerable.Range(1, p.MaxLevel).Select(l => $"L{l}={built[l]}")));
+            }
+            // Same statistic the §6 level-map target scores, so a calibration
+            // sweep can be read here without a 2×1300-tick scenario run.
+            var lv = new List<double>(); var sup = new List<double>();
+            foreach (var pl in sim.W.Parcels)
+            {
+                if (pl.State != ParcelState.Built || !pl.IsResidential) continue;
+                int lStar = 1; double best = double.NegativeInfinity;
+                for (int l = 1; l <= p.MaxLevel; l++)
+                {
+                    double b = LandAccounting.BidPerUnit(acc, sim.Engine.Trade, pl.Cluster, pl.Use, l, pres, p);
+                    double v = b - LandAccounting.SPerUnit(l, 1.0, p);
+                    if (v > best) { best = v; lStar = l; }
+                }
+                lv.Add(pl.Level); sup.Add(lStar);
+            }
+            Console.WriteLine($"   Spearman(realized, ℓ*) = {Scenarios.SpearmanPublic(lv, sup):F2}  (§6 bar 0.35)");
+            return 0;
+        }
+
         public static int VacProbe(ulong seed, int ticks)
         {
             var p = new EconParams();
