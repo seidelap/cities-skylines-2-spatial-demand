@@ -91,12 +91,26 @@ namespace CS2Econ.Core
         private int[] _shortStart = Array.Empty<int>();  // per household, into _shortItems
         private int[] _shortCount = Array.Empty<int>();
         private int[] _shortItems = Array.Empty<int>();  // (k*C+c) keys, price-free ranked
+        /// <summary>Per (household, shortlist slot): the level-INDEPENDENT part
+        /// of the valuation — own bid base × the segment's location premium, and
+        /// the household's own permanent taste for that place. The inner auction
+        /// loop re-evaluated both for every bid at every level, paying a hash and
+        /// two logs for a Gumbel that never changes. Cached here, the loop is
+        /// arithmetic. Computed with the same operations in the same order as
+        /// ValueAt, so the two agree bit for bit and the equilibrium checks are
+        /// still checking what the auction actually did.</summary>
+        private double[] _slotPrem = Array.Empty<double>();
+        private double[] _slotTaste = Array.Empty<double>();
         private double[] _base0 = Array.Empty<double>(); // per household: bid base, Low
         private double[] _base1 = Array.Empty<double>(); // per household: bid base, High
         private double[] _homeBonus = Array.Empty<double>();
         private int[] _homeKC = Array.Empty<int>();      // (k*C+c) of current home, −1
         private int[] _seg = Array.Empty<int>();
         private int _stride;
+        // Previous refresh's shortlists, for the warm start.
+        private int[] _prevItems = Array.Empty<int>();
+        private int[] _prevCount = Array.Empty<int>();
+        private int _prevStride;
         private double[] _cap = Array.Empty<double>();   // ability to pay
         private double[][] _premium = Array.Empty<double[]>(); // [segment][cluster]
         private readonly List<int> _queue = new List<int>();
@@ -160,6 +174,12 @@ namespace CS2Econ.Core
             if (p.AuctionRepairRounds <= 0) RepairClean = true;   // repair disabled on purpose
             BuildShadow(w, p, nSub);
             Converged = Converged && RepairClean;
+            // Keep this refresh's lists (repair columns included) for the next.
+            if (_prevItems.Length != _shortItems.Length) _prevItems = new int[_shortItems.Length];
+            Array.Copy(_shortItems, _prevItems, _shortItems.Length);
+            if (_prevCount.Length != _shortCount.Length) _prevCount = new int[_shortCount.Length];
+            Array.Copy(_shortCount, _prevCount, _shortCount.Length);
+            _prevStride = _stride;
         }
 
         private void EnsureArrays(WorldState w, int nSub)
@@ -247,7 +267,30 @@ namespace CS2Econ.Core
             int K = Math.Max(2, p.AuctionShortlist);
             _stride = K + Math.Max(0, p.AuctionRepairRounds);
             int nh = w.Households.Count;
-            if (_shortItems.Length != nh * _stride) _shortItems = new int[nh * _stride];
+            // WARM START. The columns the repair rounds discovered last refresh
+            // are still the ones worth showing this refresh — the city moves a
+            // little between solves, not a lot — so the previous shortlists are
+            // carried in and seeded FIRST, and the price-free ranking then tops
+            // each list up. Cold-starting them threw that work away every time
+            // and made the repair loop rediscover the same columns from scratch,
+            // which is the whole cost of the solve: each round is a full
+            // re-clearing.
+            if (_shortItems.Length != nh * _stride)
+            {
+                var grown = new int[nh * _stride];
+                int copyStride = _prevStride > 0 ? Math.Min(_prevStride, _stride) : 0;
+                if (copyStride > 0 && _prevItems.Length > 0)
+                    for (int i = 0; i < nh && i * _prevStride < _prevItems.Length; i++)
+                        Array.Copy(_prevItems, i * _prevStride, grown, i * _stride, copyStride);
+                _shortItems = grown;
+            }
+            if (_slotPrem.Length != nh * _stride)
+            { _slotPrem = new double[nh * _stride]; _slotTaste = new double[nh * _stride]; }
+            // Household ids are stable and append-only, so a previous list is
+            // valid for any id the previous solve saw. Keying this on exact
+            // array-length equality meant it was false on every refresh of a
+            // growing city — the warm start was dead code wherever it mattered.
+            bool warm = p.AuctionWarmStart && _prevStride == _stride && _prevCount.Length > 0;
 
             // Scratch for the shortlist selection: a K-sized insertion list.
             Span<double> bestV = stackalloc double[64];
@@ -257,7 +300,8 @@ namespace CS2Econ.Core
             for (int i = 0; i < nh; i++)
             {
                 var h = w.Households[i];
-                _shortStart[i] = i * _stride; _shortCount[i] = 0;
+                _shortStart[i] = i * _stride;
+                _shortCount[i] = 0;
                 Assignment[i] = -1; WinningBid[i] = 0;
                 if (h.ExitedTick >= 0) { _homeKC[i] = -1; continue; }
 
@@ -290,6 +334,30 @@ namespace CS2Econ.Core
                 // how long it expects to stay. Written as a lump against a
                 // per-tick budget it came out two orders of magnitude too big.
                 _homeBonus[i] = h.MovingCostDraw / Math.Max(1, p.MoveAmortTicks);
+
+                // Seed ONLY the columns the repair rounds discovered last time
+                // — the tail of the previous list, past the K the price-free
+                // ranking produces — and never more than the slack. Seeding the
+                // whole previous list instead let the lists ossify: they filled
+                // to the stride with historical entries, the price-free top-K
+                // could no longer get in, and households went on considering
+                // places the city had moved past. The market flattened (price
+                // p10/p90 spread 3.6× → 1.5×) and the solve got slower, not
+                // faster, because every bid now scanned a longer list.
+                int maxSeed = Math.Max(0, _stride - K);
+                int seeded = 0;
+                if (warm && i < _prevCount.Length)
+                {
+                    int prevN = Math.Min(_prevCount[i], _prevStride);
+                    for (int q = K; q < prevN && seeded < maxSeed; q++)
+                    {
+                        int kc = _prevItems[i * _prevStride + q];
+                        if ((uint)kc >= (uint)(2 * C)) continue;
+                        bool dup = false;
+                        for (int r = 0; r < seeded; r++) if (_shortItems[_shortStart[i] + r] == kc) { dup = true; break; }
+                        if (!dup) _shortItems[_shortStart[i] + seeded++] = kc;
+                    }
+                }
 
                 // ---- shortlist: the K best places IGNORING price ------------
                 // Price is deliberately not in this ranking. Shortlisting on the
@@ -332,25 +400,61 @@ namespace CS2Econ.Core
                 // The place it already lives is always on the list, whatever it
                 // ranks: a sitting tenant is a bidder for its own home and has
                 // to be able to renew.
+
+                // Top up around the seeded columns, skipping anything already
+                // carried over, until the list is full.
+                int outp = seeded;
+                for (int q = 0; q < cnt && outp < _stride; q++)
+                {
+                    bool dup = false;
+                    for (int r = 0; r < outp; r++) if (_shortItems[_shortStart[i] + r] == bestKC[q]) { dup = true; break; }
+                    if (!dup) _shortItems[_shortStart[i] + outp++] = bestKC[q];
+                }
+                // The place it already lives is always on the list, whatever it
+                // ranks: a sitting tenant is a bidder for its own home and has
+                // to be able to renew.
                 if (_homeKC[i] >= 0)
                 {
                     bool have = false;
-                    for (int q = 0; q < cnt; q++) if (bestKC[q] == _homeKC[i]) { have = true; break; }
+                    for (int r = 0; r < outp; r++) if (_shortItems[_shortStart[i] + r] == _homeKC[i]) { have = true; break; }
                     if (!have)
                     {
-                        if (cnt < K) { bestKC[cnt] = _homeKC[i]; cnt++; }
-                        else
-                        {
-                            worst = bestV[0]; worstAt = 0;
-                            for (int q = 1; q < K; q++) if (bestV[q] < worst) { worst = bestV[q]; worstAt = q; }
-                            bestKC[worstAt] = _homeKC[i];
-                        }
+                        if (outp < _stride) _shortItems[_shortStart[i] + outp++] = _homeKC[i];
+                        else _shortItems[_shortStart[i] + _stride - 1] = _homeKC[i];
                     }
                 }
-                for (int q = 0; q < cnt; q++) _shortItems[i * _stride + q] = bestKC[q];
-                _shortCount[i] = cnt;
+                _shortCount[i] = outp;
+
+                // Freeze the level-independent half of every listed valuation.
+                for (int q = 0; q < outp; q++) FreezeSlot(i, q, p);
             }
         }
+
+        /// <summary>Freeze the level-independent half of one shortlist slot.
+        /// EVERY path that writes _shortItems must call this, including the
+        /// repair rounds: they append columns and then re-run the auction, and
+        /// when they did not refresh the cache the auction valued the newly
+        /// offered submarket with whatever was left in the slot. The household
+        /// therefore never bid there and stayed envious, while the repair saw
+        /// the column already on the list, added nothing, and reported the solve
+        /// clean — 664 envious households, worst by 44% of value, behind a
+        /// "converged, nothing left to repair".</summary>
+        private void FreezeSlot(int i, int q, EconParams p)
+        {
+            int slot = _shortStart[i] + q;
+            int kc = _shortItems[slot];
+            int kk = kc / C, cc = kc - kk * C;
+            double bs = kk == 1 ? _base1[i] : _base0[i];
+            _slotPrem[slot] = bs * _premium[_seg[i]][cc];
+            _slotTaste[slot] = Taste(i, kc, bs, p) + (kc == _homeKC[i] ? _homeBonus[i] : 0);
+        }
+
+        /// <summary>Value at a submarket named by SHORTLIST SLOT rather than by
+        /// index — the auction's hot path. Identical arithmetic to ValueAt, in
+        /// the same order, reading the frozen premium and taste instead of
+        /// recomputing a hash and two logs per bid.</summary>
+        private double ValueAtSlot(int i, int slot, int level, EconParams p)
+            => SoftCap(_slotPrem[slot] * (p.Quality(level) / p.Quality(1)) + _slotTaste[slot], _cap[i]);
 
         /// <summary>Squash an unconstrained valuation against ability to pay.
         /// A HARD min was tried first and is wrong in a way worth recording: it
@@ -443,7 +547,7 @@ namespace CS2Econ.Core
                     {
                         int sub = Sub(kc, l, C);
                         if (Capacity[sub] <= 0) continue;   // priced, but nothing to let
-                        double val = ValueAt(i, sub, p);
+                        double val = ValueAtSlot(i, st + q, l, p);
                         double sur = val - Price[sub];
                         if (sur > bestSur) { nextSur = bestSur; bestSur = sur; bestSub = sub; bestVal = val; }
                         else if (sur > nextSur) nextSur = sur;
@@ -647,6 +751,7 @@ namespace CS2Econ.Core
                 if (have) continue;                       // already listed, just outbid
                 if (n >= _stride) continue;               // list is full; nothing safe to drop
                 _shortItems[st + n] = bestKC; _shortCount[i] = n + 1;
+                FreezeSlot(i, n, p);
                 added++;
             }
             return added;

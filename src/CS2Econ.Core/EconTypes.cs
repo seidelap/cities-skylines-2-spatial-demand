@@ -415,6 +415,14 @@ namespace CS2Econ.Core
         /// the auction, ranked price-free. Bounded from below by the outside
         /// option: a place worth less than leaving the city is never listed.</summary>
         public int AuctionShortlist = 12;
+        /// <summary>Carry the previous solve's repair columns into the next one.
+        /// OFF: it makes the solve path-dependent — two solves of the same world
+        /// no longer agree — and measured WORSE, not just different (1281
+        /// envious households against 0, and an improving swap). The speed it
+        /// was reaching for came from somewhere else anyway: caching the
+        /// level-independent half of each valuation took the same run from 6m35s
+        /// to 1m31s on its own, and that is a pure-function optimization.</summary>
+        public bool AuctionWarmStart = false;
         /// <summary>Idiosyncratic taste for a specific place, as a fraction of
         /// the household's own housing budget (Gumbel, σ ≈ 1.28, so this is
         /// roughly the ± swing at one standard deviation).</summary>
