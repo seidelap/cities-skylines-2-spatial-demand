@@ -255,10 +255,37 @@ namespace CS2Econ.Core
                 if (want == have && have >= 0) continue;         // renewed in place
                 Allocation.Vacate(W, h);
                 if (want >= 0) movers.Add(h.Id);
-                // Assigned nowhere: it is unhoused now, and the insolvency
-                // pipeline takes it from there (shelter, then emigration). The
-                // auction does not evict anyone from the city directly — it only
-                // says no submarket beat their outside option.
+            }
+
+            // DEPARTURE, as an individual decision. A household the auction
+            // marked Declined found something it could have had and judged that
+            // none of it beat its OWN reservation. That is somebody choosing to
+            // leave, and it is the whole of out-migration on this path — no
+            // citywide elasticity, no lagged signal, no Poisson draw. Being
+            // Outbid is the other thing entirely and stays in the queue.
+            //
+            // It waits first. Its patience is its own moving cost: the household
+            // that would find moving expensive puts up with more before going,
+            // which is the same draw that keeps it in its home in the auction.
+            DeclineExitsThisTick = 0;
+            foreach (var h in W.Households)
+            {
+                if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)Auction.Why.Length) continue;
+                if (Auction.Why[h.Id] != HousingAuction.Outcome.Declined)
+                { h.DeclineTicks = 0; continue; }
+                h.DeclineTicks += P.RefreshInterval;
+                double patience = P.DeclinePatienceTicks
+                                  * (0.5 + h.MovingCostDraw / Math.Max(1e-6, P.MovingCostMean));
+                if (h.DeclineTicks < patience) continue;
+                if (h.HomeParcel >= 0) Allocation.Vacate(W, h);
+                if (h.Stage == InsolvencyStage.Sheltered)
+                    ShelterOccupied = Math.Max(0, ShelterOccupied - 1);
+                // It takes its money with it, back across the border.
+                if (h.Money > 0) W.Ledger.Transfer(Account.Households, Account.OutsideWorld, h.Money);
+                h.Money = 0;
+                h.ExitedTick = W.Tick;
+                DisplacementExits.Add((W.Tick, h.Id, 1));
+                DeclineExitsThisTick++;
             }
             // Unhoused households the auction placed also move in.
             foreach (var h in W.Households)
@@ -1006,8 +1033,29 @@ namespace CS2Econ.Core
             }
         }
 
+        /// <summary>Arrivals and departures from prospect telemetry (auction
+        /// path). Counts only, for the harness — the decisions themselves are in
+        /// Prospects.Step and in HousingAuction.Why.</summary>
+        public Prospects.Result LastProspects;
+        public int DeclineExitsThisTick;
+
         private void MigrationStep()
         {
+            // AUCTION PATH: migration is not computed here at all. The region
+            // offers individuals, each one reads posted prices and decides for
+            // itself, and departures are households whose own reservation beat
+            // everything the city could offer them. No citywide attractiveness
+            // scalar exists on this path.
+            if (Flags.HousingAuction)
+            {
+                LastProspects = Prospects.Step(W, Access, Auction, P);
+                LastFlows = default;
+                LastFlows.ArrivalsBySegment = new int[Segment.Count];
+                LastFlows.DeparturesBySegment = new int[Segment.Count];
+                LastFlows.DesiredBySegment = new double[Segment.Count];
+                return;
+            }
+
             // Distress signal for migration, not just literal homelessness:
             // solvent-but-stressed households take the FUNDED-emigration exit
             // in InsolvencyStep before they ever reach Sheltered, so a city

@@ -121,6 +121,27 @@ namespace CS2Econ.Core
             }
         }
 
+        /// <summary>What somebody who does not live here yet would earn if they
+        /// came and found work at the market's current odds. Same construction
+        /// as HouseholdProspectiveIncome, which an unhoused resident already
+        /// uses — employment odds are a clearing outcome, not a personal
+        /// attribute, so a prospect may read them.</summary>
+        public double ProspectIncome(Segment seg, byte jobLevel, EconParams p)
+        {
+            Span<double> lw = stackalloc double[5];
+            Span<double> lwage = stackalloc double[5];
+            int levels = Income.JobLevels(seg, p, lw, lwage);
+            double rate = 0; int n = 0;
+            for (int c = 0; c < C; c++) { rate += EmploymentRate[(int)seg.Labor][c]; n++; }
+            rate = n > 0 ? rate / n : 0;
+            double expectedEarners = seg.Adults * MathUtil.Clamp(seg.Participation * rate, 0, 1);
+            double wage = expectedEarners * lwage[Math.Min(jobLevel, levels - 1)]
+                          * (1 - p.IncomeTax(seg.Labor));
+            double benefit = Math.Max(0, seg.Adults - expectedEarners) * p.UnemploymentBenefit
+                             * MathUtil.Clamp(seg.Participation, 0, 1);
+            return Math.Max(p.ResidentialMinimumEarnings, wage + benefit + seg.Transfer);
+        }
+
         /// <summary>What this household would earn if it found work at the
         /// market's current odds for its labor class — its own job level and
         /// adult count, priced by an emergent market rate.</summary>

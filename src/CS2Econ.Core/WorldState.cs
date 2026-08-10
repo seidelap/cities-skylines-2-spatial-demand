@@ -175,6 +175,9 @@ namespace CS2Econ.Core
         public double MovingCostDraw;    // within-segment heterogeneity draw (§4.4)
         public long TenureStart;
         public int StressTicks;          // consecutive ticks payment > income capacity
+        /// <summary>Consecutive ticks this household has judged that nothing in
+        /// the city beats its own reservation. Out-migration's whole clock.</summary>
+        public int DeclineTicks;
         public InsolvencyStage Stage;
         public long ArrivedTick;
         public long ExitedTick = -1;     // set on emigration/displacement (telemetry)

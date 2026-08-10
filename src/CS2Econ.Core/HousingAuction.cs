@@ -705,6 +705,70 @@ namespace CS2Econ.Core
             else if (Capacity[sub] > 0) Price[sub] = Reserve[sub];
         }
 
+        /// <summary>Quote the city to somebody who does not live here.
+        ///
+        /// Scans every submarket and returns the one that gives THIS individual
+        /// the most surplus at the posted price, subject to the same rule a
+        /// resident faces: you may only count a full submarket if your value net
+        /// of your own reservation clears what the worst sitting tenant is
+        /// paying, because that is what it would take to get in. Returns −1 when
+        /// no door is open to it, with `anyAttainable` distinguishing "there was
+        /// something I could have had and none of it was worth it" from "nothing
+        /// here was ever going to be mine" — the difference between declining a
+        /// city and being priced out of it, which the arrival telemetry keeps
+        /// separate because they mean opposite things to a player.
+        ///
+        /// No aggregate of the city enters this. The prospect reads posted
+        /// prices, one submarket at a time, exactly as a resident does.</summary>
+        public int QuoteOutsider(int segment, double budget, double densityTol, double reservation,
+                                 ulong tasteKey, EconParams p,
+                                 out double bestSurplus, out bool anyAttainable)
+        {
+            bestSurplus = double.NegativeInfinity; anyAttainable = false;
+            int best = -1;
+            if (C <= 0 || (uint)segment >= (uint)_premium.Length) return -1;
+            double cap = p.MaxRentOfIncome * (budget / Math.Max(1e-9, 1.0)) / Math.Max(1e-9, 1.0);
+            // Ability to pay is derived the same way it is for a resident: from
+            // income, not from the housing budget. budget = rentShare × income,
+            // so income = budget / rentShare — but the caller already knows the
+            // income it used, and passing the cap explicitly would be one more
+            // thing to keep in step. Recover it from the same identity the
+            // resident path uses.
+            cap = p.MaxRentOfIncome * budget / Math.Max(1e-6, p.ProspectRentShareForCap);
+
+            for (int k = 0; k < 2; k++)
+            {
+                double appeal = k == 1
+                    ? Segment.DensityFloor + (1 - Segment.DensityFloor) * MathUtil.Clamp(densityTol, 0, 1)
+                    : 1.0;
+                double bse = budget * appeal;
+                if (bse <= 0) continue;
+                for (int c = 0; c < C; c++)
+                {
+                    int kc = Key(k, c, C);
+                    double prem = bse * _premium[segment][c];
+                    double taste = p.AuctionTasteScale * bse * Gumbel01(tasteKey * 1000003UL + (ulong)kc * 31UL + 5);
+                    for (int l = 1; l <= Levels; l++)
+                    {
+                        int sub = Sub(kc, l, C);
+                        if (Capacity[sub] <= 0) continue;
+                        double val = SoftCap(prem * (p.Quality(l) / p.Quality(1)) + taste, cap);
+                        if (Filled[sub] >= Capacity[sub] && val - reservation <= Admitted[sub]) continue;
+                        anyAttainable = true;
+                        double sur = val - Price[sub];
+                        if (sur > bestSurplus) { bestSurplus = sur; best = sub; }
+                    }
+                }
+            }
+            return best;
+        }
+
+        private static double Gumbel01(ulong key)
+        {
+            double e = SplitMix64.Hash01(key);
+            return -Math.Log(-Math.Log(Math.Min(1 - 1e-12, Math.Max(1e-12, e))));
+        }
+
         /// <summary>Price per unit at a submarket, for callers that ask about a
         /// (cluster, kind, level) rather than an index.</summary>
         public double PriceAt(int cluster, ZoneKind kind, int level)

@@ -1060,8 +1060,20 @@ namespace CS2Econ.Harness
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             double maxDrift = 0;
             sim.Run(300, s => maxDrift = Math.Max(maxDrift, Math.Abs(s.W.Ledger.Drift())));
-            Check("ledger conservation: money neither created nor destroyed",
-                  maxDrift < 1e-3, $"max |drift| over 300 ticks = {maxDrift:E2}");
+
+            // BOTH PATHS. Running this only with the default flags left a whole
+            // class of bug invisible: prospect-level migration moves money
+            // across the border on arrival and departure, and it exists only on
+            // the auction path — an arrival that minted its savings instead of
+            // transferring them would have passed here forever.
+            var simA = Sim.Create(new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed },
+                                  new EconParams(), new FeatureFlags { HousingAuction = true });
+            double maxDriftA = 0;
+            simA.Run(300, s => maxDriftA = Math.Max(maxDriftA, Math.Abs(s.W.Ledger.Drift())));
+
+            Check("ledger conservation: money neither created nor destroyed (both market paths)",
+                  maxDrift < 1e-3 && maxDriftA < 1e-3,
+                  $"max |drift| over 300 ticks = {maxDrift:E2} posted-curve, {maxDriftA:E2} auction");
         }
 
         private static void ShadowMode(ulong seed)

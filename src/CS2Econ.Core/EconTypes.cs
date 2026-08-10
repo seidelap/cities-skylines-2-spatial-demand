@@ -454,6 +454,18 @@ namespace CS2Econ.Core
         /// MaxRentShare because a household stretches for somewhere it really
         /// wants; below 1 because it still has to eat.</summary>
         public double MaxRentOfIncome = 0.55;
+        /// <summary>How many individuals the REGION sends to look at the city
+        /// per tick, before prominence. Region-side only: it must not read any
+        /// measure of how good the city is, or it becomes the citywide
+        /// attractiveness scalar again wearing a different hat.</summary>
+        public double RegionOfferRate = 2.5;
+        /// <summary>Mean rent share, used only to recover a prospect's income
+        /// from its housing budget when deriving its ability to pay.</summary>
+        public double ProspectRentShareForCap = 0.30;
+        /// <summary>How long a household that would rather be elsewhere waits
+        /// before actually going. Its own patience, scaled by its own moving
+        /// cost at the use site.</summary>
+        public int DeclinePatienceTicks = 40;
         /// <summary>Cap on column-generation rounds: each one shows every
         /// envious household the place it wishes it had been offered, then
         /// clears again. This is a BACKSTOP, not a target — the loop normally
