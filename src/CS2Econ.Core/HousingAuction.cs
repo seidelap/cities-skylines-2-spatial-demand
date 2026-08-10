@@ -136,6 +136,15 @@ namespace CS2Econ.Core
         /// a plain list because capacity is small (a submarket is one density at
         /// one cluster at one level); the min is found by scan.</summary>
         private List<(double bid, int hh)>[] _slots = Array.Empty<List<(double, int)>>();
+        /// <summary>The (density, cluster) keys that hold ANY lettable stock,
+        /// and for each the levels that do. The submarket space is
+        /// 2 × clusters × 5 levels — about 1960 on the reference city — and
+        /// roughly three quarters of it is empty at any moment. The repair
+        /// scan is the one place that walks all of it per household per round,
+        /// so it walked ~1500 dead entries every time to `continue` on them.</summary>
+        private readonly List<int> _liveKc = new List<int>();
+        private readonly List<int> _liveKcStart = new List<int>();
+        private readonly List<int> _liveLevels = new List<int>();
 
         public static int Key(int k, int c, int C) => k * C + c;
         public static int Sub(int kc, int level, int C) => kc * Levels + (level - 1);
@@ -247,6 +256,16 @@ namespace CS2Econ.Core
                     condSum[sub] += pl.Condition * pl.Units; condCnt[sub] += pl.Units;
                 }
             }
+            _liveKc.Clear(); _liveKcStart.Clear(); _liveLevels.Clear();
+            for (int kc = 0; kc < 2 * C; kc++)
+            {
+                int start = _liveLevels.Count;
+                for (int l = 1; l <= Levels; l++)
+                    if (Capacity[Sub(kc, l, C)] > 0) _liveLevels.Add(l);
+                if (_liveLevels.Count > start) { _liveKc.Add(kc); _liveKcStart.Add(start); }
+            }
+            _liveKcStart.Add(_liveLevels.Count);          // sentinel
+
             for (int s = 0; s < nSub; s++)
             {
                 double cond = condCnt[s] > 0 ? condSum[s] / condCnt[s] : 1.0;
@@ -858,15 +877,36 @@ namespace CS2Econ.Core
                 // it is their sum.
                 double myEps = Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(myVal));
 
+                // Walk only the keys that hold stock, and hoist the part of a
+                // valuation that does not vary with level out of the level loop:
+                // the location premium and this household's own permanent taste
+                // for the place are per (density, cluster), while the level only
+                // scales the premium. The old form paid a hash and two logs for
+                // that taste once per LEVEL per submarket, over the whole
+                // 2×clusters×5 space including the three quarters of it that is
+                // empty — on the reference city, 1960 evaluations per household
+                // per repair round where 90 will do.
                 double bestGain = 0; int bestKC = -1;
-                for (int s = 0; s < nSub; s++)
+                for (int q = 0; q < _liveKc.Count; q++)
                 {
-                    if (Capacity[s] <= 0 || s == mine) continue;
-                    double val = ValueAt(i, s, p);
-                    double gain = (val - Price[s]) - mySur;
-                    double band = myEps + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
-                    if (gain <= band || gain <= bestGain) continue;
-                    bestGain = gain; bestKC = KcOf(s);
+                    int kc = _liveKc[q];
+                    int k = kc / C, c = kc - k * C;
+                    double bse = k == 1 ? _base1[i] : _base0[i];
+                    if (bse <= 0) continue;
+                    double prem = bse * _premium[_seg[i]][c];
+                    double taste = Taste(i, kc, bse, p) + (kc == _homeKC[i] ? _homeBonus[i] : 0);
+                    int lo = _liveKcStart[q], hi = _liveKcStart[q + 1];
+                    for (int t = lo; t < hi; t++)
+                    {
+                        int l = _liveLevels[t];
+                        int sub = Sub(kc, l, C);
+                        if (sub == mine) continue;
+                        double val = SoftCap(prem * (p.Quality(l) / p.Quality(1)) + taste, _cap[i]);
+                        double gain = (val - Price[sub]) - mySur;
+                        double band = myEps + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
+                        if (gain <= band || gain <= bestGain) continue;
+                        bestGain = gain; bestKC = kc;
+                    }
                 }
                 if (bestKC < 0) continue;
 
