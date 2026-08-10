@@ -78,6 +78,19 @@ namespace CS2Econ.Core
         /// willingness to pay at the place it won.</summary>
         public double[] WinningBid = Array.Empty<double>();
 
+        public enum Outcome : byte { Housed = 0, Declined = 1, Outbid = 2 }
+        /// <summary>WHY a household ended up with no home, which the assignment
+        /// alone cannot say. Two very different things were collapsed into −1:
+        ///   Declined — nothing in this city beat ITS OWN reservation. This
+        ///              household should leave; the city simply is not worth it
+        ///              to them, and that is a decision they made.
+        ///   Outbid   — it wanted a place and could not win one. This household
+        ///              stays and keeps looking; it is queue, not exit.
+        /// Treating them alike is what forces migration to be modelled from the
+        /// top: with the difference recorded, departure is just the first case
+        /// and needs no citywide out-migration elasticity at all.</summary>
+        public Outcome[] Why = Array.Empty<Outcome>();
+
         // ---- telemetry -----------------------------------------------------
         public int Rounds, Bids, Evictions, Unassigned;
         /// <summary>Column-generation rounds actually used, and whether the loop
@@ -200,7 +213,7 @@ namespace CS2Econ.Core
             int nh = w.Households.Count;
             if (Assignment.Length != nh)
             {
-                Assignment = new int[nh]; WinningBid = new double[nh];
+                Assignment = new int[nh]; WinningBid = new double[nh]; Why = new Outcome[nh];
                 _shortStart = new int[nh]; _shortCount = new int[nh];
                 _base0 = new double[nh]; _base1 = new double[nh]; _cap = new double[nh];
                 _outside = new double[nh];
@@ -518,7 +531,8 @@ namespace CS2Econ.Core
                 Price[s] = Reserve[s];
                 Admitted[s] = double.PositiveInfinity;
             }
-            for (int i = 0; i < w.Households.Count; i++) { Assignment[i] = -1; WinningBid[i] = 0; }
+            for (int i = 0; i < w.Households.Count; i++)
+            { Assignment[i] = -1; WinningBid[i] = 0; Why[i] = Outcome.Outbid; }
             _queue.Clear();
             for (int i = 0; i < w.Households.Count; i++)
                 if (_shortCount[i] > 0) _queue.Add(i);
@@ -578,7 +592,14 @@ namespace CS2Econ.Core
                 }
 
                 // Nothing in this city beats leaving it.
-                if (bestSub < 0 || bestSur <= _outside[i]) { Assignment[i] = -1; Unassigned++; continue; }
+                if (bestSub < 0 || bestSur <= _outside[i])
+                {
+                    Assignment[i] = -1; Unassigned++;
+                    // Nothing it could win at all is being OUTBID; something it
+                    // could win but would rather not have is DECLINING.
+                    Why[i] = bestSub < 0 ? Outcome.Outbid : Outcome.Declined;
+                    continue;
+                }
 
                 // The bid: what this household will pay here given what it
                 // gives up by not taking its next best. This is the quantity the
@@ -608,7 +629,7 @@ namespace CS2Econ.Core
                 if (slot.Count < Capacity[bestSub])
                 {
                     slot.Add((bid, i));
-                    Assignment[i] = bestSub; WinningBid[i] = bid;
+                    Assignment[i] = bestSub; WinningBid[i] = bid; Why[i] = Outcome.Housed;
                     if (slot.Count == Capacity[bestSub]) SetPrices(bestSub, band: eps);
                     continue;
                 }
@@ -620,8 +641,8 @@ namespace CS2Econ.Core
                 {
                     int loser = slot[weakAt].hh;
                     slot[weakAt] = (bid, i);
-                    Assignment[i] = bestSub; WinningBid[i] = bid;
-                    Assignment[loser] = -1; WinningBid[loser] = 0;
+                    Assignment[i] = bestSub; WinningBid[i] = bid; Why[i] = Outcome.Housed;
+                    Assignment[loser] = -1; WinningBid[loser] = 0; Why[loser] = Outcome.Outbid;
                     Evictions++;
                     SetPrices(bestSub, weak, eps);
                     _queue.Add(loser);                      // it bids again, elsewhere
