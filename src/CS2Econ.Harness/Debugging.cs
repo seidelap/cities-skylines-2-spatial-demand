@@ -428,6 +428,10 @@ namespace CS2Econ.Harness
             double stock = 0;
             for (int s = 0; s < a.Capacity.Length; s++) stock += a.Capacity[s];
 
+            Console.WriteLine($"phases(ms, cumulative over run): submarkets={HousingAuction.MsSubmarkets:F0} "
+                + $"households={HousingAuction.MsHouseholds:F0} auction={HousingAuction.MsAuction:F0} "
+                + $"repairScan={HousingAuction.MsRepairScan:F0} shadow={HousingAuction.MsShadow:F0}");
+            Console.WriteLine($"calls: valueAtSlot={HousingAuction.CallsValueSlot:N0} softCap={HousingAuction.CallsSoftCap:N0}");
             Console.WriteLine($"solve: bids={a.Bids} evictions={a.Evictions} converged={a.Converged} "
                 + $"unassigned={a.Unassigned}");
             Console.WriteLine($"world: pop={pop} housed={housed} lettable units={stock:F0} "

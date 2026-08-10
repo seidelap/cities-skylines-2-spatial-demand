@@ -100,6 +100,14 @@ namespace CS2Econ.Core
         public bool RepairClean;
         public bool Converged;
 
+        /// <summary>Where the solve's time actually goes, accumulated across
+        /// every call. Added because a previous optimization round predicted a
+        /// 4.4x speedup from narrowing the repair scan and measured 1.15x: the
+        /// term that was narrowed was not the dominant one. Guessing at a
+        /// profile is how that happens twice.</summary>
+        public static double MsSubmarkets, MsHouseholds, MsAuction, MsRepairScan, MsShadow;
+        public static long CallsValueSlot, CallsValueAt, CallsSoftCap;
+
         // ---- working state -------------------------------------------------
         private int[] _shortStart = Array.Empty<int>();  // per household, into _shortItems
         private int[] _shortCount = Array.Empty<int>();
@@ -142,6 +150,15 @@ namespace CS2Econ.Core
         /// roughly three quarters of it is empty at any moment. The repair
         /// scan is the one place that walks all of it per household per round,
         /// so it walked ~1500 dead entries every time to `continue` on them.</summary>
+        /// <summary>Per (household, live key): the taste term the repair scan
+        /// needs. It is a pure function of the pair and never changes within a
+        /// solve, but the scan recomputed it — a hash and two logs — once per
+        /// key per household PER ROUND, up to twelve times over. Held as float
+        /// because it is a taste shock, not money: the band it is compared
+        /// against is half a percent of value, which is four orders of magnitude
+        /// above float precision here.</summary>
+        private float[] _scanTaste = Array.Empty<float>();
+        private int _scanStride;
         private readonly List<int> _liveKc = new List<int>();
         private readonly List<int> _liveKcStart = new List<int>();
         private readonly List<int> _liveLevels = new List<int>();
@@ -161,9 +178,15 @@ namespace CS2Econ.Core
             int nSub = S;
             EnsureArrays(w, nSub);
 
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             BuildSubmarkets(w, p, nSub);
+            MsSubmarkets += sw.Elapsed.TotalMilliseconds; sw.Restart();
             BuildHouseholds(w, acc, p);
+            MsHouseholds += sw.Elapsed.TotalMilliseconds; sw.Restart();
+            BuildScanTaste(w, p);
+            MsHouseholds += sw.Elapsed.TotalMilliseconds; sw.Restart();
             RunAuction(w, p, nSub);
+            MsAuction += sw.Elapsed.TotalMilliseconds; sw.Restart();
             // COLUMN GENERATION. A shortlist ranked price-free is stable and
             // cheap, and on its own it is not enough: a household whose top
             // places are all dear never SEES the cheap submarket where it would
@@ -194,12 +217,16 @@ namespace CS2Econ.Core
             for (int round = 0; round < Math.Max(0, p.AuctionRepairRounds); round++)
             {
                 int added = AddEnviedColumns(w, p, nSub);
+                MsRepairScan += sw.Elapsed.TotalMilliseconds; sw.Restart();
                 if (added == 0) { RepairClean = true; break; }
                 RepairRounds++;
                 RunAuction(w, p, nSub);
+                MsAuction += sw.Elapsed.TotalMilliseconds; sw.Restart();
             }
             if (p.AuctionRepairRounds <= 0) RepairClean = true;   // repair disabled on purpose
+            sw.Restart();
             BuildShadow(w, p, nSub);
+            MsShadow += sw.Elapsed.TotalMilliseconds;
             Converged = Converged && RepairClean;
             // Keep this refresh's lists (repair columns included) for the next.
             if (_prevItems.Length != _shortItems.Length) _prevItems = new int[_shortItems.Length];
@@ -493,7 +520,9 @@ namespace CS2Econ.Core
         /// the same order, reading the frozen premium and taste instead of
         /// recomputing a hash and two logs per bid.</summary>
         private double ValueAtSlot(int i, int slot, int level, EconParams p)
-            => SoftCap(_slotPrem[slot] * (p.Quality(level) / p.Quality(1)) + _slotTaste[slot], _cap[i]);
+        { CallsValueSlot++; return SoftCapT(_slotPrem[slot] * (p.Quality(level) / p.Quality(1)) + _slotTaste[slot], _cap[i]); }
+
+        private static double SoftCapT(double v, double cap) { CallsSoftCap++; return SoftCap(v, cap); }
 
         /// <summary>Squash an unconstrained valuation against ability to pay.
         /// A HARD min was tried first and is wrong in a way worth recording: it
@@ -857,6 +886,31 @@ namespace CS2Econ.Core
         /// shortlists already contain everybody's best option, i.e. the solve is
         /// a true equilibrium over the whole market and not just over what each
         /// household happened to be offered.</summary>
+        /// <summary>Freeze the repair scan's taste term for every household
+        /// against every key that holds stock. One pass per solve replaces one
+        /// pass per round.</summary>
+        private void BuildScanTaste(WorldState w, EconParams p)
+        {
+            int nh = w.Households.Count;
+            _scanStride = _liveKc.Count;
+            long need = (long)nh * _scanStride;
+            if (need <= 0) { _scanTaste = Array.Empty<float>(); return; }
+            if (_scanTaste.Length != need) _scanTaste = new float[need];
+            for (int i = 0; i < nh; i++)
+            {
+                if (_shortCount[i] <= 0) continue;
+                int at = i * _scanStride;
+                for (int q = 0; q < _scanStride; q++)
+                {
+                    int kc = _liveKc[q];
+                    int k = kc / C;
+                    double bse = k == 1 ? _base1[i] : _base0[i];
+                    _scanTaste[at + q] = (float)(Taste(i, kc, bse, p)
+                                                 + (kc == _homeKC[i] ? _homeBonus[i] : 0));
+                }
+            }
+        }
+
         private int AddEnviedColumns(WorldState w, EconParams p, int nSub)
         {
             int added = 0;
@@ -894,14 +948,34 @@ namespace CS2Econ.Core
                     double bse = k == 1 ? _base1[i] : _base0[i];
                     if (bse <= 0) continue;
                     double prem = bse * _premium[_seg[i]][c];
-                    double taste = Taste(i, kc, bse, p) + (kc == _homeKC[i] ? _homeBonus[i] : 0);
+                    double taste = _scanTaste[i * _scanStride + q];
                     int lo = _liveKcStart[q], hi = _liveKcStart[q + 1];
                     for (int t = lo; t < hi; t++)
                     {
                         int l = _liveLevels[t];
                         int sub = Sub(kc, l, C);
                         if (sub == mine) continue;
-                        double val = SoftCap(prem * (p.Quality(l) / p.Quality(1)) + taste, _cap[i]);
+                        // SoftCap is monotone and bounded above by both its
+                        // argument and the cap, so min(max(raw,0), cap) is an
+                        // EXACT upper bound on the value — and therefore on the
+                        // gain. If even that bound cannot beat the best gain
+                        // found so far, or cannot clear the smallest band the
+                        // real value could produce, the answer is already known
+                        // and the exp() is wasted work. This is a skip, not an
+                        // approximation: nothing that could have won is dropped.
+                        //
+                        // It matters because the exp IS the scan, and the scan
+                        // is three quarters of the solve. Measured by phase:
+                        // repairScan 54.1s of 72.7s total, and after caching the
+                        // taste hash still 41.6s — the remainder is one
+                        // transcendental per (household, key, level, round),
+                        // about 2.5 billion of them over a 300-tick run.
+                        double raw = prem * (p.Quality(l) / p.Quality(1)) + taste;
+                        double upper = Math.Min(Math.Max(raw, 0), _cap[i]);
+                        double gainUpper = (upper - Price[sub]) - mySur;
+                        if (gainUpper <= bestGain || gainUpper <= myEps + p.AuctionEpsilon) continue;
+
+                        double val = SoftCap(raw, _cap[i]);
                         double gain = (val - Price[sub]) - mySur;
                         double band = myEps + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
                         if (gain <= band || gain <= bestGain) continue;
