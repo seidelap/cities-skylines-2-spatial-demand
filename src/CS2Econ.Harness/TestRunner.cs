@@ -32,6 +32,7 @@ namespace CS2Econ.Harness
             VacancyKernelConservation(seed);
             ClaimVacancyWash(seed);
             OccupancyChannel(seed);
+            AuctionEquilibrium(seed);
             ClearingPrice(seed);
             OccupiedStockCarriesRent(seed);
             CoopInstantRerate(seed);
@@ -679,6 +680,205 @@ namespace CS2Econ.Harness
                   $"cluster {c0} ({(clearedSelected ? "cleared" : "fallback")}) bid {bidFull:F3} (fill {fillFull:F2}) " +
                   $"at full occupancy → {bidEmpty:F3} (fill {fillEmpty:F2}) at 20 % " +
                   $"({(priceLeg ? "price leg" : vacancyLeg ? "vacancy leg" : "NO response")})");
+        }
+
+        /// <summary>The housing assignment market has to actually BE a
+        /// competitive equilibrium, and this is what that means, stated as
+        /// things that can fail. It runs whether or not the flag is on — it
+        /// builds its own auction-enabled city — so the mechanism stays under
+        /// test while it is still off by default.
+        ///
+        /// The envy scan deliberately sweeps EVERY submarket with stock, not
+        /// just the ones on a household's shortlist. Scanning the shortlist is
+        /// the cheap version and it is circular: a shortlist that wrongly
+        /// excluded the household's best option would be invisible to a check
+        /// that only ever looks inside it. Sweeping everything is the only way
+        /// this check can catch a broken shortlist, which is exactly the failure
+        /// mode most likely to hide (mutation M6 below).</summary>
+        private static void AuctionEquilibrium(ulong seed)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+            sim.Run(160);
+            var w = sim.W; var a = sim.Engine.Auction;
+
+            // (1) capacity is never oversubscribed, (2) no price below the
+            // owner's reserve, (3) the marginal tenant keeps its surplus:
+            // posted ≤ admitted, or the household that won a slot is paying more
+            // than it bid.
+            int over = 0, belowReserve = 0, inverted = 0, live = 0;
+            for (int s = 0; s < a.Capacity.Length; s++)
+            {
+                if (a.Capacity[s] <= 0) continue;
+                live++;
+                if (a.Filled[s] > a.Capacity[s]) over++;
+                if (a.Price[s] < a.Reserve[s] - 1e-9) belowReserve++;
+                if (a.Price[s] > a.Admitted[s] + 1e-9) inverted++;
+            }
+
+            // (4) INDIVIDUAL RATIONALITY: nobody is assigned a place worth less
+            // to it than walking away.
+            int irked = 0, housed = 0;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
+                int mine = a.Assignment[h.Id];
+                if (mine < 0) continue;
+                housed++;
+                if (a.ValueOf(h.Id, mine, p) - a.Price[mine] < p.OutsideOption - 1e-9) irked++;
+            }
+
+            // (5) NO ENVY, swept over every submarket that holds stock.
+            //
+            // The bar is 2ε, and that number is derived, not chosen. While a
+            // household holds a slot, the price there is at most its own bid
+            // (any higher and it would have been evicted), and its bid was its
+            // value minus its best alternative plus ε — so its surplus is within
+            // ε of that alternative, and every other price has only risen since.
+            // That is one ε. The second is on the other side: a submarket posts
+            // one ε BELOW the worst bid still holding a slot, so the surplus a
+            // household reads at somewhere else is overstated by that much
+            // against what it would actually have to pay to get in. Envy above
+            // 2ε is a real equilibrium violation; envy below it is the price of
+            // a finite auction.
+            int envy = 0; double worstRel = 0;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
+                int mine = a.Assignment[h.Id];
+                if (mine < 0) continue;
+                double myVal = a.ValueOf(h.Id, mine, p);
+                double mySur = myVal - a.Price[mine];
+                // The two ε's are measured against DIFFERENT valuations, so the
+                // band is their sum and not twice either one. The household bid
+                // with an ε proportional to what its OWN place is worth to it;
+                // the submarket it is looking at posts one ε below its own
+                // admitted bid, proportional to what THAT place is worth. Using
+                // 2ε of the envied place understated the bound wherever a
+                // household's own home was worth much more than the alternative
+                // — measured 1–8 households per seed sitting at 1.3–2.0% against
+                // a 1.0% bar, all of them this arithmetic rather than any
+                // disequilibrium.
+                double myEps = Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(myVal));
+                for (int s = 0; s < a.Capacity.Length; s++)
+                {
+                    if (a.Capacity[s] <= 0 || s == mine) continue;
+                    double val = a.ValueOf(h.Id, s, p);
+                    double gain = (val - a.Price[s]) - mySur;
+                    if (gain <= 0) continue;
+                    double band = myEps + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
+                    if (gain > band) { envy++; worstRel = Math.Max(worstRel, gain / Math.Max(1e-9, val)); }
+                    break;
+                }
+            }
+
+            // (6) THE MARKET CLEARS ON THE DEMAND SIDE. Two conditions, and
+            // they are the ones that turn "no envy" into "efficient".
+            //
+            //   (6a) a submarket with a free slot is priced at its reserve —
+            //        unsold goods do not hold a price above the seller's floor;
+            //   (6b) no household the auction left unassigned strictly prefers a
+            //        submarket that still has room.
+            //
+            // Adding these was not tidiness. Mutation testing put a
+            // first-come-first-served market (never evict a weaker holder) and a
+            // stale-price market (bidders read the reserve instead of the live
+            // price) through the checks above and BOTH passed every equilibrium
+            // condition — no envy, no oversubscription, everyone individually
+            // rational — because the price simply rose to price out whoever
+            // should have won. They died only on the convergence budget, which
+            // is luck: a subtler version that happened to converge would have
+            // walked straight through. The tell in both was households sitting
+            // unhoused next to rooms nobody was in, and nothing was looking at
+            // the unhoused at all.
+            int unsoldOverpriced = 0, strandedDemand = 0, unassignedChecked = 0;
+            for (int s = 0; s < a.Capacity.Length; s++)
+                if (a.Capacity[s] > a.Filled[s] && a.Price[s] > a.Reserve[s] + 1e-9) unsoldOverpriced++;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
+                if (a.Assignment[h.Id] >= 0) continue;
+                unassignedChecked++;
+                for (int s = 0; s < a.Capacity.Length; s++)
+                {
+                    if (a.Capacity[s] <= a.Filled[s]) continue;      // no room anyway
+                    double val = a.ValueOf(h.Id, s, p);
+                    double band = 2 * Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
+                    if (val - a.Price[s] > p.OutsideOption + band) { strandedDemand++; break; }
+                }
+            }
+
+            // (7) PAIRWISE STABILITY — the efficiency condition, and the only
+            // one here that is stated without reference to prices.
+            //
+            // No two housed households may both do better by trading places.
+            // This exists because mutation M5 — restrict every household to its
+            // initial shortlist and never repair it — SURVIVED everything above.
+            // That is not a bug in those conditions, it is the first welfare
+            // theorem being conditional: no-envy at equilibrium prices implies
+            // efficiency only when the prices are an equilibrium of the WHOLE
+            // market, and a shortlisted solve is an equilibrium of the market it
+            // was shown. The unshown submarkets are priced at what they are
+            // worth, so nobody reads them as a bargain and no envy appears —
+            // while the assignment quietly leaves value on the table. A swap
+            // test cannot be fooled that way: it never looks at a price.
+            //
+            // O(housed²) and deliberately exhaustive. This is a test.
+            var occ = new List<int>();
+            foreach (var h in w.Households)
+                if (h.ExitedTick < 0 && (uint)h.Id < (uint)a.Assignment.Length && a.Assignment[h.Id] >= 0)
+                    occ.Add(h.Id);
+            int swaps = 0; double bestSwapGain = 0;
+            for (int x = 0; x < occ.Count && swaps == 0; x++)
+            {
+                int i = occ[x], si = a.Assignment[i];
+                double vii = a.ValueOf(i, si, p);
+                for (int y = x + 1; y < occ.Count; y++)
+                {
+                    int j = occ[y], sj = a.Assignment[j];
+                    if (sj == si) continue;
+                    double gain = (a.ValueOf(i, sj, p) + a.ValueOf(j, si, p)) - (vii + a.ValueOf(j, sj, p));
+                    // Same ε accounting as the envy sweep: a finite auction
+                    // leaves each side within its own ε of its best, so a swap
+                    // has to beat both to count.
+                    double band = Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vii))
+                                + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(a.ValueOf(j, sj, p)));
+                    if (gain > band) { swaps++; bestSwapGain = gain; break; }
+                }
+            }
+
+            // (8) DETERMINISM of the solve itself: two solves of the SAME world
+            // must agree exactly. The solve is a pure function of (world,
+            // access, params) — nothing in it touches the world RNG — and this
+            // is what holds that true. Note both solves run here, AFTER the run
+            // has settled: comparing the engine's last solve against a fresh one
+            // would compare two different worlds, because the engine moves
+            // households in response to the first and the home bonus follows
+            // them. That version of this check read 129 households of drift and
+            // meant nothing.
+            a.Solve(w, sim.Engine.Access, p);
+            var before = (int[])a.Assignment.Clone();
+            var beforePrice = (double[])a.Price.Clone();
+            a.Solve(w, sim.Engine.Access, p);
+            int drift = 0; double priceDrift = 0;
+            for (int i = 0; i < before.Length; i++) if (before[i] != a.Assignment[i]) drift++;
+            for (int s = 0; s < beforePrice.Length; s++)
+                priceDrift = Math.Max(priceDrift, Math.Abs(beforePrice[s] - a.Price[s]));
+
+            bool ok = live >= 20 && over == 0 && belowReserve == 0 && inverted == 0
+                      && irked == 0 && envy == 0 && unsoldOverpriced == 0 && strandedDemand == 0
+                      && swaps == 0 && drift == 0 && priceDrift < 1e-9 && a.Converged;
+            Check("housing auction is a competitive equilibrium (capacity, reserve, IR, no-envy, deterministic)",
+                  ok,
+                  $"{live} live submarkets, {housed} housed: oversubscribed {over}, below-reserve {belowReserve}, "
+                  + $"posted>admitted {inverted}, individually-irrational {irked}, "
+                  + $"envious beyond 2ε {envy} (worst {worstRel:P2} of value), "
+                  + $"unsold-above-reserve {unsoldOverpriced}, stranded demand {strandedDemand}"
+                  + $"/{unassignedChecked} unassigned, improving swaps {swaps} (best {bestSwapGain:F3}); "
+                  + $"re-solve drift {drift} households / {priceDrift:E1} price; converged {a.Converged} "
+                  + $"(repair {a.RepairRounds} rounds, clean {a.RepairClean}) "
+                  + $"({a.Bids} bids, {a.Evictions} evictions)");
         }
 
         private static void ClaimVacancyWash(ulong seed)

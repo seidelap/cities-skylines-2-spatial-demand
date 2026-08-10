@@ -424,6 +424,11 @@ namespace CS2Econ.Core
         /// result is an ε-equilibrium (nobody envies another's place by more
         /// than ε).</summary>
         public double AuctionEpsilon = 0.002;
+        /// <summary>ε as a fraction of the value being bid for. The binding one
+        /// in practice: a flat ε has to climb from the reserve to the top of the
+        /// market in fixed steps and pays for every one, while a proportional ε
+        /// bounds residual envy at a fixed fraction of what a place is worth.</summary>
+        public double AuctionEpsilonRel = 0.005;
         /// <summary>Bids per household before the solve gives up and reports
         /// Converged = false. A backstop, not a target: a warm market settles in
         /// a small multiple of one bid each.</summary>
@@ -436,6 +441,22 @@ namespace CS2Econ.Core
         /// values staying put. Turns a lump into a flow so it is commensurate
         /// with a rent.</summary>
         public int MoveAmortTicks = 60;
+        /// <summary>Hard ceiling on a household's housing bid as a share of its
+        /// own income — the bid-rent budget constraint. Above its own
+        /// MaxRentShare because a household stretches for somewhere it really
+        /// wants; below 1 because it still has to eat.</summary>
+        public double MaxRentOfIncome = 0.55;
+        /// <summary>Cap on column-generation rounds: each one shows every
+        /// envious household the place it wishes it had been offered, then
+        /// clears again. This is a BACKSTOP, not a target — the loop normally
+        /// runs out of violations around round 6 and stops there. It has to be
+        /// comfortably above that: at a cap of 4 the loop ended on a re-solve
+        /// nobody scanned and left 2–6 households per seed envious by up to 2%
+        /// of value, and at 8 it reached zero envy but still could not say so,
+        /// because a cap that binds means the last solve was never checked.
+        /// Zero disables the repair entirely and leaves the result an
+        /// equilibrium only over the initial shortlists.</summary>
+        public int AuctionRepairRounds = 12;
         /// <summary>How much a household favours the shop it already uses, in
         /// the units of its shop taste shock (Gumbel, σ ≈ 1.28). Switching
         /// friction: people go back to their usual shop unless another is

@@ -80,6 +80,11 @@ namespace CS2Econ.Core
 
         // ---- telemetry -----------------------------------------------------
         public int Rounds, Bids, Evictions, Unassigned;
+        /// <summary>Column-generation rounds actually used, and whether the loop
+        /// ended because nothing was left to repair (true) or because it ran out
+        /// of rounds (false).</summary>
+        public int RepairRounds;
+        public bool RepairClean;
         public bool Converged;
 
         // ---- working state -------------------------------------------------
@@ -91,6 +96,8 @@ namespace CS2Econ.Core
         private double[] _homeBonus = Array.Empty<double>();
         private int[] _homeKC = Array.Empty<int>();      // (k*C+c) of current home, −1
         private int[] _seg = Array.Empty<int>();
+        private int _stride;
+        private double[] _cap = Array.Empty<double>();   // ability to pay
         private double[][] _premium = Array.Empty<double[]>(); // [segment][cluster]
         private readonly List<int> _queue = new List<int>();
         /// <summary>Per submarket, the bids currently holding its slots. Kept as
@@ -116,7 +123,43 @@ namespace CS2Econ.Core
             BuildSubmarkets(w, p, nSub);
             BuildHouseholds(w, acc, p);
             RunAuction(w, p, nSub);
+            // COLUMN GENERATION. A shortlist ranked price-free is stable and
+            // cheap, and on its own it is not enough: a household whose top
+            // places are all dear never SEES the cheap submarket where it would
+            // be much better off, so it settles for less and the outcome is not
+            // an equilibrium at all. Swept over every submarket with stock, 865
+            // of 1817 housed households strictly preferred somewhere they had
+            // never been shown, the worst by 43% of what the place was worth to
+            // them — and a no-envy check that only looks inside the shortlist
+            // cannot see any of it, which is precisely why the acceptance check
+            // sweeps everything.
+            //
+            // So: solve, then ask each household what it wishes it had been
+            // shown, put that on its list, and solve again. This is column
+            // generation, and it converges fast because each round only has to
+            // repair households that are actually envious. Rounds are capped;
+            // if the cap binds, Converged says so rather than the result quietly
+            // pretending to be an equilibrium.
+            //
+            // The loop must END on a CLEAN SCAN, not on a solve. Testing for
+            // violations before each re-solve and then stopping on a round cap
+            // leaves the last solve's own envy unmeasured — measured 2–6
+            // households per seed still envious by up to 2% of value, all of it
+            // created by a final round nobody looked at. RepairClean records
+            // whether the loop actually ran out of violations or just ran out of
+            // rounds, and Converged carries it, so a solve that gave up says so
+            // instead of presenting itself as an equilibrium.
+            RepairRounds = 0; RepairClean = false;
+            for (int round = 0; round < Math.Max(0, p.AuctionRepairRounds); round++)
+            {
+                int added = AddEnviedColumns(w, p, nSub);
+                if (added == 0) { RepairClean = true; break; }
+                RepairRounds++;
+                RunAuction(w, p, nSub);
+            }
+            if (p.AuctionRepairRounds <= 0) RepairClean = true;   // repair disabled on purpose
             BuildShadow(w, p, nSub);
+            Converged = Converged && RepairClean;
         }
 
         private void EnsureArrays(WorldState w, int nSub)
@@ -134,7 +177,7 @@ namespace CS2Econ.Core
             {
                 Assignment = new int[nh]; WinningBid = new double[nh];
                 _shortStart = new int[nh]; _shortCount = new int[nh];
-                _base0 = new double[nh]; _base1 = new double[nh];
+                _base0 = new double[nh]; _base1 = new double[nh]; _cap = new double[nh];
                 _homeBonus = new double[nh]; _homeKC = new int[nh]; _seg = new int[nh];
             }
         }
@@ -197,9 +240,14 @@ namespace CS2Econ.Core
                 }
             }
 
+            // Stride carries slack for the repair rounds, so a column added
+            // later APPENDS rather than displacing something — and in
+            // particular never displaces the household's own assignment, which
+            // would make the next round thrash instead of converge.
             int K = Math.Max(2, p.AuctionShortlist);
+            _stride = K + Math.Max(0, p.AuctionRepairRounds);
             int nh = w.Households.Count;
-            if (_shortItems.Length != nh * K) _shortItems = new int[nh * K];
+            if (_shortItems.Length != nh * _stride) _shortItems = new int[nh * _stride];
 
             // Scratch for the shortlist selection: a K-sized insertion list.
             Span<double> bestV = stackalloc double[64];
@@ -209,7 +257,7 @@ namespace CS2Econ.Core
             for (int i = 0; i < nh; i++)
             {
                 var h = w.Households[i];
-                _shortStart[i] = i * K; _shortCount[i] = 0;
+                _shortStart[i] = i * _stride; _shortCount[i] = 0;
                 Assignment[i] = -1; WinningBid[i] = 0;
                 if (h.ExitedTick >= 0) { _homeKC[i] = -1; continue; }
 
@@ -219,6 +267,20 @@ namespace CS2Econ.Core
                 double budget = h.RentShare * income;
                 _base0[i] = budget * h.DensityAppeal(ZoneKind.ResidentialLow);
                 _base1[i] = budget * h.DensityAppeal(ZoneKind.ResidentialHigh);
+                // The budget constraint. A bidder cannot bid what it cannot pay,
+                // and this is the one place the model has ever had to say so out
+                // loud: under the old curve the marginal bidder was always poor,
+                // so the realized price never approached the top of the
+                // multiplier stack and nobody noticed that
+                // base × premium × BidAccessScale × quality reaches ~2.3× a
+                // household's own declared housing budget. An auction charges
+                // what the winner bids, so it surfaced immediately — p90 across
+                // live submarkets came out at 41 per tick against a median
+                // household income of 10, rents at 3× income, every winner
+                // instantly insolvent. This is the standard bid-rent ceiling:
+                // whatever a place is worth to you, you bid at most what your
+                // income can carry.
+                _cap[i] = p.MaxRentOfIncome * income;
                 _homeKC[i] = h.HomeParcel >= 0 && (uint)w.Parcels[h.HomeParcel].Cluster < (uint)C
                     ? Key(w.Parcels[h.HomeParcel].Use == ZoneKind.ResidentialHigh ? 1 : 0,
                           w.Parcels[h.HomeParcel].Cluster, C)
@@ -244,8 +306,8 @@ namespace CS2Econ.Core
                     for (int c = 0; c < C; c++)
                     {
                         int kc = Key(k, c, C);
-                        double v = bse * _premium[h.Segment][c] + Taste(h.Id, kc, bse, p);
-                        if (kc == _homeKC[i]) v += _homeBonus[i];
+                        double v = SoftCap(bse * _premium[h.Segment][c] + Taste(h.Id, kc, bse, p), _cap[i])
+                                   + (kc == _homeKC[i] ? _homeBonus[i] : 0);
                         // Anything worth less than leaving the city is not worth
                         // tracking — the caller's own suggestion, and it is what
                         // bounds K honestly instead of by a magic number. It
@@ -285,10 +347,25 @@ namespace CS2Econ.Core
                         }
                     }
                 }
-                for (int q = 0; q < cnt; q++) _shortItems[i * K + q] = bestKC[q];
+                for (int q = 0; q < cnt; q++) _shortItems[i * _stride + q] = bestKC[q];
                 _shortCount[i] = cnt;
             }
         }
+
+        /// <summary>Squash an unconstrained valuation against ability to pay.
+        /// A HARD min was tried first and is wrong in a way worth recording: it
+        /// makes the value function FLAT for every household whose valuation
+        /// exceeds its ceiling, so every rich household values every good
+        /// location identically and the whole top of the market prices at one
+        /// number — measured p10 3.38, p50 7.16, p90 7.19, a 2.1× spread with
+        /// the geography squeezed out of it. cap·(1 − e^(−v/cap)) is monotone
+        /// everywhere, is v itself while v is small against the ceiling, and
+        /// approaches the ceiling without reaching it, so ordering survives all
+        /// the way up. What is left driving rent geography is then income
+        /// sorting — which marginal bidder ends up at which door — and that is
+        /// the mechanism a land-value model wants doing the work.</summary>
+        private static double SoftCap(double v, double cap)
+            => cap <= 1e-9 ? 0 : cap * (1 - Math.Exp(-Math.Max(0, v) / cap));
 
         /// <summary>This household's own permanent premium for this exact place,
         /// in money. Gumbel via the inverse CDF of a stable hash, so it never
@@ -311,12 +388,26 @@ namespace CS2Econ.Core
             double v = bse * _premium[_seg[i]][c] * (p.Quality(LevelOf(sub)) / p.Quality(1))
                        + Taste(i, kc, bse, p);
             if (kc == _homeKC[i]) v += _homeBonus[i];
-            return v;
+            return SoftCap(v, _cap[i]);
         }
 
         // ------------------------------------------------------------------
         private void RunAuction(WorldState w, EconParams p, int nSub)
         {
+            // Each round starts from an empty market. The repair rounds call
+            // straight back in here, and leaving the previous round's slots
+            // standing meant every household bid a second time for a market
+            // already holding it — households evicting themselves, the loser
+            // bookkeeping unwinding, and the city emptying: 1817 housed became
+            // 264 (measured). A round is a clean clearing at enriched
+            // shortlists, not an increment on the last one.
+            for (int s = 0; s < nSub; s++)
+            {
+                _slots[s].Clear();
+                Price[s] = Reserve[s];
+                Admitted[s] = double.PositiveInfinity;
+            }
+            for (int i = 0; i < w.Households.Count; i++) { Assignment[i] = -1; WinningBid[i] = 0; }
             _queue.Clear();
             for (int i = 0; i < w.Households.Count; i++)
                 if (_shortCount[i] > 0) _queue.Add(i);
@@ -329,7 +420,7 @@ namespace CS2Econ.Core
             // envies another's place by more than ε — which is the standard
             // Bertsekas trade and is far below the granularity anything
             // downstream can see.
-            double eps = Math.Max(1e-6, p.AuctionEpsilon);
+            double epsAbs = Math.Max(1e-9, p.AuctionEpsilon);
             long budget = (long)p.AuctionBidBudget * Math.Max(1, w.Households.Count);
 
             int head = 0;
@@ -367,14 +458,31 @@ namespace CS2Econ.Core
                 // old code was missing — it ranked raw willingness to pay, which
                 // ignores that a household with a good second choice will not
                 // chase its first very far.
-                double bid = bestVal - Math.Max(nextSur, p.OutsideOption) + eps;
+                // ε is RELATIVE to what is being bid for. As a flat absolute it
+                // has to climb from the owner's reserve to a bid of 170 in steps
+                // of 0.002, and the ascent pays for every one of them: 371k bids
+                // and 189k evictions for 5.5k households, i.e. each household
+                // thrown out ~34 times. Proportional ε bounds the residual envy
+                // at a fixed FRACTION of the bid instead of a fixed number of
+                // currency units, which is both cheaper and the more meaningful
+                // guarantee — nobody envies another's place by more than that
+                // fraction of what the place is worth to them.
+                double eps = Math.Max(epsAbs, p.AuctionEpsilonRel * Math.Abs(bestVal));
+                // Never above what the place is worth to you net of walking
+                // away. Without the cap the +ε can push a bid past its own
+                // value when the household has no alternative worth anything —
+                // and then it holds a slot at a price above its own valuation,
+                // which is an individually irrational assignment (measured: 2 of
+                // 1817). ε buys termination; it must not buy a bad trade.
+                double bid = Math.Min(bestVal - p.OutsideOption,
+                                      bestVal - Math.Max(nextSur, p.OutsideOption) + eps);
 
                 var slot = _slots[bestSub];
                 if (slot.Count < Capacity[bestSub])
                 {
                     slot.Add((bid, i));
                     Assignment[i] = bestSub; WinningBid[i] = bid;
-                    if (slot.Count == Capacity[bestSub]) SetPrices(bestSub);
+                    if (slot.Count == Capacity[bestSub]) SetPrices(bestSub, band: eps);
                     continue;
                 }
 
@@ -388,7 +496,7 @@ namespace CS2Econ.Core
                     Assignment[i] = bestSub; WinningBid[i] = bid;
                     Assignment[loser] = -1; WinningBid[loser] = 0;
                     Evictions++;
-                    SetPrices(bestSub, weak);
+                    SetPrices(bestSub, weak, eps);
                     _queue.Add(loser);                      // it bids again, elsewhere
                 }
                 else
@@ -396,7 +504,7 @@ namespace CS2Econ.Core
                     // It cannot win here at this price. Record it as the queue
                     // behind the door and re-bid: the loop above will now pick
                     // its next best, because Price[bestSub] has risen past it.
-                    SetPrices(bestSub, bid);
+                    SetPrices(bestSub, bid, eps);
                     _queue.Add(i);
                 }
                 Rounds++;
@@ -418,7 +526,7 @@ namespace CS2Econ.Core
         /// admitted is the worst that did. An arriving challenger raises the
         /// posted price the moment it is turned away, which is what makes the
         /// posted number the FIRST EXCLUDED bid rather than a guess at one.</summary>
-        private void SetPrices(int sub, double rejected = double.NegativeInfinity)
+        private void SetPrices(int sub, double rejected = double.NegativeInfinity, double band = 0)
         {
             var slot = _slots[sub];
             double min = double.PositiveInfinity;
@@ -426,9 +534,27 @@ namespace CS2Econ.Core
             Admitted[sub] = slot.Count > 0 ? min : Reserve[sub];
             if (slot.Count >= Capacity[sub] && Capacity[sub] > 0)
             {
-                double post = Math.Max(Reserve[sub], rejected);
-                if (post > Price[sub]) { Price[sub] = Math.Min(post, Admitted[sub]); Excluded[sub]++; }
+                // What a challenger must actually beat is the WORST BID STILL
+                // HOLDING A SLOT. Posting the last recorded rejection instead
+                // let the two drift apart: a submarket that turned somebody away
+                // early and then filled up with much stronger bids kept posting
+                // the stale low number, so households read a price they could
+                // never have obtained a unit at and the no-envy sweep lit up —
+                // 31 households envious by up to 4.2% of value, all of it this
+                // gap rather than any real disequilibrium.
+                //
+                // Posting `admitted` exactly would leave the marginal tenant
+                // with no surplus at all, which is the textbook competitive
+                // outcome but loses the design's property that every admitted
+                // tenant is strictly better off inside than out. One ε below it
+                // keeps that and is the honest estimate of the first excluded
+                // challenger, which in an ε-auction sits within ε of the last
+                // admitted one.
+                double post = Math.Max(Reserve[sub], Math.Max(rejected, Admitted[sub] - band));
+                Price[sub] = Math.Min(post, Admitted[sub]);
+                if (rejected > double.NegativeInfinity) Excluded[sub]++;
             }
+            else if (Capacity[sub] > 0) Price[sub] = Reserve[sub];
         }
 
         /// <summary>Price per unit at a submarket, for callers that ask about a
@@ -475,6 +601,55 @@ namespace CS2Econ.Core
             int r = Math.Min(ShadowDepth, Math.Max(1, rank)) - 1;
             if (r >= ShadowCount[sub]) return 0;      // queue shorter than the ask
             return Shadow[sub * ShadowDepth + r];
+        }
+
+        /// <summary>For each household, find the submarket it would most like
+        /// to switch to at current prices and is not being shown, and add it to
+        /// its shortlist. Returns how many were added; zero means the current
+        /// shortlists already contain everybody's best option, i.e. the solve is
+        /// a true equilibrium over the whole market and not just over what each
+        /// household happened to be offered.</summary>
+        private int AddEnviedColumns(WorldState w, EconParams p, int nSub)
+        {
+            int added = 0;
+            for (int i = 0; i < w.Households.Count; i++)
+            {
+                int n = _shortCount[i];
+                if (n <= 0) continue;
+                int mine = Assignment[i];
+                double myVal = mine >= 0 ? ValueAt(i, mine, p) : 0;
+                double mySur = mine >= 0 ? myVal - Price[mine] : p.OutsideOption;
+                // The repair's threshold has to BE the equilibrium threshold.
+                // Chasing anything stricter means the loop never runs out of
+                // work: it kept finding "violations" inside the band the result
+                // is allowed to sit in, added a column, re-solved, and found
+                // more — 12 rounds with zero real envy and still reporting it
+                // had not finished. Same band here as in the acceptance check,
+                // and the two ε's are measured against different valuations, so
+                // it is their sum.
+                double myEps = Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(myVal));
+
+                double bestGain = 0; int bestKC = -1;
+                for (int s = 0; s < nSub; s++)
+                {
+                    if (Capacity[s] <= 0 || s == mine) continue;
+                    double val = ValueAt(i, s, p);
+                    double gain = (val - Price[s]) - mySur;
+                    double band = myEps + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
+                    if (gain <= band || gain <= bestGain) continue;
+                    bestGain = gain; bestKC = KcOf(s);
+                }
+                if (bestKC < 0) continue;
+
+                int st = _shortStart[i];
+                bool have = false;
+                for (int q = 0; q < n; q++) if (_shortItems[st + q] == bestKC) { have = true; break; }
+                if (have) continue;                       // already listed, just outbid
+                if (n >= _stride) continue;               // list is full; nothing safe to drop
+                _shortItems[st + n] = bestKC; _shortCount[i] = n + 1;
+                added++;
+            }
+            return added;
         }
 
         private void BuildShadow(WorldState w, EconParams p, int nSub)
