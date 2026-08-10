@@ -139,7 +139,24 @@ namespace CS2Econ.Core
             // ±0.2 on density tolerance — heterogeneity a segment mean hides.
             RentShare = seg.MaxRentShare * (0.75 + 0.5 * u);
             DensityTol = MathUtil.Clamp(seg.DensityTolerance + 0.4 * (v - 0.5), 0, 1);
+            // What this household could get by living somewhere else in the
+            // region, as a share of its own housing budget. Its OUTSIDE OPTION,
+            // and the only honest place for one: an individual's alternative to
+            // this city is a fact about that individual, not a citywide index.
+            // The housing auction used a single shared constant here, so every
+            // household in the city walked away at exactly the same moment.
+            double r = SplitMix64.Hash01((ulong)Id * 2654435761UL + 47UL);
+            ReservationShare = 0.5 * r * r;      // skewed low: most people are movable
         }
+
+        /// <summary>Outside option as a fraction of this household's own housing
+        /// budget, drawn at birth. Held as a SHARE rather than a level so it
+        /// tracks the household's own income without ever being re-rolled — the
+        /// preference is fixed, what it is worth is not.</summary>
+        public double ReservationShare;
+
+        /// <summary>This household's outside option in money per tick.</summary>
+        public double Reservation(double budget) => ReservationShare * budget;
 
         /// <summary>How much this household values a unit of the given density
         /// — its OWN tolerance, not its segment's. Same floor rationale as

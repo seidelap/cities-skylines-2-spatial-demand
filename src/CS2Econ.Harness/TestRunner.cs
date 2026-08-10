@@ -726,7 +726,7 @@ namespace CS2Econ.Harness
                 int mine = a.Assignment[h.Id];
                 if (mine < 0) continue;
                 housed++;
-                if (a.ValueOf(h.Id, mine, p) - a.Price[mine] < p.OutsideOption - 1e-9) irked++;
+                if (a.ValueOf(h.Id, mine, p) - a.Price[mine] < a.OutsideOf(h.Id) - 1e-9) irked++;
             }
 
             // (5) NO ENVY, swept over every submarket that holds stock.
@@ -805,7 +805,7 @@ namespace CS2Econ.Harness
                     if (a.Capacity[s] <= a.Filled[s]) continue;      // no room anyway
                     double val = a.ValueOf(h.Id, s, p);
                     double band = 2 * Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
-                    if (val - a.Price[s] > p.OutsideOption + band) { strandedDemand++; break; }
+                    if (val - a.Price[s] > a.OutsideOf(h.Id) + band) { strandedDemand++; break; }
                 }
             }
 

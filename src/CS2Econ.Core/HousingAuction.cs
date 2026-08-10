@@ -112,6 +112,11 @@ namespace CS2Econ.Core
         private int[] _prevCount = Array.Empty<int>();
         private int _prevStride;
         private double[] _cap = Array.Empty<double>();   // ability to pay
+        /// <summary>Each household's OWN outside option in money per tick — what
+        /// it could get by living elsewhere in the region, drawn at birth as a
+        /// share of its own budget. This used to be one shared constant, so the
+        /// entire city's willingness to walk away moved as a block.</summary>
+        private double[] _outside = Array.Empty<double>();
         private double[][] _premium = Array.Empty<double[]>(); // [segment][cluster]
         private readonly List<int> _queue = new List<int>();
         /// <summary>Per submarket, the bids currently holding its slots. Kept as
@@ -198,6 +203,7 @@ namespace CS2Econ.Core
                 Assignment = new int[nh]; WinningBid = new double[nh];
                 _shortStart = new int[nh]; _shortCount = new int[nh];
                 _base0 = new double[nh]; _base1 = new double[nh]; _cap = new double[nh];
+                _outside = new double[nh];
                 _homeBonus = new double[nh]; _homeKC = new int[nh]; _seg = new int[nh];
             }
         }
@@ -325,6 +331,7 @@ namespace CS2Econ.Core
                 // whatever a place is worth to you, you bid at most what your
                 // income can carry.
                 _cap[i] = p.MaxRentOfIncome * income;
+                _outside[i] = h.Reservation(budget);
                 _homeKC[i] = h.HomeParcel >= 0 && (uint)w.Parcels[h.HomeParcel].Cluster < (uint)C
                     ? Key(w.Parcels[h.HomeParcel].Use == ZoneKind.ResidentialHigh ? 1 : 0,
                           w.Parcels[h.HomeParcel].Cluster, C)
@@ -382,7 +389,7 @@ namespace CS2Econ.Core
                         // also gives emigration a real trigger: a household with
                         // an EMPTY shortlist has nowhere in this city it would
                         // rather be than gone.
-                        if (v <= p.OutsideOption) continue;
+                        if (v <= _outside[i]) continue;
                         if (cnt < K)
                         {
                             bestV[cnt] = v; bestKC[cnt] = kc; cnt++;
@@ -537,7 +544,7 @@ namespace CS2Econ.Core
 
                 // Best and runner-up SURPLUS over this household's shortlist,
                 // at the prices standing right now.
-                double bestSur = double.NegativeInfinity, nextSur = p.OutsideOption;
+                double bestSur = double.NegativeInfinity, nextSur = _outside[i];
                 int bestSub = -1; double bestVal = 0;
                 int st = _shortStart[i], n = _shortCount[i];
                 for (int q = 0; q < n; q++)
@@ -548,6 +555,22 @@ namespace CS2Econ.Core
                         int sub = Sub(kc, l, C);
                         if (Capacity[sub] <= 0) continue;   // priced, but nothing to let
                         double val = ValueAtSlot(i, st + q, l, p);
+                        // Do not queue at a door you cannot open. To take a slot
+                        // that is already full you must beat the WORST BID still
+                        // holding one, and the most you can bid is your value net
+                        // of walking away — so if val − outside does not clear
+                        // Admitted, this submarket is not available to you and
+                        // reading its posted price as if it were is a fiction.
+                        //
+                        // Without this the solve livelocks. A household whose bid
+                        // fell short would re-queue, the price was already pinned
+                        // at admitted − ε so its failed bid moved nothing, its
+                        // surplus was unchanged, and the argmax handed it the same
+                        // submarket again. It burned the entire bid budget: 400200
+                        // bids against 72819 evictions, i.e. 327k attempts that
+                        // changed nothing, and the solve reported not converged.
+                        if (_slots[sub].Count >= Capacity[sub]
+                            && val - _outside[i] <= Admitted[sub]) continue;
                         double sur = val - Price[sub];
                         if (sur > bestSur) { nextSur = bestSur; bestSur = sur; bestSub = sub; bestVal = val; }
                         else if (sur > nextSur) nextSur = sur;
@@ -555,7 +578,7 @@ namespace CS2Econ.Core
                 }
 
                 // Nothing in this city beats leaving it.
-                if (bestSub < 0 || bestSur <= p.OutsideOption) { Assignment[i] = -1; Unassigned++; continue; }
+                if (bestSub < 0 || bestSur <= _outside[i]) { Assignment[i] = -1; Unassigned++; continue; }
 
                 // The bid: what this household will pay here given what it
                 // gives up by not taking its next best. This is the quantity the
@@ -578,8 +601,8 @@ namespace CS2Econ.Core
                 // and then it holds a slot at a price above its own valuation,
                 // which is an individually irrational assignment (measured: 2 of
                 // 1817). ε buys termination; it must not buy a bad trade.
-                double bid = Math.Min(bestVal - p.OutsideOption,
-                                      bestVal - Math.Max(nextSur, p.OutsideOption) + eps);
+                double bid = Math.Min(bestVal - _outside[i],
+                                      bestVal - Math.Max(nextSur, _outside[i]) + eps);
 
                 var slot = _slots[bestSub];
                 if (slot.Count < Capacity[bestSub])
@@ -676,6 +699,10 @@ namespace CS2Econ.Core
         public int ShortlistCount(int hid)
             => (uint)hid < (uint)_shortCount.Length ? _shortCount[hid] : 0;
         public int ShortlistAt(int hid, int q) => _shortItems[_shortStart[hid] + q];
+        /// <summary>This household's own outside option, for checks that have to
+        /// state individual rationality against the right number.</summary>
+        public double OutsideOf(int hid)
+            => (uint)hid < (uint)_outside.Length ? _outside[hid] : 0;
 
         public int SubOf(int cluster, ZoneKind kind, int level)
         {
@@ -735,7 +762,7 @@ namespace CS2Econ.Core
                 if (n <= 0) continue;
                 int mine = Assignment[i];
                 double myVal = mine >= 0 ? ValueAt(i, mine, p) : 0;
-                double mySur = mine >= 0 ? myVal - Price[mine] : p.OutsideOption;
+                double mySur = mine >= 0 ? myVal - Price[mine] : _outside[i];
                 // The repair's threshold has to BE the equilibrium threshold.
                 // Chasing anything stricter means the loop never runs out of
                 // work: it kept finding "violations" inside the band the result
@@ -783,7 +810,7 @@ namespace CS2Econ.Core
                 if (n <= 0) continue;
                 // This household's best and runner-up ATTAINABLE surplus at the
                 // final prices — what it gives up by taking a new unit instead.
-                double best = p.OutsideOption, second = p.OutsideOption;
+                double best = _outside[i], second = _outside[i];
                 int bestSub = -1;
                 int st = _shortStart[i];
                 for (int q = 0; q < n; q++)
@@ -801,7 +828,7 @@ namespace CS2Econ.Core
                     {
                         int sub = Sub(_shortItems[st + q], l, C);
                         if (Assignment[i] == sub) continue;    // already housed there
-                        double alt = Math.Max(sub == bestSub ? second : best, p.OutsideOption);
+                        double alt = Math.Max(sub == bestSub ? second : best, _outside[i]);
                         double bid = ValueAt(i, sub, p) - alt;
                         if (bid <= Reserve[sub]) continue;     // would not cover the owner's floor
                         Insert(sub, bid);
