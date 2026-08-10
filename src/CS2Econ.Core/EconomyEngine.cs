@@ -305,7 +305,19 @@ namespace CS2Econ.Core
                 // won slot has a unit behind it. It can still come up empty when
                 // stock changed between the solve and here (a completion, a
                 // scrape); the household simply stays unhoused this refresh.
-                if (target >= 0) Allocation.MoveIn(W, h, target, P);
+                if (target >= 0)
+                {
+                    // Housing somebody who was in shelter must free their shelter
+                    // place. The other move-in site does this; this one did not,
+                    // so on the auction path ShelterOccupied only ever went up.
+                    // Once it passed capacity, Allocation's "is there a shelter
+                    // bed" test could never fire again and every subsequent
+                    // penniless household was expelled from the city by a stale
+                    // counter (measured: a gap of 30 that never closed).
+                    bool wasSheltered = h.Stage == InsolvencyStage.Sheltered;
+                    Allocation.MoveIn(W, h, target, P);
+                    if (wasSheltered) ShelterOccupied = Math.Max(0, ShelterOccupied - 1);
+                }
                 else Auction.Assignment[hid] = -1;
             }
         }
