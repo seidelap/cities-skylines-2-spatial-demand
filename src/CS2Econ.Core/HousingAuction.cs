@@ -687,7 +687,7 @@ namespace CS2Econ.Core
         }
 
         // ---- the queue behind the door ------------------------------------
-        public const int ShadowDepth = 16;
+        public const int ShadowDepth = 32;
         /// <summary>[sub*ShadowDepth + r] the (r+1)-th highest bid a household
         /// NOT already holding a slot there would make for one more unit, at
         /// final prices. This is what an added unit would actually fetch, and it
@@ -696,6 +696,19 @@ namespace CS2Econ.Core
         /// a submarket with nothing standing has no realized price.</summary>
         public double[] Shadow = Array.Empty<double>();
         public int[] ShadowCount = Array.Empty<int>();
+
+        /// <summary>How many households are waiting behind this door who would
+        /// pay more than it costs to operate the unit — the queue that a new
+        /// building here could actually let to. Real households with real
+        /// competition-adjusted bids, counted; the truncation at ShadowDepth is
+        /// the one approximation and it is a floor, never an overstatement.</summary>
+        public int QueueAbove(int sub, double reserve)
+        {
+            if ((uint)sub >= (uint)ShadowCount.Length) return 0;
+            int n = ShadowCount[sub], at = sub * ShadowDepth, k = 0;
+            while (k < n && Shadow[at + k] > reserve) k++;   // Shadow is descending
+            return k;
+        }
 
         /// <summary>What one more unit here would let for, given the queue. Rank
         /// is 1-based: the 3rd added unit goes to the 3rd-best waiting bid.</summary>

@@ -153,47 +153,88 @@ namespace CS2Econ.Core
             ByUse = new double[6][];
             for (int u = 0; u < 6; u++) ByUse[u] = new double[C];
 
-            // ---- residential: seekers spread by choice shares, weighted by
-            // AFFORDABILITY of the stock their demand would trigger. A seeker who
-            // cannot pay a new unit's assessment is shelter/migration pressure,
-            // not construction demand — residual predicts FILL (§4.2), and
-            // counting priced-out demand stalls construction against a vacancy
-            // overhang it can never absorb.
-            var share = new double[C];
-            for (int s = 0; s < Segment.Count; s++)
+            // ---- residential: THE QUEUE, counted ---------------------------
+            // On the assignment-market path this is not a model at all. The
+            // auction already knows, for every (density, cluster, level), which
+            // real households bid for a unit there and lost — with
+            // competition-adjusted bids, so a household that has a good second
+            // choice is not counted as if it would chase this one to the moon.
+            // Residual demand is how many of those bids clear the cost of
+            // operating the unit they are queueing for.
+            //
+            // What this replaces was the clearest piece of top-down modelling
+            // left in the codebase: take a CITYWIDE seeker count per segment,
+            // spread it over clusters by exp(AccessValue/1.5) × an affordability
+            // proxy, normalize, then split it across densities by a hard
+            // `DensityTolerance >= 0.5` gate and the constants 0.75/0.25 and
+            // 0.85/0.15. Not one of those numbers came from a household, and the
+            // seekers were an aggregate that had already thrown away which
+            // households they were and where they wanted to be.
+            if (acc.Auction != null && acc.Auction.C == C)
             {
-                double seekers = seekersBySegment[s];
-                if (seekers <= 0) continue;
-                var seg = Segment.All[s];
-                // Which density this segment leans toward — a lean, not a
-                // permission. Gate on the RAW tolerance: DensityAppeal is
-                // floored at DensityFloor=0.6, so `appeal >= 0.5` is true for
-                // every segment — the old form routed ALL seeker mass through
-                // the high-density branch (75% of citywide construction
-                // demand to towers; adversarial review, measured A/B).
-                ZoneKind kind = seg.DensityTolerance >= 0.5
-                    ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
-                double sum = 0;
-                for (int c = 0; c < C; c++)
+                var a = acc.Auction;
+                for (int k = 0; k < 2; k++)
+                    for (int c = 0; c < C; c++)
+                    {
+                        // Across levels, not summed: a household queueing at this
+                        // cluster bid at every level of it, so adding the levels
+                        // up would count the same person several times. The
+                        // deepest single queue is how many units could actually
+                        // be let.
+                        int best = 0;
+                        for (int l = 1; l <= HousingAuction.Levels; l++)
+                        {
+                            int sub = HousingAuction.Sub(HousingAuction.Key(k, c, C), l, C);
+                            int q = a.QueueAbove(sub, a.Reserve[sub]);
+                            if (q > best) best = q;
+                        }
+                        ByUse[k][c] += best;
+                    }
+            }
+            else
+            {
+                // ---- residential: seekers spread by choice shares, weighted by
+                // AFFORDABILITY of the stock their demand would trigger. A seeker who
+                // cannot pay a new unit's assessment is shelter/migration pressure,
+                // not construction demand — residual predicts FILL (§4.2), and
+                // counting priced-out demand stalls construction against a vacancy
+                // overhang it can never absorb.
+                var share = new double[C];
+                for (int s = 0; s < Segment.Count; s++)
                 {
-                    double bid = LandAccounting.ResidentialBidPerUnit(acc, c, kind, 2, seekerPresence, p);
-                    double assessProxy = p.CaptureFraction * bid
-                                         + (1 - p.CaptureFraction) * LandAccounting.SPerUnit(2, 1.0, p);
-                    double affordCap = seg.MaxRentShare * acc.ExpectedIncome(s, c, p) * 1.1;
-                    double afford = assessProxy > 1e-9
-                        ? MathUtil.Clamp(1.2 * affordCap / assessProxy - 0.2, 0, 1) : 1;
-                    share[c] = Math.Exp(acc.AccessValue[s][c] / 1.5) * afford;
-                    sum += share[c];
-                }
-                if (sum <= 0) continue;
-                for (int c = 0; c < C; c++)
-                {
-                    double mass = seekers * share[c] / sum;
-                    // Same raw-tolerance gate as the lean above (appeal's
-                    // floor makes it vacuously high for all segments).
-                    if (seg.DensityTolerance >= 0.5)
-                    { ByUse[1][c] += mass * 0.75; ByUse[0][c] += mass * 0.25; }
-                    else { ByUse[0][c] += mass * 0.85; ByUse[1][c] += mass * 0.15; }
+                    double seekers = seekersBySegment[s];
+                    if (seekers <= 0) continue;
+                    var seg = Segment.All[s];
+                    // Which density this segment leans toward — a lean, not a
+                    // permission. Gate on the RAW tolerance: DensityAppeal is
+                    // floored at DensityFloor=0.6, so `appeal >= 0.5` is true for
+                    // every segment — the old form routed ALL seeker mass through
+                    // the high-density branch (75% of citywide construction
+                    // demand to towers; adversarial review, measured A/B).
+                    ZoneKind kind = seg.DensityTolerance >= 0.5
+                        ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
+                    double sum = 0;
+                    for (int c = 0; c < C; c++)
+                    {
+                        double bid = LandAccounting.ResidentialBidPerUnit(acc, c, kind, 2, seekerPresence, p);
+                        double assessProxy = p.CaptureFraction * bid
+                                             + (1 - p.CaptureFraction) * LandAccounting.SPerUnit(2, 1.0, p);
+                        double affordCap = seg.MaxRentShare * acc.ExpectedIncome(s, c, p) * 1.1;
+                        double afford = assessProxy > 1e-9
+                            ? MathUtil.Clamp(1.2 * affordCap / assessProxy - 0.2, 0, 1) : 1;
+                        share[c] = Math.Exp(acc.AccessValue[s][c] / 1.5) * afford;
+                        sum += share[c];
+                    }
+                    if (sum <= 0) continue;
+                    for (int c = 0; c < C; c++)
+                    {
+                        double mass = seekers * share[c] / sum;
+                        // Same raw-tolerance gate as the lean above (appeal's
+                        // floor makes it vacuously high for all segments).
+                        if (seg.DensityTolerance >= 0.5)
+                        { ByUse[1][c] += mass * 0.75; ByUse[0][c] += mass * 0.25; }
+                        else { ByUse[0][c] += mass * 0.85; ByUse[1][c] += mass * 0.15; }
+                    }
                 }
             }
 
