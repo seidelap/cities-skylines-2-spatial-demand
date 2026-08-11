@@ -631,9 +631,16 @@ namespace CS2Econ.Core
                         // submarket again. It burned the entire bid budget: 400200
                         // bids against 72819 evictions, i.e. 327k attempts that
                         // changed nothing, and the solve reported not converged.
-                        if (_slots[sub].Count >= Capacity[sub]
-                            && val - _outside[i] <= Admitted[sub]) continue;
-                        double sur = val - Price[sub];
+                        // Rank by the surplus it would ACTUALLY get: the entry
+                        // price at a door it would have to win, the price it
+                        // already pays at the one it holds. The explicit "do not
+                        // queue at a door you cannot open" filter that used to
+                        // sit here is now implied and has been deleted — if this
+                        // household cannot clear Admitted then val − Admitted ≤
+                        // its outside option, so the door cannot be its best
+                        // choice, and the livelock that filter was patching
+                        // cannot arise in the first place.
+                        double sur = val - (Assignment[i] == sub ? Price[sub] : EntryPrice(sub));
                         if (sur > bestSur) { nextSur = bestSur; bestSur = sur; bestSub = sub; bestVal = val; }
                         else if (sur > nextSur) nextSur = sur;
                     }
@@ -801,9 +808,12 @@ namespace CS2Econ.Core
                         int sub = Sub(kc, l, C);
                         if (Capacity[sub] <= 0) continue;
                         double val = SoftCap(prem * (p.Quality(l) / p.Quality(1)) + taste, cap);
-                        if (Filled[sub] >= Capacity[sub] && val - reservation <= Admitted[sub]) continue;
+                        // A newcomer holds nothing, so every door costs it the
+                        // entry price. The old explicit filter is implied by that,
+                        // exactly as in the resident path.
+                        double sur = val - EntryPrice(sub);
+                        if (sur <= reservation) continue;
                         anyAttainable = true;
-                        double sur = val - Price[sub];
                         if (sur > bestSurplus) { bestSurplus = sur; best = sub; }
                     }
                 }
@@ -816,6 +826,40 @@ namespace CS2Econ.Core
             double e = SplitMix64.Hash01(key);
             return -Math.Log(-Math.Log(Math.Min(1 - 1e-12, Math.Max(1e-12, e))));
         }
+
+        /// <summary>What it would COST THIS HOUSEHOLD to be at a submarket —
+        /// the price it would actually pay, which is not the same number for
+        /// everybody.
+        ///
+        /// A door has two prices and the distinction is deliberate. `Price` is
+        /// the first-excluded challenger's bid and is what a SITTING TENANT
+        /// pays: below the worst accepted bid, so every admitted tenant keeps
+        /// strictly positive surplus, and it is what the assessment capitalizes.
+        /// `Admitted` is the worst bid still holding a slot, and it is what a
+        /// CHALLENGER must beat to get in at a full submarket. Where there is a
+        /// free unit there is nobody to outbid and the asking price is the
+        /// posted one.
+        ///
+        /// Everything that measures OPPORTUNITY has to read the challenger's
+        /// number. Reading the tenant's number instead was the root defect: the
+        /// band that separates the two is scaled by the LAST BIDDER's value
+        /// (SetPrices' `band`), while every consumer scaled its tolerance by the
+        /// READER's value. A rich household rejected at a door left the gap at
+        /// ~0.5% of ITS value; a poorer household later read that gap as surplus
+        /// it could capture and compared it against a tolerance ~0.5% of its own,
+        /// much smaller, value. It registered as envious of a price that was
+        /// never offered to anyone, and no amount of re-bidding could fix it,
+        /// because its maximum bid could not clear Admitted. That is the residual
+        /// "2 households envious at 1.5%" the repair loop chased forever, and the
+        /// improving swap that came with it: swap-freeness follows from envy-
+        /// freeness only when both sides are measured against ONE price vector,
+        /// and there were two.</summary>
+        public double CostTo(int sub, int hid)
+            => Assignment[hid] == sub ? Price[sub] : EntryPrice(sub);
+
+        /// <summary>What a challenger pays to get in here.</summary>
+        public double EntryPrice(int sub)
+            => Capacity[sub] > 0 && _slots[sub].Count >= Capacity[sub] ? Admitted[sub] : Price[sub];
 
         /// <summary>Price per unit at a submarket, for callers that ask about a
         /// (cluster, kind, level) rather than an index.</summary>
@@ -920,6 +964,7 @@ namespace CS2Econ.Core
                 if (n <= 0) continue;
                 int mine = Assignment[i];
                 double myVal = mine >= 0 ? ValueAt(i, mine, p) : 0;
+                // What it pays where it is, against what it would pay to move.
                 double mySur = mine >= 0 ? myVal - Price[mine] : _outside[i];
                 // The repair's threshold has to BE the equilibrium threshold.
                 // Chasing anything stricter means the loop never runs out of
@@ -972,11 +1017,12 @@ namespace CS2Econ.Core
                         // about 2.5 billion of them over a 300-tick run.
                         double raw = prem * (p.Quality(l) / p.Quality(1)) + taste;
                         double upper = Math.Min(Math.Max(raw, 0), _cap[i]);
-                        double gainUpper = (upper - Price[sub]) - mySur;
+                        double entry = EntryPrice(sub);
+                        double gainUpper = (upper - entry) - mySur;
                         if (gainUpper <= bestGain || gainUpper <= myEps + p.AuctionEpsilon) continue;
 
                         double val = SoftCap(raw, _cap[i]);
-                        double gain = (val - Price[sub]) - mySur;
+                        double gain = (val - entry) - mySur;
                         double band = myEps + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
                         if (gain <= band || gain <= bestGain) continue;
                         bestGain = gain; bestKC = kc;
@@ -1017,7 +1063,7 @@ namespace CS2Econ.Core
                     {
                         int sub = Sub(_shortItems[st + q], l, C);
                         if (Capacity[sub] <= 0) continue;
-                        double sur = ValueAt(i, sub, p) - Price[sub];
+                        double sur = ValueAt(i, sub, p) - CostTo(sub, i);
                         if (sur > best) { second = best; best = sur; bestSub = sub; }
                         else if (sur > second) second = sur;
                     }

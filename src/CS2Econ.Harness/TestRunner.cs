@@ -749,6 +749,10 @@ namespace CS2Econ.Harness
                 int mine = a.Assignment[h.Id];
                 if (mine < 0) continue;
                 double myVal = a.ValueOf(h.Id, mine, p);
+                // It pays the tenant price where it lives, and would pay the
+                // ENTRY price anywhere else. Measuring both legs at the tenant
+                // price credited households with surplus at doors that were
+                // never open to them.
                 double mySur = myVal - a.Price[mine];
                 // The two ε's are measured against DIFFERENT valuations, so the
                 // band is their sum and not twice either one. The household bid
@@ -765,7 +769,7 @@ namespace CS2Econ.Harness
                 {
                     if (a.Capacity[s] <= 0 || s == mine) continue;
                     double val = a.ValueOf(h.Id, s, p);
-                    double gain = (val - a.Price[s]) - mySur;
+                    double gain = (val - a.EntryPrice(s)) - mySur;
                     if (gain <= 0) continue;
                     double band = myEps + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
                     if (gain > band) { envy++; worstRel = Math.Max(worstRel, gain / Math.Max(1e-9, val)); }
@@ -805,7 +809,7 @@ namespace CS2Econ.Harness
                     if (a.Capacity[s] <= a.Filled[s]) continue;      // no room anyway
                     double val = a.ValueOf(h.Id, s, p);
                     double band = 2 * Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
-                    if (val - a.Price[s] > a.OutsideOf(h.Id) + band) { strandedDemand++; break; }
+                    if (val - a.EntryPrice(s) > a.OutsideOf(h.Id) + band) { strandedDemand++; break; }
                 }
             }
 
