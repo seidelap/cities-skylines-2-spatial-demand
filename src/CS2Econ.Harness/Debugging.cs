@@ -430,8 +430,15 @@ namespace CS2Econ.Harness
 
             Console.WriteLine($"phases(ms, cumulative over run): submarkets={HousingAuction.MsSubmarkets:F0} "
                 + $"households={HousingAuction.MsHouseholds:F0} auction={HousingAuction.MsAuction:F0} "
-                + $"repairScan={HousingAuction.MsRepairScan:F0} shadow={HousingAuction.MsShadow:F0}");
+                + $"repairScan={HousingAuction.MsRepairScan:F0} cutVacancies={HousingAuction.MsCutVacancies:F0} "
+                + $"shadow={HousingAuction.MsShadow:F0}");
             Console.WriteLine($"calls: valueAtSlot={HousingAuction.CallsValueSlot:N0} softCap={HousingAuction.CallsSoftCap:N0}");
+            if (HousingAuction.ScanOracle)
+                Console.WriteLine($"oracle: scans={HousingAuction.OracleScans:N0} "
+                    + $"householdScans={HousingAuction.OracleHhScans:N0} "
+                    + $"columnMismatch={HousingAuction.OracleKcMismatch:N0} "
+                    + $"gainMismatch={HousingAuction.OracleGainMismatch:N0} "
+                    + $"dirtySetMismatch={HousingAuction.OracleSetMismatch:N0}");
             Console.WriteLine($"solve: bids={a.Bids} evictions={a.Evictions} converged={a.Converged} "
                 + $"unassigned={a.Unassigned}");
             Console.WriteLine($"world: pop={pop} housed={housed} lettable units={stock:F0} "

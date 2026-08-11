@@ -109,9 +109,97 @@ namespace CS2Econ.Core
         /// every call. Added because a previous optimization round predicted a
         /// 4.4x speedup from narrowing the repair scan and measured 1.15x: the
         /// term that was narrowed was not the dominant one. Guessing at a
-        /// profile is how that happens twice.</summary>
-        public static double MsSubmarkets, MsHouseholds, MsAuction, MsRepairScan, MsShadow;
+        /// profile is how that happens twice.
+        ///
+        /// CutVacancies is timed SEPARATELY from the scan, and that split is
+        /// not cosmetic. The two ran under one `repairScan` number, and every
+        /// design written against that number inherited an assumed 80/20 split
+        /// between them rather than a measured one. Split and then measured, on
+        /// the reference run (auctionprobe --ticks 300, seed 20260806, 8000
+        /// seed households): scan 56.0 s, cut 13.8 s — an 80/20 that happened
+        /// to be the assumption, and was worth an hour to stop assuming. A cut
+        /// is a full pass over every household for every partially-filled door,
+        /// which is a cross product in its own right and deserves its own
+        /// line.</summary>
+        public static double MsSubmarkets, MsHouseholds, MsAuction, MsRepairScan,
+                             MsCutVacancies, MsShadow;
         public static long CallsValueSlot, CallsValueAt, CallsSoftCap;
+
+        /// <summary>DIFFERENTIAL ORACLE. When set, every repair scan is run
+        /// TWICE: once by the production path and once by RefScanBest, which is
+        /// the pre-optimization scan copied verbatim — a Math.Pow pair per cell,
+        /// an EntryPrice call per cell, the List<int> key walk. The two are
+        /// compared per household on the chosen column, on the gain that chose
+        /// it (bit-exactly, `!=` on doubles), and on the resulting dirty SET.
+        ///
+        /// It exists because the only defensible claim about a change to this
+        /// scan is a checked one. The optimization shipped here is bit-exact by
+        /// construction, so the oracle should report zero on every counter over
+        /// a whole simulation, and any non-zero is a bug rather than an
+        /// acceptable divergence. It is also the harness the deferred NARROWING
+        /// needs: a narrowing changes the answer by proof rather than by
+        /// construction, and this is where that proof gets tested.</summary>
+        public static bool ScanOracle;
+        public static long OracleScans, OracleHhScans, OracleKcMismatch,
+                           OracleGainMismatch, OracleSetMismatch;
+
+        /// <summary>quality(ℓ)/quality(1), the level uplift, for every level.
+        ///
+        /// WHAT THIS IS WORTH, measured before it was written because it is the
+        /// cheapest claim in this file to falsify. `p.Quality(l)/p.Quality(1)`
+        /// is TWO Math.Pow calls and a divide, it sits in the innermost cell of
+        /// the repair scan, and it is evaluated UNCONDITIONALLY — before the
+        /// pre-exp bound test that the scan's own comment credits with the
+        /// saving. Over a 300-tick reference run that is ~866M evaluations of a
+        /// function of one small integer. Hoisting it into this six-entry table,
+        /// on its own and changing no decision anywhere: scan 56034 → 19665 ms
+        /// (2.85×), repair phase 69824 → 27645 ms (2.53×), wall 87.1 → 43.0 s
+        /// (2.03×), every output bit identical. Ten lines, and more than the
+        /// staged narrowing this file's history predicted at 2.0–2.2× and
+        /// measured at 1.15×.
+        ///
+        /// It is bit-exact and not merely close. Math.Pow is a deterministic
+        /// pure function of two doubles, p.Quality(1) is Math.Pow(1, α) = 1.0
+        /// exactly, and dividing by 1.0 is the identity — so the cached double
+        /// IS the double the per-cell expression produced.
+        ///
+        /// Keyed on the alpha VALUE rather than on a dirty flag, because
+        /// LevelBidAlpha is a public mutable field on a shared EconParams and
+        /// the harness sweeps it. Deliberately `==` and not `.Equals`:
+        /// double.NaN.Equals(double.NaN) is true in .NET, which would serve an
+        /// unbuilt NaN table forever; `==` is false against NaN and rebuilds.</summary>
+        private readonly double[] _qf = new double[Levels + 1];
+        private double _qfAlpha = double.NaN;
+
+        /// <summary>The repair scan's doors, flattened, rebuilt once per SCAN.
+        /// Parallel to _liveLevels: for door t, the submarket index, its level
+        /// uplift, and the entry price a challenger faces there. _dKc/_dHigh/
+        /// _dCluster/_dStart are the per-KEY half, parallel to _liveKc.
+        ///
+        /// PER SCAN, NOT PER SOLVE, and that is a correctness condition rather
+        /// than a detail. CutVacancies writes Price[s] and runs immediately
+        /// BEFORE the scan, precisely so that a household sees the post-cut
+        /// price (see the comment at the call site — the other order left 885
+        /// households envious of doors nobody had been told about). A table
+        /// built per solve would advertise the stale, higher price and lose
+        /// exactly the household the cut was made for.
+        ///
+        /// A snapshot taken at the top of the scan is exact for the whole scan.
+        /// EntryPrice reads Capacity, _slots.Count, Admitted and Price; every
+        /// write to all four is in BuildSubmarkets, RunAuction, SetPrices,
+        /// Vacate, Offer or CutVacancies, and none of those is reachable from
+        /// AddEnviedColumns, which writes only _dirty, the shortlist and the
+        /// frozen slot caches. The full/non-full branch is CAPTURED rather than
+        /// assumed: the table stores whichever of Admitted and Price is live at
+        /// snapshot time, so a door filling up (a price RISE for a challenger)
+        /// or emptying (a FALL) is recorded as the number it actually is.</summary>
+        private int[] _dSub = Array.Empty<int>();
+        private double[] _dQf = Array.Empty<double>();
+        private double[] _dEntry = Array.Empty<double>();
+        private int[] _dKc = Array.Empty<int>();
+        private bool[] _dHigh = Array.Empty<bool>();
+        private int[] _dCluster = Array.Empty<int>();
+        private int[] _dStart = Array.Empty<int>();
 
         // ---- working state -------------------------------------------------
         private int[] _shortStart = Array.Empty<int>();  // per household, into _shortItems
@@ -218,6 +306,10 @@ namespace CS2Econ.Core
         private readonly List<int> _liveKc = new List<int>();
         private readonly List<int> _liveKcStart = new List<int>();
         private readonly List<int> _liveLevels = new List<int>();
+        /// <summary>The differential oracle's own copy of the scan's answer —
+        /// which households the untouched reference scan would have marked for
+        /// re-decision, in the order it would have marked them.</summary>
+        private readonly List<int> _refDirty = new List<int>();
 
         public static int Key(int k, int c, int C) => k * C + c;
         public static int Sub(int kc, int level, int C) => kc * Levels + (level - 1);
@@ -233,6 +325,7 @@ namespace CS2Econ.Core
             C = acc.C;
             int nSub = S;
             EnsureArrays(w, nSub);
+            EnsureLevelFactors(p);
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             BuildSubmarkets(w, p, nSub);
@@ -280,6 +373,7 @@ namespace CS2Econ.Core
                 // next round — measured, 885 households envious of doors nobody
                 // had been told about.
                 int cuts = CutVacancies(w, p, nSub);
+                MsCutVacancies += sw.Elapsed.TotalMilliseconds; sw.Restart();
                 int pending = AddEnviedColumns(w, p, nSub);
                 MsRepairScan += sw.Elapsed.TotalMilliseconds; sw.Restart();
                 if (pending == 0 && cuts == 0) { RepairClean = true; break; }
@@ -582,12 +676,26 @@ namespace CS2Econ.Core
             _slotTaste[slot] = Taste(i, kc, bs, p) + (kc == _homeKC[i] ? _homeBonus[i] : 0);
         }
 
+        /// <summary>Build the level-uplift table, if the parameter it is a
+        /// function of has moved. Every PUBLIC entry point that can reach a
+        /// valuation calls this: Solve, plus ValueOf and QuoteOutsider, which
+        /// the acceptance checks and the migration path call from outside a
+        /// solve. ValueAt and ValueAtSlot are private and are only reachable
+        /// through those three.</summary>
+        private void EnsureLevelFactors(EconParams p)
+        {
+            if (_qfAlpha == p.LevelBidAlpha) return;
+            double q1 = p.Quality(1);
+            for (int l = 0; l <= Levels; l++) _qf[l] = p.Quality(Math.Max(1, l)) / q1;
+            _qfAlpha = p.LevelBidAlpha;
+        }
+
         /// <summary>Value at a submarket named by SHORTLIST SLOT rather than by
         /// index — the auction's hot path. Identical arithmetic to ValueAt, in
         /// the same order, reading the frozen premium and taste instead of
         /// recomputing a hash and two logs per bid.</summary>
         private double ValueAtSlot(int i, int slot, int level, EconParams p)
-        { CallsValueSlot++; return SoftCapT(_slotPrem[slot] * (p.Quality(level) / p.Quality(1)) + _slotTaste[slot], _cap[i]); }
+        { CallsValueSlot++; return SoftCapT(_slotPrem[slot] * _qf[level] + _slotTaste[slot], _cap[i]); }
 
         private static double SoftCapT(double v, double cap) { CallsSoftCap++; return SoftCap(v, cap); }
 
@@ -624,7 +732,7 @@ namespace CS2Econ.Core
             int k = kc / C, c = kc - k * C;
             double bse = k == 1 ? _base1[i] : _base0[i];
             if (bse <= 0) return 0;
-            double v = bse * _premium[_seg[i]][c] * (p.Quality(LevelOf(sub)) / p.Quality(1))
+            double v = bse * _premium[_seg[i]][c] * _qf[LevelOf(sub)]
                        + Taste(i, kc, bse, p);
             if (kc == _homeKC[i]) v += _homeBonus[i];
             return SoftCap(v, _cap[i]);
@@ -1060,6 +1168,7 @@ namespace CS2Econ.Core
         {
             bestSurplus = double.NegativeInfinity; anyAttainable = false;
             int best = -1;
+            EnsureLevelFactors(p);            // public entry: may be called outside a solve
             if (C <= 0 || (uint)segment >= (uint)_premium.Length) return -1;
             double cap = p.MaxRentOfIncome * (budget / Math.Max(1e-9, 1.0)) / Math.Max(1e-9, 1.0);
             // Ability to pay is derived the same way it is for a resident: from
@@ -1086,7 +1195,7 @@ namespace CS2Econ.Core
                     {
                         int sub = Sub(kc, l, C);
                         if (Capacity[sub] <= 0) continue;
-                        double val = SoftCap(prem * (p.Quality(l) / p.Quality(1)) + taste, cap);
+                        double val = SoftCap(prem * _qf[l] + taste, cap);
                         // A newcomer holds nothing, so every door costs it the
                         // entry price. The old explicit filter is implied by that,
                         // exactly as in the resident path.
@@ -1151,7 +1260,8 @@ namespace CS2Econ.Core
         /// <summary>This household's value for a submarket, exposed so a checker
         /// can re-derive the equilibrium conditions from the same numbers the
         /// solve used rather than from a reimplementation of them.</summary>
-        public double ValueOf(int hid, int sub, EconParams p) => ValueAt(hid, sub, p);
+        public double ValueOf(int hid, int sub, EconParams p)
+        { EnsureLevelFactors(p); return ValueAt(hid, sub, p); }
         public int ShortlistCount(int hid)
             => (uint)hid < (uint)_shortCount.Length ? _shortCount[hid] : 0;
         public int ShortlistAt(int hid, int q) => _shortItems[_shortStart[hid] + q];
@@ -1235,10 +1345,81 @@ namespace CS2Econ.Core
             }
         }
 
+        /// <summary>Snapshot the live doors for one scan: the flat arrays the
+        /// scan cell reads instead of a divide, two List<int> indexer calls
+        /// and EntryPrice's capacity/slot-count/pointer chase. Called from the
+        /// top of AddEnviedColumns, AFTER CutVacancies has written its prices —
+        /// see the field comment for why that ordering is load bearing.</summary>
+        private void BuildDoorTable()
+        {
+            int nk = _liveKc.Count, nd = _liveLevels.Count;
+            if (_dKc.Length != nk)
+            { _dKc = new int[nk]; _dHigh = new bool[nk]; _dCluster = new int[nk]; }
+            if (_dStart.Length != nk + 1) _dStart = new int[nk + 1];
+            if (_dSub.Length != nd)
+            { _dSub = new int[nd]; _dQf = new double[nd]; _dEntry = new double[nd]; }
+            for (int q = 0; q < nk; q++)
+            {
+                int kc = _liveKc[q];
+                int k = kc / C;
+                _dKc[q] = kc; _dHigh[q] = k == 1; _dCluster[q] = kc - k * C;
+                _dStart[q] = _liveKcStart[q];
+                for (int t = _liveKcStart[q]; t < _liveKcStart[q + 1]; t++)
+                {
+                    int l = _liveLevels[t];
+                    int sub = Sub(kc, l, C);
+                    _dSub[t] = sub; _dQf[t] = _qf[l]; _dEntry[t] = EntryPrice(sub);
+                }
+            }
+            _dStart[nk] = nd;                       // the sentinel, same as _liveKcStart's
+        }
+
+        /// <summary>THE ORACLE'S REFERENCE. The repair scan exactly as it was
+        /// before this file's arithmetic was cheapened: two Math.Pow per cell,
+        /// an EntryPrice call per cell, the List<int> key walk. Nothing here
+        /// may be optimized — its whole value is that it is an independent
+        /// second opinion on the same state.</summary>
+        private int RefScanBest(int i, int mine, double mySur, double myEps, EconParams p,
+                               out double bestGainOut)
+        {
+            double bestGain = 0; int bestKC = -1;
+            for (int q = 0; q < _liveKc.Count; q++)
+            {
+                int kc = _liveKc[q];
+                int k = kc / C, c = kc - k * C;
+                double bse = k == 1 ? _base1[i] : _base0[i];
+                if (bse <= 0) continue;
+                double prem = bse * _premium[_seg[i]][c];
+                double taste = _scanTaste[i * _scanStride + q];
+                int lo = _liveKcStart[q], hi = _liveKcStart[q + 1];
+                for (int t = lo; t < hi; t++)
+                {
+                    int l = _liveLevels[t];
+                    int sub = Sub(kc, l, C);
+                    if (sub == mine) continue;
+                    double raw = prem * (p.Quality(l) / p.Quality(1)) + taste;
+                    double upper = Math.Min(Math.Max(raw, 0), _cap[i]);
+                    double entry = EntryPrice(sub);
+                    double gainUpper = (upper - entry) - mySur;
+                    if (gainUpper <= bestGain || gainUpper <= myEps + p.AuctionEpsilon) continue;
+                    double val = SoftCap(raw, _cap[i]);
+                    double gain = (val - entry) - mySur;
+                    double band = myEps + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
+                    if (gain <= band || gain <= bestGain) continue;
+                    bestGain = gain; bestKC = kc;
+                }
+            }
+            bestGainOut = bestGain;
+            return bestKC;
+        }
+
         private int AddEnviedColumns(WorldState w, EconParams p, int nSub)
         {
             _dirty.Clear();
+            BuildDoorTable();
+            if (ScanOracle) { _refDirty.Clear(); OracleScans++; }
             BlockedListed = 0; BlockedFull = 0;
+            int nKeys = _liveKc.Count;
             for (int i = 0; i < w.Households.Count; i++)
             {
                 int n = _shortCount[i];
@@ -1267,19 +1448,25 @@ namespace CS2Econ.Core
                 // empty — on the reference city, 1960 evaluations per household
                 // per repair round where 90 will do.
                 double bestGain = 0; int bestKC = -1;
-                for (int q = 0; q < _liveKc.Count; q++)
+                // Hoisted out of the key loop: the household's ability to pay,
+                // the smallest band any door could produce for it, its
+                // segment's premium row, and the base of its taste row. Each
+                // was re-loaded or re-added once per KEY, and there are 257
+                // live keys per scan.
+                double cap = _cap[i];
+                double bandMin = myEps + p.AuctionEpsilon;
+                double[] prow = _premium[_seg[i]];
+                int tasteAt = i * _scanStride;
+                for (int q = 0; q < nKeys; q++)
                 {
-                    int kc = _liveKc[q];
-                    int k = kc / C, c = kc - k * C;
-                    double bse = k == 1 ? _base1[i] : _base0[i];
+                    double bse = _dHigh[q] ? _base1[i] : _base0[i];
                     if (bse <= 0) continue;
-                    double prem = bse * _premium[_seg[i]][c];
-                    double taste = _scanTaste[i * _scanStride + q];
-                    int lo = _liveKcStart[q], hi = _liveKcStart[q + 1];
-                    for (int t = lo; t < hi; t++)
+                    double prem = bse * prow[_dCluster[q]];
+                    double taste = _scanTaste[tasteAt + q];
+                    int hi = _dStart[q + 1];
+                    for (int t = _dStart[q]; t < hi; t++)
                     {
-                        int l = _liveLevels[t];
-                        int sub = Sub(kc, l, C);
+                        int sub = _dSub[t];
                         if (sub == mine) continue;
                         // SoftCap is monotone and bounded above by both its
                         // argument and the cap, so min(max(raw,0), cap) is an
@@ -1290,23 +1477,58 @@ namespace CS2Econ.Core
                         // and the exp() is wasted work. This is a skip, not an
                         // approximation: nothing that could have won is dropped.
                         //
-                        // It matters because the exp IS the scan, and the scan
-                        // is three quarters of the solve. Measured by phase:
-                        // repairScan 54.1s of 72.7s total, and after caching the
-                        // taste hash still 41.6s — the remainder is one
-                        // transcendental per (household, key, level, round),
-                        // about 2.5 billion of them over a 300-tick run.
-                        double raw = prem * (p.Quality(l) / p.Quality(1)) + taste;
-                        double upper = Math.Min(Math.Max(raw, 0), _cap[i]);
-                        double entry = EntryPrice(sub);
+                        // THE EXP IS NOT THE SCAN, which is what the comment
+                        // that used to sit here claimed. Measured, with
+                        // CutVacancies split out of the fused repairScan number
+                        // for the first time: of the 56.0 s the scan cost on a
+                        // 300-tick reference run, `p.Quality(l)/p.Quality(1)` —
+                        // TWO Math.Pow and a divide, computed unconditionally,
+                        // ABOVE the bound test — ran in every one of the ~866M
+                        // cells, while the exp below it ran only in the cells
+                        // the bound test let through. Hoisting that one line
+                        // into _qf took the scan to 19.7 s and the repair phase
+                        // from 69824 to 27645 ms, with no decision anywhere
+                        // changed, which is 2.5× for ten lines against the 1.15×
+                        // the last narrowing of this loop actually delivered.
+                        // Reading the doors from a per-scan snapshot instead of
+                        // calling EntryPrice per cell took it to 15.0 s on top
+                        // of that. The bound test is still worth having; it was
+                        // simply never the dominant term, and this comment
+                        // asserted otherwise for three rounds of optimization
+                        // that all read it and believed it.
+                        double raw = prem * _dQf[t] + taste;
+                        double upper = Math.Min(Math.Max(raw, 0), cap);
+                        double entry = _dEntry[t];
                         double gainUpper = (upper - entry) - mySur;
-                        if (gainUpper <= bestGain || gainUpper <= myEps + p.AuctionEpsilon) continue;
+                        if (gainUpper <= bestGain || gainUpper <= bandMin) continue;
 
-                        double val = SoftCap(raw, _cap[i]);
+                        double val = SoftCap(raw, cap);
                         double gain = (val - entry) - mySur;
                         double band = myEps + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
                         if (gain <= band || gain <= bestGain) continue;
-                        bestGain = gain; bestKC = kc;
+                        bestGain = gain; bestKC = _dKc[q];
+                    }
+                }
+                // The differential oracle, off in production. Same state, same
+                // household, the untouched reference scan — compared on the
+                // column chosen, on the gain that chose it (`!=` on doubles,
+                // because this change is bit-exact and anything else would be a
+                // bug), and below on the dirty SET the two produce. The
+                // reference's own dirty decision is read from the shortlist as
+                // it stands NOW, before the append below, which is the same
+                // state the production decision reads.
+                if (ScanOracle)
+                {
+                    OracleHhScans++;
+                    int refKC = RefScanBest(i, mine, mySur, myEps, p, out double refGain);
+                    if (refKC != bestKC) OracleKcMismatch++;
+                    if (refGain != bestGain) OracleGainMismatch++;
+                    if (refKC >= 0)
+                    {
+                        bool refListed = false;
+                        for (int q = 0; q < n; q++)
+                            if (_shortItems[_shortStart[i] + q] == refKC) { refListed = true; break; }
+                        if (refListed || n < _stride) _refDirty.Add(i);
                     }
                 }
                 if (bestKC < 0) continue;
@@ -1346,6 +1568,17 @@ namespace CS2Econ.Core
                 _shortItems[st + n] = bestKC; _shortCount[i] = n + 1;
                 FreezeSlot(i, n, p);
                 _dirty.Add(i);
+            }
+            // THE SET, not just the per-household answer: same households, same
+            // order. This is the invariant the brief asks for, and it is
+            // checked on every scan of every solve rather than at the end of a
+            // run, so a divergence is attributed to the scan that caused it.
+            if (ScanOracle)
+            {
+                bool same = _refDirty.Count == _dirty.Count;
+                for (int q = 0; same && q < _dirty.Count; q++)
+                    if (_refDirty[q] != _dirty[q]) same = false;
+                if (!same) OracleSetMismatch++;
             }
             // The loop's business is households with something left to do, not
             // columns. Counting columns let it stop while tenants who had been
@@ -1392,6 +1625,26 @@ namespace CS2Econ.Core
                 int f = _slots[s].Count;
                 if (Capacity[s] <= 0 || f <= 0 || f >= Capacity[s]) continue;
                 if (Price[s] <= Reserve[s] + 1e-12) continue;      // already at the floor
+                // STOP AS SOON AS THE ANSWER IS "NO CUT", which is the common
+                // case: the loop below is a pass over every household in the
+                // city for every partially-filled door, and most doors are
+                // answered by the first bid that reaches the asking rate.
+                // Measured, once CutVacancies had its own phase timer to be
+                // measured in: 8009 → 3841 ms over a 300-tick run, 2.1×, for
+                // one clause.
+                //
+                // The break is EXACT, and here the argument is a real one rather
+                // than "the same bits". After the loop, `best` and `who` are
+                // read only through ask = Max(Reserve[s], best), the guard
+                // `ask >= stop`, the revenue test, and then Price/_dirty. If
+                // best >= stop then ask >= best >= stop, so the guard fires and
+                // neither local is ever read again — the break therefore changes
+                // them ONLY in the cases where nothing reads them. And `who` is
+                // always valid when we break, because the test sits inside the
+                // update: the first bid to cross the threshold is by definition
+                // the one that just became the new best, and it set `who` in the
+                // same iteration.
+                double stop = Price[s] - 1e-12;
                 double best = double.NegativeInfinity; int who = -1;
                 for (int i = 0; i < w.Households.Count; i++)
                 {
@@ -1399,11 +1652,11 @@ namespace CS2Econ.Core
                     double alt = _surplus[i];
                     if (double.IsNegativeInfinity(alt)) continue;  // not in this market
                     double bid = ValueAt(i, s, p) - Math.Max(alt, _outside[i]);
-                    if (bid > best) { best = bid; who = i; }
+                    if (bid > best) { best = bid; who = i; if (best >= stop) break; }
                 }
                 if (who < 0) continue;
                 double ask = Math.Max(Reserve[s], best);
-                if (ask >= Price[s] - 1e-12) continue;   // it would pay the asking rate already
+                if (ask >= stop) continue;               // it would pay the asking rate already
                 if ((f + 1) * ask <= f * Price[s]) continue;       // the cut costs more than it earns
                 Price[s] = ask;
                 _dirty.Add(who);

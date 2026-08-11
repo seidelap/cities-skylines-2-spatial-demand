@@ -100,6 +100,20 @@ namespace CS2Econ.Harness
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.AuctionProbe(seed, ticks);
                 }
+                case "scanoracle":
+                {
+                    // The repair scan's differential oracle: the same fixture as
+                    // auctionprobe, with every scan run a second time by the
+                    // untouched reference implementation and the two answers
+                    // compared per household and as a set. Slow on purpose — it
+                    // does the scan twice — and the number that matters is that
+                    // every mismatch counter reads zero.
+                    int ticks = 300;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                    HousingAuction.ScanOracle = true;
+                    return Debugging.AuctionProbe(seed, ticks);
+                }
                 case "levelprobe":
                 {
                     int ticks = 1300;
