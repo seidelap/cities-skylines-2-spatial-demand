@@ -328,6 +328,40 @@ namespace CS2Econ.Harness
             sim.Run(80);
             var acc = sim.Engine.Access;
             var pres = sim.Engine.SegmentPresence;
+            // PAIR THE LEGS. The income counterfactuals below REBUILD
+            // acc.BidLadder (with pRich / pAll) before reading a price off it,
+            // so the baselines they are divided by have to be built the same
+            // way, from the same population. They were not: the sweep read the
+            // ladder sim.Run happened to leave behind, and that ladder is a
+            // different population, not merely a differently-priced one.
+            // Access.Refresh builds the ladder (Access.cs) at the TOP of
+            // EconomyEngine.RefreshTick, before the same refresh re-draws
+            // employment and applies `UnemployedTicks += RefreshInterval` — so
+            // the engine's ladder is always one refresh behind the 60-tick
+            // benefit cliff, and short RefreshInterval−1 ticks of arrivals.
+            // Confirmed causally, not by correlation: subtracting that one
+            // increment back off the population and rebuilding at the SAME p
+            // reproduces the stale base price exactly on seeds 0,1,2,4,5,6,8
+            // and to within 2% on 3 and 7 (the residual is the missing
+            // arrivals).
+            //
+            // It lands on the TAIL because the excess-regime price is a
+            // 0.5%-from-bottom quantile of the demand curve (LandAccounting
+            // MinTailFraction) and a household whose benefit has just expired
+            // drops to the ResidentialMinimumEarnings floor — straight into
+            // that quantile. Measured over seeds 0–49: unpaired, the tail
+            // ratio scattered 0.77–2.13, i.e. it reported that doubling every
+            // income source LOWERED the price on three seeds and raised it
+            // above 2× on two — impossible for a bid that is homogeneous of
+            // degree 1 in income, which is proof the statistic was measuring
+            // the gap between two worlds rather than an elasticity. Five seeds
+            // (3, 17, 21, 32, 38) fell under the 1.3 bar. Paired, the ratio is
+            // exactly 2.0000 on 48 of the 50 and never below 1.6753.
+            //
+            // Note the income block below already restores this same rebuild
+            // before leg (d) runs; this is that convention applied to leg (c)
+            // as well, not a new one.
+            acc.RebuildHouseholdLadders(sim.W, p);
 
             // Pick a cluster with real stock and real demand.
             int c0 = 0;
@@ -420,16 +454,46 @@ namespace CS2Econ.Harness
             }
             bool sweepDeclines = sweepHi > sweepLo * 1.5 && sweepLo > 0;
             // Income scaling, by the source each end of the curve actually
-            // prices: the TOP is wage earners, so doubling wages must move it
-            // strongly; the TAIL at equilibrium unemployment is benefit-income
-            // households (CS2 job-seeking is per-citizen, so ~half the adults
-            // are unemployed at the fixture's job stock and the poorest bins
-            // are UnemploymentBenefit + transfers — which correctly do NOT
-            // scale with wages; an earlier wage-only leg failed exactly there).
-            // Doubling every income source except the fixed segment transfer
-            // must move the tail; if transfers ever become the tail, this
-            // fails loudly and gets restated rather than silently passing.
-            // A constant-price mutant fails both ends.
+            // prices. Both ends read the ladder rebuilt at the top of this
+            // fixture, so base and treated prices come off one population.
+            //
+            // The TOP is wage earners, so doubling wages must move it strongly:
+            // measured 1.81–1.98× over seeds 0–49 against a 1.5 bar.
+            //
+            // The TAIL is NOT what the previous version of this comment
+            // claimed. It said the poorest bins were "UnemploymentBenefit +
+            // transfers"; measured, they are overwhelmingly neither. CS2
+            // job-seeking is per-citizen and this fixture settles well below
+            // one job per participating adult, so a real stock of households
+            // outlives the UnemploymentAllowanceTicks cliff, and once it
+            // expires their income IS ResidentialMinimumEarnings. Benefit and
+            // floor are both doubled below, which is why the paired tail
+            // response is exactly 2.0000× on 48 of seeds 0–49.
+            //
+            // The fixed segment transfer is still NOT doubled — Segment.All is
+            // a static table and a check that mutates it leaks into every
+            // check that runs after it. The version of this comment being
+            // replaced promised that if transfers ever became the tail this
+            // would fail loudly and be restated rather than silently pass.
+            // They do, on 2 of 50 seeds (7 and 31), and it did NOT fail — so
+            // here is the restatement rather than the silence. On those seeds
+            // a post-cliff household living on transfer alone (StudentLow's
+            // 3.0, above even the doubled 2.0 floor) anchors the tail and
+            // cannot scale, capping the true response at 1.6753× / 1.9779×;
+            // doubling Segment.Transfer as well restores exactly 2.0000×
+            // there, which is how we know the model transmits the transfer to
+            // willingness to pay one-for-one (Access.HouseholdIncomeEstimate
+            // adds it, and the bid is RentShare × income × densityAppeal).
+            //
+            // So what the 1.3 bar guarantees, stated exactly: doubling every
+            // wage, the unemployment benefit and the earnings floor must move
+            // the deep-supply clearing price by >1.3× FOR THE SAME POPULATION.
+            // Not 2×, because the one income component held fixed can and
+            // sometimes does anchor the tail; but >1.3 with a measured floor
+            // of 1.6753 over fifty seeds, so it is a real bar with headroom
+            // rather than a number chosen to clear the worst seed. A
+            // constant-price mutant, and any mutant that prices off quantity
+            // without reading incomes, fails both ends at 1.0×.
             var pRich = new EconParams { WageBasic = p.WageBasic * 2, WageSkilled = p.WageSkilled * 2, WageEducated = p.WageEducated * 2 };
             acc.RebuildHouseholdLadders(sim.W, pRich);
             double richHi = SweepAt(Math.Max(0.5, stock * 0.03), pRich);
