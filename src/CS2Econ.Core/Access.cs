@@ -83,13 +83,7 @@ namespace CS2Econ.Core
                 if (h.ExitedTick >= 0) continue;
                 presenceScratch[h.Segment]++;
                 var seg = Segment.All[h.Segment];
-                // An unhoused household bids on what it would earn once housed
-                // — its OWN earners and job level, valued at the market's
-                // employment odds. Employment odds are a market outcome, not a
-                // personal attribute, so reading them here is legitimate.
-                double income = AccessState.HouseholdIncomeEstimate(h, seg, p);
-                if (h.HomeParcel < 0 && seg.Adults > 0 && h.Earners == 0)
-                    income = Math.Max(income, HouseholdProspectiveIncome(h, seg, p));
+                double income = LadderIncome(h, seg, p);
                 double baseBid = h.RentShare * income;
                 perSeg[0][h.Segment].Add(baseBid * h.DensityAppeal(ZoneKind.ResidentialLow));
                 perSeg[1][h.Segment].Add(baseBid * h.DensityAppeal(ZoneKind.ResidentialHigh));
@@ -120,6 +114,36 @@ namespace CS2Econ.Core
                 }
             }
         }
+
+        /// <summary>The income a household enters the bid ladder with. Extracted
+        /// from RebuildHouseholdLadders (which now calls it) so that anything
+        /// wanting to rank households the way the ladder ranks them — an
+        /// overlay, a check's counterfactual — reads the ladder's OWN rule
+        /// rather than a re-implementation of it. A re-implementation is not a
+        /// hypothetical hazard here: the obvious one drops the prospective-income
+        /// line below and so misprices every unhoused zero-earner household.
+        /// Measured in the 8×8 / 2500-household / 80-tick clearing-price fixture
+        /// over seeds 0–299, that branch covers 10.69% (seed 160) to 18.65%
+        /// (seed 254) of live households, and it strictly RAISES the rung for
+        /// 9.48% (seed 158) to 18.65% (seed 254) of them — so a proxy ranking
+        /// would put a tenth to a fifth of the population in the wrong place.
+        ///
+        /// An unhoused household bids on what it would earn once housed — its
+        /// OWN earners and job level, valued at the market's employment odds.
+        /// Employment odds are a market outcome, not a personal attribute, so
+        /// reading them here is legitimate.</summary>
+        public double LadderIncome(Household h, Segment seg, EconParams p)
+        {
+            double income = AccessState.HouseholdIncomeEstimate(h, seg, p);
+            if (h.HomeParcel < 0 && seg.Adults > 0 && h.Earners == 0)
+                income = Math.Max(income, HouseholdProspectiveIncome(h, seg, p));
+            return income;
+        }
+
+        /// <summary>This household's own rung of the bid ladder for a density
+        /// kind — exactly the value RebuildHouseholdLadders sorts.</summary>
+        public double LadderBase(Household h, ZoneKind kind, EconParams p)
+            => h.RentShare * LadderIncome(h, Segment.All[h.Segment], p) * h.DensityAppeal(kind);
 
         /// <summary>What somebody who does not live here yet would earn if they
         /// came and found work at the market's current odds. Same construction

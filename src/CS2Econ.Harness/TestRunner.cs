@@ -339,24 +339,41 @@ namespace CS2Econ.Harness
             // employment and applies `UnemployedTicks += RefreshInterval` — so
             // the engine's ladder is always one refresh behind the 60-tick
             // benefit cliff, and short RefreshInterval−1 ticks of arrivals.
-            // Confirmed causally, not by correlation: subtracting that one
-            // increment back off the population and rebuilding at the SAME p
-            // reproduces the stale base price exactly on seeds 0,1,2,4,5,6,8
-            // and to within 2% on 3 and 7 (the residual is the missing
-            // arrivals).
+            // SINGLE-SOURCED, FLAGGED AS SUCH: "confirmed causally — subtracting
+            // that one increment back off the population and rebuilding at the
+            // SAME p reproduces the stale base price exactly on seeds 0,1,2,4,5,
+            // 6,8 and to within 2% on 3 and 7". That was one run by one author;
+            // nobody has reproduced it since, including the round that rewrote
+            // the income legs below. Treat it as an observation, not a result,
+            // until someone re-measures it. The PAIRING itself does not rest on
+            // it: pairing is required because the treated arms rebuild the
+            // ladder and the baseline must be built the same way, which is true
+            // whatever the mechanism behind the stale ladder turns out to be.
             //
             // It lands on the TAIL because the excess-regime price is a
             // 0.5%-from-bottom quantile of the demand curve (LandAccounting
             // MinTailFraction) and a household whose benefit has just expired
-            // drops to the ResidentialMinimumEarnings floor — straight into
-            // that quantile. Measured over seeds 0–49: unpaired, the tail
-            // ratio scattered 0.77–2.13, i.e. it reported that doubling every
-            // income source LOWERED the price on three seeds and raised it
-            // above 2× on two — impossible for a bid that is homogeneous of
-            // degree 1 in income, which is proof the statistic was measuring
-            // the gap between two worlds rather than an elasticity. Five seeds
-            // (3, 17, 21, 32, 38) fell under the 1.3 bar. Paired, the ratio is
-            // exactly 2.0000 on 48 of the 50 and never below 1.6753.
+            // drops to max(ResidentialMinimumEarnings, its segment transfer) —
+            // straight into that quantile. NOT to the floor: for StudentLow
+            // (3.0), SeniorLow (8.0) and SeniorMid (13.0) the transfer is the
+            // binding term, which is exactly the case that kept this check red
+            // on seed 271 after the pairing fix. Measured over seeds 0–49:
+            // unpaired, the tail ratio scattered 0.77–2.13, i.e. it reported
+            // that doubling every income source LOWERED the price on three seeds
+            // and raised it above 2× on two — impossible for a bid that is
+            // homogeneous of degree 1 in income, which is proof the statistic
+            // was measuring the gap between two worlds rather than an
+            // elasticity. Five seeds (3, 17, 21, 32, 38) fell under the 1.3 bar.
+            //
+            // The claim this comment used to end on — "paired, the ratio is
+            // exactly 2.0000 on 48 of the 50 and never below 1.6753" — was true
+            // over seeds 0–49 and false past them (seed 271 = 1.00758, seed 910
+            // = 1.00000). Pairing was necessary and is not in question; it was
+            // not sufficient, and that ratio is no longer the assertion. What
+            // the legs below assert instead, measured over seeds 0–999: paired
+            // AND with the segment transfer scaled too, the response is bitwise
+            // exactly 2.0 at every one of the 25 supply points on 1000 of 1000
+            // seeds.
             //
             // Note the income block below already restores this same rebuild
             // before leg (d) runs; this is that convention applied to leg (c)
@@ -417,15 +434,26 @@ namespace CS2Econ.Harness
                 && (dLow < dMid - 1e-9 || fdLow < fdMid - 1e-9);
 
             // (c) the price is pinned to the DEMAND CURVE across BOTH regimes.
-            // Sweep supply over four orders of magnitude and require the price
-            // to be non-increasing at every step — including across the
-            // cleared→excess transition, where an excess rule priced above its
-            // own scarcity price (the reverted revenue-max inversion, and the
-            // surviving 'wtp[n-1] * 1.05' mutant) shows up as an UPWARD step.
-            // Then require a large total decline, and require the whole curve
-            // to scale with wages — together these kill the 'return 1.0'
-            // constant mutant, which is weakly monotone but neither declines
-            // nor tracks the bidders' incomes.
+            // Sweep supply over three orders of magnitude (10^-1.5 to 10^+1.5 is
+            // a factor of 1000; this comment used to say four) and require the
+            // price to be non-increasing at every step. Then require a large
+            // total decline, and require the whole curve to track income — see
+            // the income legs below, which is where the constant-price and
+            // income-blind mutants actually die.
+            //
+            // CORRECTED, AND FLAGGED RATHER THAN FIXED: this comment used to
+            // claim the sweep policed the cleared→excess transition, "where an
+            // excess rule priced above its own scarcity price shows up as an
+            // UPWARD step". At 25 points it does not. Measured over seeds 0–299:
+            // the shipped 25-point sweep reports monotone on 300/300, while a
+            // 401-point sweep over the IDENTICAL range finds an upward step on
+            // 99 of the 300 (worst step +181.8%, seed 294). So this leg is not
+            // currently watching that boundary at the resolution it claims to.
+            // Left alone deliberately — raising the resolution turns the check
+            // red on a third of seeds, and whether those steps are a real
+            // pricing defect or a legitimate discontinuity at the regime
+            // boundary is a question for its own commit, not a side effect of
+            // rewriting the income legs.
             //
             // This replaces a single-segment equality that assumed one flat
             // tranche per segment — true only while a segment was one point
@@ -439,12 +467,19 @@ namespace CS2Econ.Harness
                 acc.HousingStock[0][c0] = saved0;
                 return v;
             }
+            // The sweep KEEPS its points and its values: the income legs below
+            // re-read the same 25 supply points under a counterfactual and
+            // compare pointwise, so numerator and denominator have to be the
+            // same position on the supply axis. (They were not; see (c0).)
+            double SweepUnits(int i) => Math.Max(0.5, stock * Math.Pow(10, -1.5 + 3.0 * i / 24.0));
+            var sweep = new double[25];
             bool sweepMonotone = true; int upSteps = 0;
-            double sweepHi = 0, sweepLo = 0, prevSweep = double.MaxValue;
+            double sweepHi = 0, sweepLo = 0, minSweep = double.MaxValue, prevSweep = double.MaxValue;
             for (int i = 0; i <= 24; i++)
             {
-                double units = Math.Max(0.5, stock * Math.Pow(10, -1.5 + 3.0 * i / 24.0));
-                double v = SweepAt(units, p);
+                double v = SweepAt(SweepUnits(i), p);
+                sweep[i] = v;
+                if (v < minSweep) minSweep = v;
                 if (i == 0) sweepHi = v;
                 sweepLo = v;
                 // Tolerance is relative and tiny: real steps are smooth, a
@@ -453,60 +488,410 @@ namespace CS2Econ.Harness
                 prevSweep = v;
             }
             bool sweepDeclines = sweepHi > sweepLo * 1.5 && sweepLo > 0;
-            // Income scaling, by the source each end of the curve actually
-            // prices. Both ends read the ladder rebuilt at the top of this
-            // fixture, so base and treated prices come off one population.
+            // ---- DOES THE PRICE TRACK INCOME? FOUR CLAIMS, NOT ONE RATIO ----
             //
-            // The TOP is wage earners, so doubling wages must move it strongly:
-            // measured 1.81–1.98× over seeds 0–49 against a 1.5 bar.
+            // What this replaces, and why. The previous version was a single
+            // statistic — "doubling wages lifts the top >1.5×, doubling wages,
+            // benefit and floor lifts the tail >1.3×" — and every quantitative
+            // claim its comment made about the tail was wrong. It said the 1.3
+            // bar had "a measured floor of 1.6753 over fifty seeds, so it is a
+            // real bar with headroom". Over seeds 0–999 that statistic runs
+            // 1.0000 (seed 910) to 2.0; it falls short of 2.0 on 22 seeds and
+            // BELOW the 1.3 bar on 7 (271, 327, 549, 602, 642, 759, 910). The
+            // check was already red on seed 271 when that sentence was written.
             //
-            // The TAIL is NOT what the previous version of this comment
-            // claimed. It said the poorest bins were "UnemploymentBenefit +
-            // transfers"; measured, they are overwhelmingly neither. CS2
-            // job-seeking is per-citizen and this fixture settles well below
-            // one job per participating adult, so a real stock of households
-            // outlives the UnemploymentAllowanceTicks cliff, and once it
-            // expires their income IS ResidentialMinimumEarnings. Benefit and
-            // floor are both doubled below, which is why the paired tail
-            // response is exactly 2.0000× on 48 of seeds 0–49.
+            // Worse, and this is the whole case for rewriting rather than
+            // retuning: the bar passed six of the eight mutants built against it
+            // (matrix below). One of those reads no household income at all at
+            // the deep end. Run end to end on seed 271, all four combinations:
             //
-            // The fixed segment transfer is still NOT doubled — Segment.All is
-            // a static table and a check that mutates it leaks into every
-            // check that runs after it. The version of this comment being
-            // replaced promised that if transfers ever became the tail this
-            // would fail loudly and be restated rather than silently pass.
-            // They do, on 2 of 50 seeds (7 and 31), and it did NOT fail — so
-            // here is the restatement rather than the silence. On those seeds
-            // a post-cliff household living on transfer alone (StudentLow's
-            // 3.0, above even the doubled 2.0 floor) anchors the tail and
-            // cannot scale, capping the true response at 1.6753× / 1.9779×;
-            // doubling Segment.Transfer as well restores exactly 2.0000×
-            // there, which is how we know the model transmits the transfer to
-            // willingness to pay one-for-one (Access.HouseholdIncomeEstimate
-            // adds it, and the bid is RentShare × income × densityAppeal).
+            //     3a507e9, real model            21/22   (this check red)
+            //     3a507e9, income-blind mutant    22/22   (green)
+            //     these legs, real model          22/22   (green)
+            //     these legs, income-blind mutant 21/22   (red, via (c2))
             //
-            // So what the 1.3 bar guarantees, stated exactly: doubling every
-            // wage, the unemployment benefit and the earnings floor must move
-            // the deep-supply clearing price by >1.3× FOR THE SAME POPULATION.
-            // Not 2×, because the one income component held fixed can and
-            // sometimes does anchor the tail; but >1.3 with a measured floor
-            // of 1.6753 over fifty seeds, so it is a real bar with headroom
-            // rather than a number chosen to clear the worst seed. A
-            // constant-price mutant, and any mutant that prices off quantity
-            // without reading incomes, fails both ends at 1.0×.
-            var pRich = new EconParams { WageBasic = p.WageBasic * 2, WageSkilled = p.WageSkilled * 2, WageEducated = p.WageEducated * 2 };
-            acc.RebuildHouseholdLadders(sim.W, pRich);
-            double richHi = SweepAt(Math.Max(0.5, stock * 0.03), pRich);
-            var pAll = new EconParams
+            // The suite as shipped scored the mutant ABOVE the model on the one
+            // seed this exercise exists for. So the bar is deleted, not widened.
+            //
+            // All four legs read ladders rebuilt inside this fixture, so every
+            // ratio divides one population at two prices rather than two
+            // populations (see PAIR THE LEGS at the top — that part stands).
+            //
+            // SCOPE: these are FORECAST-path properties (realized:false). With
+            // realized:true the price is a stored auction outcome that a ladder
+            // rebuild does not touch, so (c1)–(c3) are false there by
+            // construction. Everything below is the 8×8 / 2500-household /
+            // 80-tick fixture with default FeatureFlags; the derivations are
+            // fixture-independent, the RANGES are not.
+
+            // Each counterfactual scales income parameters, and the segment
+            // transfer lives in Segment.All — a process-global static table
+            // with no EconParams knob. It is scaled by clone-and-restore.
+            //
+            // The replaced comment refused to touch it, on the stated grounds
+            // that "a check that mutates it leaks into every check that runs
+            // after it". That is false as stated and it cost the check its
+            // tail: measured, with Array.Copy back in a `finally`, `verify` is
+            // byte-identical on every other check on seeds 0, 3, 138, 208, 271
+            // and 327, and legs (a) and (d) inside this check are byte-identical
+            // too. The REAL caveat, which the old text did not state: Segment.All
+            // is process-global, so this must not run concurrently with another
+            // check. The harness is serial, and `tableRestored` below is a
+            // tripwire so that a leak fails the check that caused it rather than
+            // the next one.
+            var savedSegments = (Segment[])Segment.All.Clone();
+            EconParams Income(double wage, double benefit, double floor) => new EconParams
             {
-                WageBasic = p.WageBasic * 2, WageSkilled = p.WageSkilled * 2, WageEducated = p.WageEducated * 2,
-                UnemploymentBenefit = p.UnemploymentBenefit * 2,
-                ResidentialMinimumEarnings = p.ResidentialMinimumEarnings * 2,
+                // NOTE this is a fresh default with fields overridden, not a
+                // copy of `p`. Correct only because `p` here is itself
+                // `new EconParams()`. If anyone ever calibrates `p` in this
+                // fixture, every non-income parameter silently reverts in the
+                // treated arm and these identities break for a reason that has
+                // nothing to do with income. EconParams has no Clone().
+                WageBasic = p.WageBasic * wage,
+                WageSkilled = p.WageSkilled * wage,
+                WageEducated = p.WageEducated * wage,
+                UnemploymentBenefit = p.UnemploymentBenefit * benefit,
+                ResidentialMinimumEarnings = p.ResidentialMinimumEarnings * floor,
             };
-            acc.RebuildHouseholdLadders(sim.W, pAll);
-            double allLo = SweepAt(stock * 30, pAll);
-            acc.RebuildHouseholdLadders(sim.W, p);
-            bool tracksIncome = richHi > sweepHi * 1.5 && allLo > sweepLo * 1.3;
+            T WithIncome<T>(EconParams pp, double transferScale, Func<T> body)
+            {
+                try
+                {
+                    if (transferScale != 1)
+                        for (int s = 0; s < Segment.All.Length; s++)
+                        {
+                            var g = Segment.All[s];
+                            Segment.All[s] = new Segment(g.Name, g.Life, g.Labor, g.Participation,
+                                g.Transfer * transferScale, g.JobAccessW, g.GoodsAccessW, g.SchoolAccessW,
+                                g.AmenityW, g.HealthW, g.PollutionW, g.DensityTolerance, g.MaxRentShare, g.Adults);
+                        }
+                    acc.RebuildHouseholdLadders(sim.W, pp);
+                    return body();
+                }
+                finally
+                {
+                    Array.Copy(savedSegments, Segment.All, savedSegments.Length);
+                    acc.RebuildHouseholdLadders(sim.W, p);
+                }
+            }
+
+            // (c0) DIRECTION at the top: doubling WAGES must lift the
+            // thin-supply price a lot, and cannot lift it past 2×.
+            //
+            // The read point is now SweepUnits(0) — the same point sweepHi was
+            // read at. It used to be stock×0.03 against a denominator read at
+            // stock×10^-1.5 = stock×0.0316. That mismatch moved the ratio on 9
+            // of seeds 0–999 (96, 107, 205, 208, 303, 311, 578, 723, 830), by
+            // up to 2.17% upward, and on seed 208 it pushed the statistic to
+            // 2.00426 — above the arithmetic ceiling for a wage-only doubling,
+            // the same species of impossible number that condemned the unpaired
+            // statistic in round one. Aligned, the ratio runs 1.60012 (seed
+            // 5191) to 1.98232 over seeds 0–14799 and never exceeds 2. Over the
+            // first thousand alone it reads 1.71733, which would have suggested
+            // 14% of headroom on the 1.5 bar where the wider sweep shows 6.7% —
+            // stated at the wide range because a range is a claim about where it
+            // was measured, and this file has twice shipped one that was not.
+            //
+            // The 2.0 ceiling is a THEOREM, not an empirical bound, which is
+            // why 0.018 of headroom is not a worry: income is
+            // max(floor, earners×wage×(1−tax) + benefit + transfer), so doubling
+            // wages alone scales each rung by a factor in [1,2]; order
+            // statistics are monotone under pointwise domination; and the read
+            // POSITION is identical in both arms because Cum(0), readAt and the
+            // tail target are counts with no income in them. The 1e-6 slack is
+            // for the bisection grid (relative error ~1e-10 at this read).
+            // Do NOT convert this leg to an identity — a wage-only doubling is
+            // genuinely not a pure scaling of income, so no exact ratio exists.
+            // It also does real work: it kills the rung^1.05 mutant on 111 of
+            // seeds 0–299, which no other leg's DIRECTION claim catches.
+            var pRich = Income(2, 1, 1);
+            double richHi = WithIncome(pRich, 1, () => SweepAt(SweepUnits(0), pRich));
+            double topResponse = sweepHi > 0 ? richHi / sweepHi : 0;
+            bool wagesLiftTop = topResponse > 1.5 && topResponse <= 2.0 * (1 + 1e-6);
+
+            // (c1) TRANSMISSION: the bid is homogeneous of degree 1 in income.
+            // Scale EVERY income source — the three wages, UnemploymentBenefit,
+            // ResidentialMinimumEarnings and Segment.Transfer — by 2, and every
+            // one of the 25 sweep points must double. Pointwise, over all 25.
+            //
+            // Honesty about why: the pointwise form was chosen on the belief
+            // that "with the transfer held the deviation reaches 0.5 mid-curve
+            // while both endpoints still read 2.0", i.e. that the interior
+            // carries information the ends do not. Measured, that is false —
+            // over seeds 0–299 the larger endpoint deviation is at least 0.0088
+            // on 300 of 300, four orders above the 1e-6 tolerance, and there is
+            // no seed where the ends are clean and the interior is dirty. A
+            // two-endpoint form would have detected identically on every seed
+            // measured. The 25 points are kept because they cost nothing and a
+            // pointwise identity is the stronger statement in principle, NOT
+            // because a measurement forced them. (What is true and narrower: the
+            // DEEP end alone reads exactly 2.0 on 294 of 300, so a deep-only
+            // identity really would miss it — the thin end is what does the
+            // work.)
+            //
+            // Why an identity rather than a bar: income enters only as
+            // RentShare × income × densityAppeal, and the read position is a
+            // COUNT, so scaling every source scales the answer exactly. Measured
+            // over seeds 0–999 (25,000 pairs): the deviation is identically 0 —
+            // bitwise, at all 25 points on all 1000 seeds — because doubling in
+            // binary is exact through every rung, maxBid and bisection midpoint.
+            // That is 5.6 orders of magnitude tighter than the 1.3 bar it
+            // replaces, which over the same range was not merely slack but
+            // UNSATISFIABLE on 7 seeds.
+            //
+            // The 1e-6 tolerance is therefore not absorbing measured noise. It
+            // is there because exactness is contingent on things a maintainer
+            // can innocently break: at λ=3 the identity holds only to 1.302e-15
+            // relative (max over seeds 0–999, worst seed 990) and is bitwise
+            // exact at only 0–21 of the 25 points, so a bitwise assertion would
+            // go red if anyone rescaled by 3 for no semantic reason. Distance to
+            // real signal, measured over seeds 0–299: a mutant raising each rung
+            // to the power 1.05 deviates by 3.526e-2, one adding 0.10 to each
+            // rung by 4.73e-2–1.51e-1. Any tolerance in roughly [1e-8, 1e-4]
+            // kills the same set; 1e-6 is the middle of that plateau.
+            //
+            // WHY THE TRANSFER HAD TO JOIN THE SCALED SET rather than the bar
+            // being widened: with it held fixed the relation is not an identity
+            // ANYWHERE — pointwise deviation exceeds 1e-6 on 1000 of 1000 seeds,
+            // min 0.0408 (seed 330), max 0.5000 (seed 242). Segment.All gives
+            // SeniorLow/SeniorMid a fixed Transfer of 8.0/13.0 with Adults=0 and
+            // Participation=0, and StudentLow 3.0, so their income is
+            // max(floor, transfer) = transfer forever; the doubled floor reaches
+            // only 2.0 and never touches them. That is the whole of seed 271's
+            // failure, and an identity form is simply unavailable without it.
+            var pAll = Income(2, 2, 2);
+            double homogDev = WithIncome(pAll, 2, () =>
+            {
+                double d = 0;
+                for (int i = 0; i <= 24; i++)
+                    d = Math.Max(d, Math.Abs(SweepAt(SweepUnits(i), pAll) - 2 * sweep[i]) / (2 * sweep[i]));
+                return d;
+            });
+            // DEGENERACY GUARD. ResidentialBidPerUnit has absolute early-outs
+            // (maxBid ≤ 1e-12, totalMass ≤ 1e-12, loT ≤ 1e-12 → return 0) under
+            // which 0 == 2×0 would pass vacuously, and a zero sweep point makes
+            // homogDev NaN — which fails the leg loudly, the right direction,
+            // but says nothing. Measured headroom over seeds 0–999: the minimum
+            // base price anywhere on the sweep runs 0.11202 (seed 353) to
+            // 1.43276, i.e. 112× above this guard and 9 orders above the
+            // early-outs. It is not a live constraint on the real model; it is
+            // what catches a mutant that empties the bottom of the ladder.
+            bool incomeHomogeneous = minSweep > 1e-3 && homogDev <= 1e-6;
+
+            // (c2) SELECTION: the deep price is a quantile of the ACTUAL lower
+            // tail, not a statistic of the parameters.
+            //
+            // THIS IS THE LEG THE OLD CHECK DID NOT HAVE, AND IT IS THE ONE
+            // THAT MATTERS. (c1) tests TRANSMISSION and says nothing about
+            // SELECTION, by construction: Cum(0) and the tail target
+            // totalAt0×(1−MinTailFraction) are COUNTS with no income in them, so
+            // the same household anchors both arms of any income scaling
+            // whatever the pricing rule is. Measured over seeds 0–299, two
+            // mutants that are exactly homogeneous of degree 1 pass (c1) on
+            // 300/300 with deviation identically ZERO: one returns a fixed
+            // multiple of RentShare × ResidentialMinimumEarnings × densityAppeal
+            // at the deep end (reads no household income at all) and passes
+            // (c0) and (c3) on 300/300 as well; the other returns a fixed
+            // multiple of the mass-weighted MEAN rung (reads the whole
+            // distribution but the wrong statistic of it) and passes (c0) on
+            // 300/300 and (c3) on 292/300. Both pass the old 1.3 bar on 300/300.
+            // No choice of bar and no parameter counterfactual can see the
+            // first at all; only a counterfactual that moves the POPULATION can.
+            //
+            // So: rank households by the ladder's OWN rung (AccessState.
+            // LadderBase — literally the function RebuildHouseholdLadders sorts,
+            // extracted for this purpose so the test cannot rank by a
+            // re-implementation that drifts), halve RentShare in the poorest
+            // quarter of each segment, and require
+            //   • the deep price to halve EXACTLY — the anchor is inside the cut
+            //     set, every rung there scales by 0.5 and order is preserved, so
+            //     the quantile scales by 0.5; and
+            //   • the thin-supply price not to move AT ALL — the cut set is the
+            //     BOTTOM quarter, so maxBid is untouched and the bisection
+            //     bracket is identical, and the thin-supply read sits so far up
+            //     the ladder that the cut households are not counted in Cum at
+            //     any price the search converges through, in either arm.
+            //
+            // Measured over seeds 0–999: max |deep/base ÷ 0.5 − 1| = 6.124e-10
+            // (worst seed 873), i.e. 1/1600th of the 1e-6 relative tolerance;
+            // the thin-supply price is BITWISE identical on 1000 of 1000 (max
+            // deviation exactly 0), so 1e-9 there is a tolerance in name only,
+            // kept against a future last-bit tie. The bitwise result is what the
+            // mechanism above is inferred FROM, not the other way round — if a
+            // future change makes the thin read drift, re-derive rather than
+            // widening 1e-9.
+            //
+            // CUT DEPTH 0.25 IS MEASURED, NOT CHOSEN. Scanning the cut from 0.02
+            // to 0.60 over seeds 0–299: the smallest cut that makes the deep
+            // price halve exactly ranges 0.02–0.14 (worst seed 288); the largest
+            // cut leaving the top read bitwise clean ranges 0.44–0.60 (worst
+            // seed 197). The safe window is [0.14, 0.44] on 300 of 300 seeds and
+            // 0.25 sits near its log centre — 1.8× above the deepest anchor,
+            // 1.8× below the shallowest top contamination. The regime
+            // precondition is measured too, not assumed: the fill at the deep
+            // read runs 0.0287 (seed 600) to 0.2875 (seed 563) over seeds
+            // 0–999, so the tail anchor is in the excess regime on every seed.
+            //
+            // WHAT (c2) STILL DOES NOT KILL: a model that prices a DIFFERENT low
+            // quantile of the correct population — the 5% quantile instead of
+            // the 0.5% one — halves too, and survives all four legs. Pinning
+            // that needs an assertion on MinTailFraction's meaning (mass
+            // strictly below the price ≤ 0.5% of demand), which is a different
+            // check and belongs in a different commit.
+            double poorLo = 0, poorHi = 0;
+            var undo = new List<(Household h, double rentShare)>();
+            try
+            {
+                var bySeg = new List<(double rung, Household h)>[Segment.Count];
+                for (int s = 0; s < Segment.Count; s++) bySeg[s] = new List<(double, Household)>();
+                foreach (var h in sim.W.Households)
+                {
+                    if (h.ExitedTick >= 0) continue;
+                    bySeg[h.Segment].Add((acc.LadderBase(h, ZoneKind.ResidentialLow, p), h));
+                }
+                for (int s = 0; s < Segment.Count; s++)
+                {
+                    var list = bySeg[s];
+                    list.Sort((x, y) => x.rung.CompareTo(y.rung));
+                    int cut = (int)(list.Count * 0.25);
+                    for (int i = 0; i < cut; i++)
+                    {
+                        undo.Add((list[i].h, list[i].h.RentShare));
+                        list[i].h.RentShare *= 0.5;
+                    }
+                }
+                acc.RebuildHouseholdLadders(sim.W, p);
+                poorLo = SweepAt(SweepUnits(24), p);
+                poorHi = SweepAt(SweepUnits(0), p);
+            }
+            finally
+            {
+                foreach (var (h, rs) in undo) h.RentShare = rs;
+                acc.RebuildHouseholdLadders(sim.W, p);
+            }
+            double tailResponse = sweepLo > 0 ? poorLo / sweepLo : 0;
+            double topInvariance = sweepHi > 0 ? poorHi / sweepHi : 0;
+            bool pricesTail = minSweep > 1e-3
+                              && Math.Abs(tailResponse - 0.5) <= 0.5e-6
+                              && Math.Abs(topInvariance - 1.0) <= 1e-9;
+
+            // (c3) COVERAGE: every income source reaches the price somewhere.
+            //
+            // (c1) is blind to a model that DROPS a source, because removing a
+            // term that is itself homogeneous leaves the whole homogeneous:
+            // measured over seeds 0–299, a model whose income ignores
+            // UnemploymentBenefit and one that ignores the segment transfer each
+            // pass (c0), (c1) and (c2) on 300/300 — and passed the old 1.3 bar
+            // on 300/300 as well. This leg is the only thing that kills either,
+            // and it is also what kills a model that drops the earnings floor.
+            //
+            // Scale ONE source by 10 and require at least one of the 25 sweep
+            // points to move by ≥25%. ×10 rather than ×2, and this is the whole
+            // reason the leg has this shape: at ×2 the statutory floor moves
+            // nothing at all on 29 of seeds 0–999 — it simply does not bind at
+            // any read point on those seeds — so a ×2 form is unavailable for
+            // the floor, and a floor-dropping mutant survives on 61 of seeds
+            // 0–299. At ×10 the floor binds on every seed measured and that
+            // mutant dies on 300/300.
+            //
+            // The bar is a HAIRLINE above zero, and that is the whole design.
+            // This leg is not a magnitude claim: a model that drops a source
+            // scores exactly 0.0, a model that reads it scores something, and
+            // the only question is which side of that line the number falls.
+            // How FAR the price moves depends on which households the source
+            // happens to bind for on a given seed, which is a property of the
+            // population and not of the model.
+            //
+            // An earlier draft of this leg required ≥0.25, on the strength of
+            // "weakest response over seeds 0–999 is 0.7945, so the bar has 3.2×
+            // headroom". That sentence was a bound written past its evidence,
+            // which is the exact failure this file has now made twice: swept to
+            // 1000 and the counterexample was at 6550, where the floor arm moves
+            // the curve 0.1368 and the check goes red. Swept wider — 14,600
+            // seeds — the tightest response is that same 0.137, so the true
+            // headroom over 0.25 was negative and the 3.2× was an artifact of
+            // where the sweep stopped. Against 1e-9 the same measurement gives
+            // eight orders of magnitude, and it is measuring the thing the leg
+            // actually claims.
+            //
+            // What can still fail it honestly: a seed on which ×10 of some
+            // source moves NO read point at all, meaning that source binds for
+            // nobody anywhere on the sweep. That is a population accident rather
+            // than a model defect, and the fix is a larger multiplier — ×2 is
+            // already known to be unusable for the floor, which moves nothing on
+            // 29 of seeds 0–999.
+            double SourceReach(EconParams pp, double transferScale) => WithIncome(pp, transferScale, () =>
+            {
+                double best = 0;
+                for (int i = 0; i <= 24; i++)
+                    best = Math.Max(best, Math.Abs(SweepAt(SweepUnits(i), pp) - sweep[i]) / sweep[i]);
+                return best;
+            });
+            var pWageX = Income(10, 1, 1);
+            var pBenX = Income(1, 10, 1);
+            var pFloorX = Income(1, 1, 10);
+            var pTransX = Income(1, 1, 1);
+            double reachWage = SourceReach(pWageX, 1);
+            double reachBenefit = SourceReach(pBenX, 1);
+            double reachFloor = SourceReach(pFloorX, 1);
+            double reachTransfer = SourceReach(pTransX, 10);
+            double weakestSource = Math.Min(Math.Min(reachWage, reachBenefit),
+                                            Math.Min(reachFloor, reachTransfer));
+            bool sourcesReach = minSweep > 1e-3 && weakestSource > 1e-9;
+
+            // Tripwire, not decoration: every counterfactual above restores
+            // Segment.All in a `finally`, and this fails the check that caused a
+            // leak rather than letting it silently reprice every check after it.
+            bool tableRestored = true;
+            for (int s = 0; s < Segment.All.Length; s++)
+                if (Segment.All[s].Transfer != savedSegments[s].Transfer) tableRestored = false;
+
+            // MEASURED MUTANT MATRIX, seeds 0–299, 300 seeds per cell. Each
+            // mutant was built in a scratch copy of the tree, magnitude-
+            // calibrated where it has a free constant so no other leg catches it
+            // on level alone, and run through these same four legs. "kills" =
+            // the composite goes red.
+            //
+            //                                      old >1.3 bar     these four legs
+            //   income-blind deep end (fixed        PASS 300/300     dies 300/300  (c2)
+            //     multiple of the floor)
+            //   deep end = mean rung                PASS 300/300     dies 300/300  (c2)
+            //   income ignores UnemploymentBenefit  PASS 300/300     dies 300/300  (c3 alone
+            //                                                        on 299, c2 also on 1)
+            //   income ignores segment Transfer     PASS 300/300     dies 300/300  (c3)
+            //   income ignores the earnings floor   pass  54/300     dies 300/300  (c3)
+            //   ladder rung ^ 1.05                  PASS 299/300     dies 300/300  (c1,c2)
+            //   ladder rung + 0.10                  PASS 298/300     dies 300/300  (c1,c2)
+            //   prices off QUANTITY alone           dies 300/300     dies 300/300  (all)
+            //
+            // Read the first column: the shipped bar killed ONE of the eight,
+            // and reliably killed only that one. (The 1–2 seed "failures" in
+            // that column on the rung mutants are seeds where the real model is
+            // red too — 271 is the one inside this range; those are not kills,
+            // they are the check's own defect.) These four legs kill all eight
+            // on every seed measured, while the real model is green on 300/300.
+            //
+            // WHAT NO LEG HERE CAN CATCH, so nobody has to rediscover it:
+            //  - a model that prices the right population at the wrong low
+            //    quantile (see (c2));
+            //  - a model that is income-BLIND but DISTRIBUTION-PRESERVING. (c2)
+            //    perturbs RentShare, not income, because RentShare enters the
+            //    rung as a clean factor while income passes through a max().
+            //    That buys an exact identity and costs reach: the bid base is
+            //    RentShare × income × appeal, so halving RentShare halves the
+            //    rungs of a model that never reads income by exactly as much as
+            //    it halves the real model's. (c2) therefore pins the BID-BASE
+            //    distribution, not the income distribution, and an adversarial
+            //    mutant built to exploit that survived the whole 22-check suite
+            //    on about 7% of seeds. Closing it needs a counterfactual that
+            //    perturbs the income or wealth of individual lower-tail
+            //    households with RentShare held — which cannot be an identity,
+            //    because of that same max(), and so was not attempted here;
+            //  - any change confined to the realized/auction path, which none of
+            //    these legs exercises.
+            bool tracksIncome = wagesLiftTop && incomeHomogeneous && pricesTail
+                                && sourcesReach && tableRestored;
 
             // (d) population collapse: with the flat-tail excess price the
             // response is regime-dependent — price falls while the submarket
@@ -536,23 +921,36 @@ namespace CS2Econ.Harness
             // a low QUANTILE of the households present, and culling 60% of the
             // city (while deliberately sparing c0's own residents) both shrinks
             // and re-weights the sample, so that quantile moves by more than
-            // rounding. Measured here: fill 0.59 → 0.31 (a 47% collapse, the
-            // substantive response) while the price drifted +11%.
+            // rounding.
             //
-            // FLAGGED HONESTLY: this widened a 10% band that the shipped build
-            // missed by one point, which is the shape of a goalpost move. What
-            // makes it defensible rather than convenient is that the leg it
-            // guards — "the market must register a response on some margin" —
-            // is carried by the fill term, which is nowhere near its threshold;
-            // if the fill response ever weakens this still fails. If a future
-            // change makes the price drift the ONLY thing keeping this green,
-            // that is the signal to rewrite the check, not to widen it again.
+            // CORRECTED, AND FLAGGED RATHER THAN FIXED. This comment used to
+            // read "Measured here: fill 0.59 → 0.31 (a 47% collapse, the
+            // substantive response) while the price drifted +11%", and defended
+            // its 20% band on the grounds that "the leg it guards is carried by
+            // the fill term, which is nowhere near its threshold". Both are
+            // false, and the second is backwards. Measured over seeds 0–299:
+            // fillBefore is exactly 1.00 on 300/300 and fillAfter never drops
+            // below 0.909, so `fillAfter < fillBefore * 0.8` fires on 0 of 300
+            // — the vacancy disjunct never fires at all, and the leg is carried
+            // ENTIRELY by the price disjunct, which fires on 288 of 300. (The
+            // 12 seeds where neither fires are this check's other standing
+            // failure: 44, 54, 77, 125, 128, 138, 206, 233, 236, 242, 288, 298.)
+            // The band is therefore load-bearing in exactly the way the old
+            // comment said it was not. Left alone deliberately: this leg is not
+            // what the current commit rewrites, and fixing it means finding a
+            // cull that actually produces vacancy in this fixture, which is its
+            // own investigation.
             bool softens = after < before * 0.98
                            || (fillAfter < fillBefore * 0.8 && after < before * 1.20);
 
             Console.WriteLine($"    AUDIT supplyMonotone={supplyMonotone} demandMonotone={demandMonotone} "
                 + $"killed>100={killed > 100} softens={softens} sweepMonotone={sweepMonotone} "
                 + $"sweepDeclines={sweepDeclines} tracksIncome={tracksIncome} | dLow={dLow:F4} dMid={dMid:F4} dHigh={dHigh:F4}");
+            Console.WriteLine($"    AUDIT income: wagesLiftTop={wagesLiftTop} ({topResponse:F5}) "
+                + $"incomeHomogeneous={incomeHomogeneous} (dev {homogDev:E3}) "
+                + $"pricesTail={pricesTail} (deep ×{tailResponse:F8}, top ×{topInvariance:F12}) "
+                + $"sourcesReach={sourcesReach} (wage {reachWage:F3} benefit {reachBenefit:F3} "
+                + $"floor {reachFloor:F3} transfer {reachTransfer:F3}) tableRestored={tableRestored}");
             Check("clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)",
                   supplyMonotone && demandMonotone && killed > 100 && softens
                   && sweepMonotone && sweepDeclines && tracksIncome,
@@ -560,8 +958,10 @@ namespace CS2Econ.Harness
                   $"demand×{{0.5,1,2}} → {dLow:F2}/{dMid:F2}/{dHigh:F2} (fill {fdLow:F2}→{fdMid:F2}); " +
                   $"after {killed} citywide exits bid {before:F2} → {after:F2}, fill {fillBefore:F2} → {fillAfter:F2}; " +
                   $"25-point supply sweep {sweepHi:F2}→{sweepLo:F2} " +
-                  $"({(sweepMonotone ? "monotone" : $"{upSteps} UPWARD steps")}), " +
-                  $"wages×2 top → {richHi:F2}, all-income×2 tail → {allLo:F2}");
+                  $"({(sweepMonotone ? "monotone" : $"{upSteps} UPWARD steps")}); " +
+                  $"income: wages×2 top ×{topResponse:F5} (≤2), all-income×2 pointwise dev {homogDev:E2} (≤1e-6), " +
+                  $"poorest-quarter cut → deep ×{tailResponse:F8} (=0.5) top ×{topInvariance:F12} (=1), " +
+                  $"weakest single source ×10 moves {weakestSource:F3} (≥0.25)");
         }
 
         private static void OccupiedStockCarriesRent(ulong seed)
