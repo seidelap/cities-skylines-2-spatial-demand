@@ -742,7 +742,7 @@ namespace CS2Econ.Harness
             // against what it would actually have to pay to get in. Envy above
             // 2ε is a real equilibrium violation; envy below it is the price of
             // a finite auction.
-            int envy = 0; double worstRel = 0;
+            int envy = 0; double worstRel = 0; string worstWhy = "";
             foreach (var h in w.Households)
             {
                 if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
@@ -772,7 +772,25 @@ namespace CS2Econ.Harness
                     double gain = (val - a.EntryPrice(s)) - mySur;
                     if (gain <= 0) continue;
                     double band = myEps + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(val));
-                    if (gain > band) { envy++; worstRel = Math.Max(worstRel, gain / Math.Max(1e-9, val)); }
+                    if (gain > band)
+                    {
+                        envy++;
+                        double rel = gain / Math.Max(1e-9, val);
+                        // Say WHICH violation is worst, not just how big it is.
+                        // "36 households envious by up to 8%" names a number; the
+                        // shape of the worst case names the mechanism, and the
+                        // last four rounds of this were spent guessing at it.
+                        if (rel > worstRel)
+                        {
+                            worstRel = rel;
+                            worstWhy = $"hh{h.Id} at sub{mine} (val {myVal:F2} − price {a.Price[mine]:F2}"
+                                     + $" = sur {mySur:F2}, bid {a.WinningBid[h.Id]:F2}) envies sub{s}"
+                                     + $" (val {val:F2}, entry {a.EntryPrice(s):F2}, posted {a.Price[s]:F2},"
+                                     + $" admitted {a.Admitted[s]:F2}, reserve {a.Reserve[s]:F2},"
+                                     + $" {a.Filled[s]}/{a.Capacity[s]} full, maxbid {myVal - a.OutsideOf(h.Id):F2}"
+                                     + $" vs val−outside here {val - a.OutsideOf(h.Id):F2})";
+                        }
+                    }
                     break;
                 }
             }
@@ -780,10 +798,28 @@ namespace CS2Econ.Harness
             // (6) THE MARKET CLEARS ON THE DEMAND SIDE. Two conditions, and
             // they are the ones that turn "no envy" into "efficient".
             //
-            //   (6a) a submarket with a free slot is priced at its reserve —
-            //        unsold goods do not hold a price above the seller's floor;
+            //   (6a) a submarket holding an empty room above its reserve is
+            //        BETTER OFF for it — no price cut that would let the room
+            //        earns the owner more than the rent it would give up on the
+            //        rooms already let;
             //   (6b) no household the auction left unassigned strictly prefers a
             //        submarket that still has room.
+            //
+            // (6a) used to read "a submarket with a free slot is priced at its
+            // reserve", which is the right condition for a price-taking seller
+            // of ONE unit and the wrong one here. Every room in a submarket lets
+            // at the same price, so filling the last of four means cutting the
+            // rent on all four; three at 2.14 beats four at 1.50 and an owner
+            // that cuts anyway is not competitive, it is bad at arithmetic. The
+            // old form was not merely too strict — it demanded behaviour the
+            // rest of the model already rejects, since the posted-curve path has
+            // maximised n×P(n) since the clearing-price work. What it was really
+            // protecting against is (6b), which is untouched: rooms standing
+            // empty while households stand outside. That still fails, and it is
+            // what killed the first-come-first-served and stale-price mutants.
+            //
+            // The bid below is re-derived here rather than read off the auction,
+            // so the check tests the outcome and not the code that produced it.
             //
             // Adding these was not tidiness. Mutation testing put a
             // first-come-first-served market (never evict a weaker holder) and a
@@ -797,8 +833,33 @@ namespace CS2Econ.Harness
             // unhoused next to rooms nobody was in, and nothing was looking at
             // the unhoused at all.
             int unsoldOverpriced = 0, strandedDemand = 0, unassignedChecked = 0;
+            string unsoldWhy = "";
             for (int s = 0; s < a.Capacity.Length; s++)
-                if (a.Capacity[s] > a.Filled[s] && a.Price[s] > a.Reserve[s] + 1e-9) unsoldOverpriced++;
+            {
+                int f = a.Filled[s];
+                if (a.Capacity[s] <= f || f <= 0 || a.Price[s] <= a.Reserve[s] + 1e-9) continue;
+                // The best offer in the city for one more room here, from a
+                // household that has not got one, net of what it gives up.
+                double best = double.NegativeInfinity;
+                foreach (var h in w.Households)
+                {
+                    if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
+                    int mine = a.Assignment[h.Id];
+                    if (mine == s) continue;
+                    double alt = mine >= 0 ? a.ValueOf(h.Id, mine, p) - a.Price[mine]
+                                           : a.OutsideOf(h.Id);
+                    double bid = a.ValueOf(h.Id, s, p) - Math.Max(alt, a.OutsideOf(h.Id));
+                    if (bid > best) best = bid;
+                }
+                double ask = Math.Max(a.Reserve[s], best);
+                if (ask >= a.Price[s] - 1e-9) continue;      // it would pay the asking rate
+                if ((f + 1) * ask <= f * a.Price[s] + 1e-9) continue;   // holding earns more
+                unsoldOverpriced++;
+                if (unsoldWhy.Length == 0)
+                    unsoldWhy = $"sub{s} {f}/{a.Capacity[s]} at {a.Price[s]:F2} earns {f * a.Price[s]:F2};"
+                              + $" cutting to {ask:F2} would let {f + 1} for {(f + 1) * ask:F2}"
+                              + $" (reserve {a.Reserve[s]:F2}, {a.WaitingAt(s)} still queued)";
+            }
             foreach (var h in w.Households)
             {
                 if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
@@ -882,7 +943,10 @@ namespace CS2Econ.Harness
                   + $"/{unassignedChecked} unassigned, improving swaps {swaps} (best {bestSwapGain:F3}); "
                   + $"re-solve drift {drift} households / {priceDrift:E1} price; converged {a.Converged} "
                   + $"(repair {a.RepairRounds} rounds, clean {a.RepairClean}) "
-                  + $"({a.Bids} bids, {a.Evictions} evictions)");
+                  + $"({a.Bids} bids, {a.Evictions} evictions, "
+                  + $"blocked listed {a.BlockedListed} / list-full {a.BlockedFull})"
+                  + (envy > 0 ? $"\n      worst envy: {worstWhy}" : "")
+                  + (unsoldOverpriced > 0 ? $"\n      unsold: {unsoldWhy}" : ""));
         }
 
         private static void ClaimVacancyWash(ulong seed)
