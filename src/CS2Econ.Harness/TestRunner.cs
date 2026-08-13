@@ -7,7 +7,316 @@ using CS2Econ.Core;
 namespace CS2Econ.Harness
 {
     /// <summary>Correctness suite (PLAN §4.1): unit-level invariants, all
-    /// deterministic. Exit code 0 iff everything passes.</summary>
+    /// deterministic. Exit code 0 iff everything passes.
+    ///
+    /// ====================================================================
+    /// MUTANT MATRIX — what this suite can and cannot catch, measured
+    /// ====================================================================
+    /// A CHECK THAT CANNOT FAIL IS NOT A CHECK. Three conditions in this file
+    /// have already been caught being vacuous by adversarial review, one of
+    /// them (the auction's unsold-above-reserve leg) instrumented and found to
+    /// have reached its own revenue test ZERO times out of 45 doors. So the
+    /// evidence for the checks below is not that they are green: it is that
+    /// each was run against a defect it is supposed to catch, and did.
+    ///
+    /// Every row was built as a one-line source edit, compiled, and run. BEFORE
+    /// = c0c584d (22 checks). AFTER = this commit (26 checks). All timings and
+    /// verdicts measured on one Linux container, .NET 8, Release, `verify`.
+    /// Seeds are named per row; where a row lists one seed, that is the only
+    /// seed it was measured on.
+    ///
+    /// PROVENANCE. Every BEFORE and AFTER cell below was rebuilt from scratch a
+    /// second time, by a reviewer who did not write the checks, before this was
+    /// merged. Method: c0c584d extracted with `git archive` into a clean tree
+    /// (rebuilt from source, never assumed), each mutant re-applied to BOTH
+    /// trees by a script that ABORTS if the edit does not change the file — a
+    /// sed that silently no-ops would otherwise masquerade as "the suite caught
+    /// nothing" and corrupt the whole table. All 17 mutants x 2 trees
+    /// reproduced the verdicts recorded here, including both still-missing
+    /// rows. That re-run is the reason to believe this table; the green output
+    /// is not.
+    ///
+    /// The four still-missing rows are listed here rather than dropped. They
+    /// are the honest content of this table.
+    ///
+    /// --- BLIND SPOT 1: a firm-money / ledger mismatch -------------------
+    /// Ledger.Transfer debits one account and credits another, so the SUM of
+    /// balances is invariant by construction. `Drift()` therefore tests the
+    /// Ledger class, not the model, and every mutant below leaves it at
+    /// exactly zero. The new leg reconciles the ledger against the money the
+    /// entities actually hold — two independently maintained records, so
+    /// nothing here re-derives a number from the code under test.
+    ///
+    ///  MUT-A   EconomyEngine.cs, dividends: members are paid `payout`, the
+    ///          ledger records `payout`, the firm gives up `payout * 0.99`.
+    ///          BEFORE  MISS — 22/22, seed 1.
+    ///          AFTER   CAUGHT — 24/26, seed 1. Reconciliation names the
+    ///                  sector: firms 1.3E-2 posted-curve / 1.9E-2 auction,
+    ///                  households and escrow still at 1E-13. The fingerprint
+    ///                  independently reds default.built/price/money.
+    ///  MUT-L3  EconomyEngine.cs, Mortality: the estate is transferred out and
+    ///          `h.Money = 0` is dropped, so the money stays standing.
+    ///          BEFORE  MISS — 22/22, seed 1.
+    ///          AFTER   CAUGHT — 24/26. Households 5.5E-3 / 7.0E-3.
+    ///  MUT-L1b EconomyEngine.cs, pooled consumption: firms are credited 99.9 %
+    ///          of the pro-rata share the ledger moved.
+    ///          BEFORE  MISS — 22/22, seed 1.
+    ///          AFTER   CAUGHT — 24/26. Firms 2.8E-2 / 2.1E-2. This is the
+    ///                  MILDEST mutant tried — a 0.1 % skim — and it still reads
+    ///                  ten orders of magnitude above the worst clean value seen
+    ///                  over the eighteen seeds below (2.2E-12), which is what
+    ///                  makes the 1e-9 bound untuned rather than fitted.
+    ///  MUT-L1a Same site, "dust guard": skip any firm whose share &lt; 1 %.
+    ///          BEFORE  MISS — 22/22 on seed 3. Seed 1 went 20/22 and seed 5
+    ///                  21/22, but by ACCIDENT: the reds were the occupancy
+    ///                  channel and auction equilibrium, neither of which is
+    ///                  about money, and neither names the defect.
+    ///          AFTER   CAUGHT on 1, 3 and 5 — firms 2.9E-2 / 6.0E-2 on seed 3,
+    ///                  where the whole old suite was green.
+    ///  MUT-L4  EconomyEngine.cs, vacancy drain: the parcel gives up 98 % of
+    ///          what the ledger moves Escrow → Treasury.
+    ///          BEFORE  MISS — 22/22 on seed 5. Seeds 1 and 3 went red on
+    ///                  DIFFERENT unrelated checks (auction equilibrium; Weber):
+    ///                  three seeds, three verdicts, none naming the defect.
+    ///          AFTER   CAUGHT on 1, 3 and 5 — escrow 6.7E-3 / 7.5E-3 (seed 1).
+    ///  MUT-L5  Leveling.cs, in-place renovation: the PhantomDeveloper →
+    ///          OutsideWorld hop is recorded for twice the cost.
+    ///          BEFORE  MISS — 22/22, seed 1.
+    ///          AFTER   STILL A MISS — 26/26, seed 1. Reconciliation cannot see
+    ///                  it (neither account has an entity-level mirror), and the
+    ///                  fingerprint's money lane — which DOES hash every ledger
+    ///                  account, phantoms included — does not move because the
+    ///                  in-place renovation branch never fires in the pinned
+    ///                  8×8 / 1500 / 120-tick fixture. Verified directly:
+    ///                  `fingerprint --check` on the MUT-L5 build reports all
+    ///                  eight lanes matching. See known limit 1.
+    ///  MUT-L5b Construction.cs, the same defect shape on a path that DOES fire
+    ///          in the pinned fixture (progress spend hop doubled). It exists as
+    ///          the positive control for the row above — without it, "MUT-L5 is
+    ///          unreachable" would be an excuse rather than a measurement.
+    ///          BEFORE  MISS — 22/22, seed 1.
+    ///          AFTER   CAUGHT — 25/26. The fingerprint reds default.money and
+    ///                  auction.money and NOTHING else, which is exactly the
+    ///                  signature of a ledger-only defect: no entity moved.
+    ///
+    /// --- BLIND SPOT 2: a pricing-path change ---------------------------
+    /// `determinism` ran the same build twice, so both sides of its comparison
+    /// moved together. Renamed to `reproducibility (NOT invariance)`; invariance
+    /// is now the fingerprint's job.
+    ///
+    ///  MUT-B   LandAccounting.cs: `readAt = supply` — the clearing band is
+    ///          dropped from the read point. Independently measured by an
+    ///          earlier round to move mean charged rent +34 % and the tax base
+    ///          +6 %.
+    ///          BEFORE  MISS — 22/22, seed 1, telemetry hash 5DE491C38FD7A362.
+    ///          AFTER   CAUGHT — 25/26. All four default lanes move.
+    ///  MUT-2   LandAccounting.cs: MinTailFraction 0.005 → 0.02.
+    ///          BEFORE  MISS — 22/22, seed 1.   AFTER  CAUGHT — 25/26.
+    ///  MUT-3   LandAccounting.cs: clearing bisection 34 → 40 iterations.
+    ///          BEFORE  MISS — 22/22, seed 1.   AFTER  CAUGHT — 25/26.
+    ///          THIS IS THE FALSE-ALARM SIGNATURE, not a defect: default.price
+    ///          and default.money go red while every scalar behind them is
+    ///          unchanged to printed precision (sumLR 17770.106, meanRent
+    ///          4.2415514, treasury 233363.42), only `drift` moving at 1E-8.
+    ///          Recorded so the next person to see it recognises it. Limit 8.
+    ///  MUT-L   EconomyEngine.cs, inside the StoreLevelSpending branch:
+    ///          `RevenueThisTick = 0` → `= 5`.
+    ///          BEFORE  MISS — 22/22.   AFTER  STILL A MISS — 26/26.
+    ///          Two arms are two arms, not 2^n: nothing in this suite enters the
+    ///          StoreLevelSpending branch. See known limit 4.
+    ///
+    /// --- BLIND SPOT 3: the auction is off for almost the whole suite ----
+    ///  MUT-D   EconomyEngine.cs, auction move-in: delete the shelter release.
+    ///          This is a regression the repo has ALREADY shipped once; the
+    ///          surviving comment at the site records "a gap of 30 that never
+    ///          closed".
+    ///          BEFORE  MISS — 22/22 on the default arm AND 22/22 under
+    ///                  `--auction` (146.7 s), seed 1. THE DECISIVE ROW: turning
+    ///                  the flag on globally costs +104 s and catches nothing
+    ///                  here, because coverage is necessary for a check to fail
+    ///                  and never sufficient. What was missing was an assertion.
+    ///          AFTER   CAUGHT — 25/26, seed 1. The shelter reconciliation reads
+    ///                  a gap of 18 between the occupancy counter and the
+    ///                  households actually in shelter. Note WHICH arm caught
+    ///                  it: the plain auction arm's shelter population is 0 on
+    ///                  every seed tried, so that arm asserts nothing; the
+    ///                  stressed arm, which manufactures the state, is the one
+    ///                  that fails. That is why it exists.
+    ///
+    /// --- BLIND SPOT 4: the land-rent legs test structure, never level ---
+    ///  MUT-C   LandAccounting.cs: `AssessedLR = bestLR * 0.958` — the −4.2 %
+    ///          citywide move an adversarial round measured with the whole suite
+    ///          silent.
+    ///          BEFORE  MISS — 22/22, seed 1.
+    ///          AFTER   CAUGHT — 24/26. The published-base leg reads 0/257
+    ///                  parcels correct at worst 4.2E-2, and the co-movement leg
+    ///                  reads 4.2E-2: the check names the mutant's own size.
+    ///  MUT-2'  Assess: the current-use residual drops `* CondFactor(condition)`.
+    ///          BEFORE  MISS — 22/22, seed 1.   AFTER  CAUGHT — 24/26, L1 0/440
+    ///                  at worst 5.3E-1.
+    ///  MUT-3'  Assessment reads `auction.Reserve[sub]` where it should read
+    ///          `auction.Price[sub]` — the wrong column of the same arrays.
+    ///          BEFORE  MISS — 22/22, seed 1.
+    ///          AFTER   CAUGHT — 25/26, L1 0/452 at worst 1.5E0, and the
+    ///                  assessment check is the ONLY thing that catches it: the
+    ///                  fingerprint's default arm has no auction to read and its
+    ///                  auction lanes are report-only. This row is the argument
+    ///                  for the check existing.
+    ///  MUT-4'  Assess: structure cost read at level 1 regardless of the
+    ///          parcel's level.
+    ///          BEFORE  MISS — 22/22 on seeds 3 and 5. Seed 1 went 21/22, but
+    ///                  through auction equilibrium, naming nothing about land.
+    ///          AFTER   CAUGHT on 1, 3 and 5 — L1 137/421 at worst 4.9E0
+    ///                  (seed 1), 152/417 at 1.8E1 (seed 3).
+    ///
+    /// --- WHAT IS STILL MISSING (the deliverable, not a disclaimer) ------
+    ///  1. TREASURY AND THE PHANTOMS HAVE NO ENTITY MIRROR. Reconciliation
+    ///     covers households, firms and per-parcel escrow — the three sectors
+    ///     with an independent record. The other six accounts have none, so
+    ///     MUT-L5 passes. The fingerprint hashes the account vector, which
+    ///     catches such a defect where its code path runs in the pinned fixture
+    ///     (MUT-L5b) and not otherwise (MUT-L5).
+    ///  2. PRICE LEVEL IS STILL UNANCHORED, so blind spot 4 is HALF closed. The
+    ///     relation catches a tax base that moves when the price did not. If the
+    ///     auction starts posting 4.2 % lower everywhere, assessment correctly
+    ///     follows and all three legs stay green. The fingerprint's price lane
+    ///     covers that case on ONE pinned fixture and nowhere else. No
+    ///     non-circular anchor for the price level was found this round.
+    ///  3. THE AUCTION'S OTHER ASSERTION GAPS ARE UNTOUCHED. Nothing asserts on
+    ///     the Declined/Outbid split or on what CutVacancies achieves — and
+    ///     task #28 records a KNOWN open defect there. Each wants a check, none
+    ///     wants a flag.
+    ///  4. FLAG COMBINATIONS: StoreLevelSpending, ShadowAccountingOnly, vanilla
+    ///     mode and the TNTP import path are outside both arms. MUT-L passes.
+    ///  5. ONE FIXTURE PER INSTRUMENT; THE FINGERPRINT IS ONE SEED. A defect
+    ///     needing a bigger city, a longer run or another seed moves no lane.
+    ///  6. SCENARIOS REMAIN UNGATED AND PARTLY RED (7/10 at seed 1 at c0c584d,
+    ///     and 0 auction solves — now printed, no longer assumed).
+    ///  7. "VERIFY PASSES" MEANS "PASSES ON THE SEED YOU RAN" — see the seed
+    ///     table below.
+    ///  8. THE FINGERPRINT CAN CRY WOLF on numerically neutral changes
+    ///     (Math.Pow/Exp are library code). MUT-3 is what that looks like.
+    ///  9. THE MOD ADAPTERS (CS2Econ.Mod) AND CityImport ARE NOT COVERED.
+    /// 10. The assessment check mutates its own sim (doubles RentShare, detaches
+    ///     the auction) inside try/finally. Its state is per-Sim, so it needs no
+    ///     tripwire today — but move that fixture onto a shared world and it
+    ///     silently becomes a cross-test contaminant.
+    ///
+    /// --- RUNTIME, MEASURED, AND THE BUDGET IT BUYS --------------------
+    /// Single clean runs on this container (nothing else running), seed 1:
+    ///     `verify`            c0c584d  42.5 s, 22 checks
+    ///                         here     55.1 s, 26 checks (+12.6 s for four
+    ///                                  instruments: the reconciliation legs
+    ///                                  ride runs the drift leg already paid
+    ///                                  for and cost +6.4 s only because the
+    ///                                  stressed shelter arm is a third sim;
+    ///                                  assessment +5.2 s; fingerprint +2.0 s;
+    ///                                  the coverage counters, nothing
+    ///                                  measurable)
+    ///     `verify --auction`  c0c584d 146.7 s   →  here ~150 s (seeds 0-3:
+    ///                         146.5-160.2 s, measured two-at-a-time)
+    ///     `scenarios`         c0c584d 259.3 s, 7/10  →  here 262.8 s, 7/10
+    /// Across the eighteen seeds above, run two-at-a-time, `verify` took
+    /// 50.1-61.5 s here against 37.6-46.6 s at c0c584d.
+    ///
+    /// RE-MEASURED INDEPENDENTLY at merge time, six serial runs with nothing
+    /// else on the box (the mutant sweep's timings are NOT quotable — it ran
+    /// four jobs across four cores):
+    ///     `verify`            c0c584d  42 s, 22/22  →  here 56 s, 26/26
+    ///     `verify --auction`  c0c584d 146 s, 22/22  →  here 156 s, 26/26
+    ///     `scenarios`         c0c584d 267 s, 7/10   →  here 257 s, 7/10
+    /// Two independent rounds of measurement agree to about a second on the
+    /// gate. The scenarios pair moved 259→267 (c0c584d) and 263→257 (here)
+    /// between rounds, i.e. the two columns' difference is smaller than one
+    /// container's run-to-run noise: the honest claim there is "no measurable
+    /// change", NOT that this round made scenarios faster.
+    ///
+    /// THE GATE IS `verify` ON THE DEFAULT ARM, budgeted at 60 s. `--auction` is
+    /// a manual sweep, not a gate: it costs +104 s, it SWAPS the arm rather than
+    /// adding one (Sim.Create forces the flag onto every sim, so under it
+    /// nothing exercises the posted curve — still the shipping default), and on
+    /// the one real historical regression rebuilt here (MUT-D) it caught nothing
+    /// the default arm did not. Four fixtures opt into an auction city instead,
+    /// at ~5 s each, which keeps both market paths under test in one run.
+    ///
+    /// The coverage table `verify` prints is how that stays true: it names every
+    /// fixture, its wall time and its auction-solve count, so the next person to
+    /// add a check can see where the budget went and which mechanism is thin.
+    /// If a check has to be displaced to stay under 60 s, the table says which
+    /// two are the expensive ones.
+    ///
+    /// --- SEED TABLE: THE SUITE IS NOT GREEN ACROSS SEEDS, AND WAS NOT ---
+    /// Both columns measured on this container, one run each. BASE is c0c584d
+    /// rebuilt from source, not assumed. Every failure below is present in BOTH
+    /// columns, on the same seed, in the same check: nothing in this round
+    /// caused any of them, and nothing in this round fixed any of them.
+    ///
+    ///     seed  c0c584d      this commit   failing check
+    ///        0  22/22        26/26
+    ///        1  22/22        26/26
+    ///        2  22/22        26/26
+    ///        3  22/22        26/26
+    ///        4  22/22        26/26
+    ///        5  22/22        26/26
+    ///        6  22/22        26/26
+    ///        7  22/22        26/26
+    ///        9  21/22        25/26         occupancy channel
+    ///       13  22/22        26/26
+    ///       25  22/22        26/26
+    ///       26  21/22        25/26         auction equilibrium
+    ///      138  21/22        25/26         clearing price
+    ///      208  21/22        25/26         auction equilibrium
+    ///      271  22/22        26/26
+    ///      327  22/22        26/26
+    ///      549  21/22        25/26         clearing price
+    ///      910  21/22        25/26         occupancy channel
+    ///
+    /// Six of eighteen seeds are red at HEAD. None of the four instruments
+    /// added here fails on any of the eighteen, and every failure above appears
+    /// in BOTH columns on the same seed in the same check.
+    ///
+    /// THE AUCTION ARM IS ALSO NOT GREEN, and it is a separate measurement
+    /// rather than a footnote to the one above, because `--auction` SWAPS the
+    /// arm (Sim.Create forces the flag onto every sim) and so is a different
+    /// suite, not a superset. `verify --auction`, seeds 0-3, both columns:
+    ///
+    ///     seed  c0c584d      this commit   failing check
+    ///        0  21/22        25/26         Weber
+    ///        1  22/22        26/26
+    ///        2  22/22        26/26
+    ///        3  21/22        25/26         occupancy channel
+    ///
+    /// So two of the four auction-arm seeds are red at HEAD too, in checks that
+    /// have nothing to do with the auction. Same conclusion as the default arm:
+    /// pre-existing, unchanged by this round, and NOT to be read as caused by
+    /// it. Note what this costs — 146 s at c0c584d and 156 s here PER SEED,
+    /// which is the measurement behind the decision to keep `--auction` a
+    /// manual sweep rather than a gate.
+    ///
+    /// PAIRWISE STABILITY, probed because a previous round shipped a regression
+    /// in it that its own suite missed, visible on seeds 13 and 549.
+    ///  MUT-P  HousingAuction.cs: the repair loop's `AddEnviedColumns` pass is
+    ///         skipped, so a household that ends up envious never gets the
+    ///         column that would fix it.
+    ///         BEFORE  CAUGHT — 21/22 seed 13, 20/22 seed 549: the pre-existing
+    ///                 auction-equilibrium check reads 720 households envious
+    ///                 beyond 2ε (worst 46.6 % of value) on seed 13, 633 (55.1 %)
+    ///                 on 549.
+    ///         AFTER   CAUGHT — 25/26 and 24/26, the same check, the same
+    ///                 numbers.
+    ///         SO THIS IS NOT A DEMONSTRATION THAT THE NEW WORK WOULD HAVE
+    ///         CAUGHT THAT REGRESSION, and it should not be read as one. A
+    ///         mutant the old suite already catches cannot stand in for one it
+    ///         missed; the real regression was evidently subtler than deleting
+    ///         the pass, and it was not reconstructed here. What the probe does
+    ///         establish is where the responsibility sits: auction-equilibrium
+    ///         is the only thing in this suite that tests pairwise stability,
+    ///         none of the four instruments added here duplicates it, and the
+    ///         fingerprint structurally cannot — its default arm has no auction,
+    ///         and its auction lanes are report-only by design. Strengthening
+    ///         that check is a separate commit and it is still owed.
+    /// ====================================================================
+    /// </summary>
     public static class TestRunner
     {
         private static readonly List<(string name, bool pass, string detail)> Results
@@ -19,39 +328,109 @@ namespace CS2Econ.Harness
             Console.WriteLine($"  [{(pass ? "PASS" : "FAIL")}] {name}{(detail.Length > 0 ? " — " + detail : "")}");
         }
 
+        /// <summary>Per-fixture wall time, checks produced, and auction solves.
+        /// See <see cref="Timed"/> for why this is instrumentation and not an
+        /// assertion.</summary>
+        private static readonly List<(string fixture, double ms, long solves, int checks)> Coverage
+            = new List<(string, double, long, int)>();
+
+        /// <summary>MAKES THE COVERAGE GAP UNHIDEABLE — it asserts nothing.
+        ///
+        /// The suite could not say which of its own checks exercise the housing
+        /// auction, which is the largest and newest mechanism in the codebase.
+        /// The answer at c0c584d was two fixtures of eighteen (auction
+        /// equilibrium, and the auction leg of ledger conservation) and zero of
+        /// the ten scenarios. A defect where 2,463 consecutive price cuts made
+        /// literally no household better off lived behind that.
+        ///
+        /// A COMMENT SAYING "2 OF 18" ROTS the moment a fixture is added. A
+        /// printed row that says `auction OFF` on the very next run cannot. That
+        /// is the whole design: this is a counter and a Stopwatch, it costs
+        /// nothing measurable, and its output is read by a human deciding where
+        /// the next check should go.
+        ///
+        /// It deliberately does NOT assert a solve count. "The auction ran N
+        /// times" would fail on any legitimate change to refresh cadence, which
+        /// is the cry-wolf failure in miniature.
+        ///
+        /// The % column is coarse and should not be quoted alone: a fixture
+        /// counts as auction-touching if it solved once, so ledger conservation
+        /// — half posted-curve, half auction — attributes entirely to the
+        /// auction. The per-fixture rows and solve counts are exact.</summary>
+        private static void Timed(string fixture, Action body)
+        {
+            long s0 = HousingAuction.SolveCalls;
+            int c0 = Results.Count;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            body();
+            sw.Stop();
+            Coverage.Add((fixture, sw.Elapsed.TotalMilliseconds,
+                          HousingAuction.SolveCalls - s0, Results.Count - c0));
+        }
+
         public static int RunAll(ulong seed, out string report)
         {
             Results.Clear();
+            Coverage.Clear();
             Console.WriteLine("verify: correctness suite");
 
-            IpfConsistency();
-            AnnuityRoundTrip();
-            InteriorOptimum();
-            TradeLaws(seed);
-            WeberRecipeChoice(seed);
-            VacancyKernelConservation(seed);
-            ClaimVacancyWash(seed);
-            OccupancyChannel(seed);
-            AuctionEquilibrium(seed);
-            ClearingPrice(seed);
-            OccupiedStockCarriesRent(seed);
-            CoopInstantRerate(seed);
-            CircularityGuard(seed);
-            LedgerConservation(seed);
-            ShadowMode(seed);
-            InsolvencyPipeline(seed);
-            FlagsOffSmoke(seed);
-            Determinism(seed);
+            Timed("ipf", IpfConsistency);
+            Timed("annuity", AnnuityRoundTrip);
+            Timed("interior-optimum", InteriorOptimum);
+            Timed("trade-laws", () => TradeLaws(seed));
+            Timed("weber", () => WeberRecipeChoice(seed));
+            Timed("vacancy-kernel", () => VacancyKernelConservation(seed));
+            Timed("claim-vacancy-wash", () => ClaimVacancyWash(seed));
+            Timed("occupancy-channel", () => OccupancyChannel(seed));
+            Timed("auction-equilibrium", () => AuctionEquilibrium(seed));
+            Timed("clearing-price", () => ClearingPrice(seed));
+            Timed("occupied-stock-rent", () => OccupiedStockCarriesRent(seed));
+            Timed("coop-rerate", () => CoopInstantRerate(seed));
+            Timed("circularity-guard", () => CircularityGuard(seed));
+            Timed("assessment-tracks-price", () => AssessmentTracksPrice(seed));
+            Timed("ledger-conservation", () => LedgerConservation(seed));
+            Timed("shadow-mode", () => ShadowMode(seed));
+            Timed("insolvency", () => InsolvencyPipeline(seed));
+            Timed("flags-off-smoke", () => FlagsOffSmoke(seed));
+            Timed("reproducibility", () => Determinism(seed));
+            Timed("model-fingerprint", ModelFingerprint);
 
             int failed = Results.Count(r => !r.pass);
+            string coverage = CoverageTable();
+            Console.Write(coverage);
+
             var sb = new StringBuilder();
             sb.AppendLine($"## Correctness verification ({Results.Count} checks, {Results.Count - failed} passing)");
             sb.AppendLine();
             foreach (var (name, pass, detail) in Results)
                 sb.AppendLine($"- {(pass ? "✅" : "❌")} **{name}**{(detail.Length > 0 ? ": " + detail : "")}");
+            sb.AppendLine();
+            long auctionFixtures = Coverage.Count(c => c.solves > 0);
+            sb.AppendLine($"Auction coverage: {auctionFixtures}/{Coverage.Count} fixtures solve the housing "
+                          + $"auction ({Coverage.Sum(c => c.solves)} solves); the rest exercise the posted-curve "
+                          + "path only. Measured by `HousingAuction.SolveCalls`, printed per fixture by `verify`.");
             report = sb.ToString();
             Console.WriteLine($"\nverify: {Results.Count - failed}/{Results.Count} checks passing");
             return failed == 0 ? 0 : 1;
+        }
+
+        private static string CoverageTable()
+        {
+            double total = Coverage.Sum(c => c.ms);
+            var sb = new StringBuilder();
+            sb.AppendLine();
+            sb.AppendLine("  fixture                   time    checks  auction solves");
+            foreach (var (fixture, ms, solves, checks) in Coverage.OrderByDescending(c => c.ms))
+                sb.AppendLine($"  {fixture,-24} {ms / 1000.0,6:F2}s {checks,6}  "
+                              + (solves > 0 ? $"{solves,8}" : "     OFF"));
+            long onFixtures = Coverage.Count(c => c.solves > 0);
+            double onMs = Coverage.Where(c => c.solves > 0).Sum(c => c.ms);
+            sb.AppendLine($"  {"TOTAL",-24} {total / 1000.0,6:F2}s {Results.Count,6}  "
+                          + $"{Coverage.Sum(c => c.solves),8}");
+            sb.AppendLine($"  auction reached by {onFixtures}/{Coverage.Count} fixtures "
+                          + $"(~{(total > 0 ? onMs / total * 100 : 0):F0} % of runtime, coarse: a fixture counts "
+                          + "if it solved once)");
+            return sb.ToString();
         }
 
         // --------------------------------------------------------------------
@@ -1585,13 +1964,289 @@ namespace CS2Econ.Harness
                   $"LR {lr1:F4} (> 0) unchanged under 17.5× realized-rent perturbation");
         }
 
+        /// <summary>THE TAX BASE HAS A LEVEL, and until this check existed the
+        /// suite only ever asserted its STRUCTURE. The land-rent legs say every
+        /// occupied parcel carries LR &gt; 0 and the best-access quartile is all
+        /// positive; an adversarial round moved citywide assessment −4.2 %
+        /// (high-density ΣLR −5.2 %, low −2.9 %, one sample parcel +19.9 %) and
+        /// every one of them stayed green. Rebuilt here as MUT-C, and confirmed:
+        /// 22/22 at c0c584d, seed 1.
+        ///
+        /// A GOLDEN ΣLR WOULD BE THE WRONG INSTRUMENT. The right level of
+        /// assessment is whatever the model's own prices imply, and that moves
+        /// legitimately with every calibration change; a constant there gets
+        /// bumped without being read, which is worse than no check. So this
+        /// asserts a RELATION between two quantities the model computes
+        /// independently — the auction's posted price and the assessor's
+        /// residual — and it can only be silenced by changing the model.
+        ///
+        /// WHAT IT CANNOT DO, stated so nobody reads more into a green than is
+        /// there: if the auction itself starts posting 4.2 % lower everywhere,
+        /// assessment correctly follows and all three legs stay green. That is
+        /// an assessor doing its job. The price LEVEL is anchored nowhere in
+        /// this suite except the fingerprint's price lane, on one pinned
+        /// fixture. No non-circular anchor for it was found this round.
+        ///
+        /// Runs auction-enabled ON PURPOSE and builds its own city, the same
+        /// pattern as auction-equilibrium: `--auction` SWAPS the arm (Sim.Create
+        /// forces the flag on every sim), so gating on it would leave the
+        /// shipping default — the posted curve — untested, and it costs 145 s
+        /// against 42 s (measured, seed 1, c0c584d). An opt-in fixture keeps
+        /// both market paths under test in one 51 s run.</summary>
+        private static void AssessmentTracksPrice(ulong seed)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+            sim.Run(160);
+            var w = sim.W;
+            var a = sim.Engine.Auction;
+            var acc = sim.Engine.Access;
+            var presence = sim.Engine.SegmentPresence;
+
+            // Assessment is STAGGERED (EconParams.AssessSlices) — no citywide
+            // reassessment event exists in the model — so the stored residual on
+            // any given parcel is up to AssessSlices ticks old and cannot be
+            // compared against today's price. Reassessing every parcel here is
+            // what makes the identity well posed; it is not the check reaching
+            // for a number it likes.
+            void ReassessAll()
+            {
+                foreach (var pl in w.Parcels)
+                    LandAccounting.Assess(w, acc, sim.Engine.Trade, pl, presence, p);
+            }
+
+            // A parcel is IN SCOPE when its own units sit inside its submarket's
+            // lettable capacity — exactly the condition under which
+            // ResidentialBidPerUnit returns the standing posted price rather
+            // than the shadow queue. Outside it the assessor is answering a
+            // different question (what a unit that does not exist would fetch)
+            // and this identity does not apply.
+            bool InScope(Parcel pl, out int sub)
+            {
+                sub = -1;
+                if (pl.State != ParcelState.Built || !pl.IsResidential) return false;
+                if (pl.Zoned == ZoneKind.None || pl.Units <= 0) return false;
+                sub = a.SubOf(pl.Cluster, pl.Use, pl.Level);
+                return sub >= 0 && a.Capacity[sub] > 0 && pl.Units <= a.Capacity[sub];
+            }
+            // The published base equals the current-use residual only where no
+            // redevelopment candidate beat it; where one did, AssessedLR is that
+            // candidate's flow net of an annuitized cost and this identity is
+            // not the claim being made.
+            static bool BaseIsCurrentUse(Parcel pl)
+                => pl.TargetLevel == pl.Level && pl.TargetUse == pl.Use && !pl.TargetIsScrape;
+
+            double Rel(double got, double want)
+                => Math.Abs(got - want) / Math.Max(1.0, Math.Abs(want));
+
+            // ---- (L1) DERIVATION ------------------------------------------
+            // CurrentResidual is (P·cond − S)·units and nothing else. The price
+            // is read STRAIGHT OFF auction.Price, not through
+            // LandAccounting.BidPerUnit: routing it through the same helper the
+            // assessor calls would make the identity circular on the one term
+            // that matters, and MUT-3' (assessment reading Reserve instead of
+            // Price out of the same arrays) is exactly the defect that would
+            // then walk through.
+            ReassessAll();
+            int scope = 0, badResid = 0, baseScope = 0, badBase = 0;
+            double worstResid = 0, worstBase = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (!InScope(pl, out int sub)) continue;
+                scope++;
+                double expect = (a.Price[sub] * p.CondFactor(pl.Condition)
+                                 - LandAccounting.SPerUnit(pl.Level, pl.Condition, p)) * pl.Units;
+                double r = Rel(pl.CurrentResidual, expect);
+                worstResid = Math.Max(worstResid, r);
+                if (r > 1e-9) badResid++;
+                if (!BaseIsCurrentUse(pl)) continue;
+                baseScope++;
+                double rb = Rel(pl.AssessedLR, Math.Max(0, pl.CurrentResidual));
+                worstBase = Math.Max(worstBase, rb);
+                if (rb > 1e-9) badBase++;
+            }
+
+            // ---- (L2) CO-MOVEMENT under a shock ---------------------------
+            // Double every living household's own rent share, re-solve, reassess.
+            // NOTHING TICKS, so levels, conditions and unit counts are identical
+            // across the two arms and the structure term cancels exactly: over
+            // the parcels whose published base is the current-use residual in
+            // BOTH arms, Δ(Σ AssessedLR) must equal Δ(Σ P·cond·units) to
+            // floating-point noise.
+            var before = new Dictionary<int, (double lr, double priceRoll)>();
+            foreach (var pl in w.Parcels)
+            {
+                if (!InScope(pl, out int sub) || !BaseIsCurrentUse(pl) || pl.AssessedLR <= 0) continue;
+                before[pl.Id] = (pl.AssessedLR, a.Price[sub] * p.CondFactor(pl.Condition) * pl.Units);
+            }
+
+            double dLr = 0, dPrice = 0, rollBefore = 0;
+            int paired = 0;
+            var saved = new Dictionary<int, double>();
+            try
+            {
+                foreach (var h in w.Households)
+                    if (h.ExitedTick < 0) { saved[h.Id] = h.RentShare; h.RentShare *= 2.0; }
+                a.Solve(w, acc, p);
+                ReassessAll();
+                foreach (var pl in w.Parcels)
+                {
+                    if (!before.TryGetValue(pl.Id, out var b)) continue;
+                    if (!InScope(pl, out int sub) || !BaseIsCurrentUse(pl) || pl.AssessedLR <= 0) continue;
+                    paired++;
+                    dLr += pl.AssessedLR - b.lr;
+                    dPrice += a.Price[sub] * p.CondFactor(pl.Condition) * pl.Units - b.priceRoll;
+                    rollBefore += b.priceRoll;
+                }
+            }
+            finally
+            {
+                foreach (var kv in saved) w.Households[kv.Key].RentShare = kv.Value;
+            }
+
+            // THE VACUITY GUARD, and it is the load-bearing line of this check.
+            // A relation between two deltas is trivially satisfied by 0 == 0.
+            // The auction's leg 6a died exactly this way: instrumented, all 45
+            // doors that reached its body exited at the first gate and the
+            // revenue test ran ZERO times. So the shock is REQUIRED to move the
+            // price roll by more than 1 % — if it does not, this leg FAILS
+            // rather than passing on nothing.
+            double moved = rollBefore > 0 ? Math.Abs(dPrice) / rollBefore : 0;
+            bool shockBit = paired > 0 && moved > 0.01;
+            bool comoves = shockBit && Rel(dLr, dPrice) < 1e-9;
+
+            // ---- (L3) the same composition identity, auction DETACHED ------
+            // Covers the shipping default (posted curve) in the same fixture for
+            // the cost of one reassessment. HONEST LIMIT: with no auction to
+            // read, the expected price has to come from the same helper the
+            // assessor uses, so this leg is CIRCULAR ON THE PRICE TERM and
+            // cannot catch a pricing-path defect (MUT-B, MUT-3' are invisible to
+            // it). What it does catch is the assessor's COMPOSITION — the
+            // condition factor, the structure charge, the unit count, the
+            // published base — on the arm the game actually ships. Measured:
+            // MUT-2' (condition factor dropped) and MUT-4' (structure cost read
+            // at level 1) both light it.
+            int scopeP = 0, badP = 0;
+            double worstP = 0;
+            var savedAuction = acc.Auction;
+            try
+            {
+                acc.Auction = null;
+                ReassessAll();
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || !pl.IsResidential) continue;
+                    if (pl.Zoned == ZoneKind.None || pl.Units <= 0) continue;
+                    scopeP++;
+                    double bid = LandAccounting.BidPerUnit(acc, sim.Engine.Trade, pl.Cluster, pl.Use, pl.Level,
+                                                           presence, p, addUnits: 0, minSupply: pl.Units,
+                                                           realized: true);
+                    double expect = (bid * p.CondFactor(pl.Condition)
+                                     - LandAccounting.SPerUnit(pl.Level, pl.Condition, p)) * pl.Units;
+                    double r = Rel(pl.CurrentResidual, expect);
+                    worstP = Math.Max(worstP, r);
+                    if (r > 1e-9) badP++;
+                }
+            }
+            finally { acc.Auction = savedAuction; }
+
+            // POPULATION FLOOR, not a headroom claim. An earlier draft guarded
+            // this with observed-population bounds carrying "~2× headroom over
+            // six seeds"; that is the exact shape of claim this repo has been
+            // burned by four times, so it is gone. What remains is the only
+            // thing the check needs in order not to be vacuous: each leg saw
+            // parcels at all.
+            //
+            // FOR CONTEXT ONLY, and stated with its range: over the eighteen
+            // seeds {0..7, 9, 13, 25, 26, 138, 208, 271, 327, 549, 910} this
+            // fixture put 368-443 parcels in L1 scope, 189-253 of them on the
+            // published-base leg, 107-153 into the L2 pair, and 368-443 into L3;
+            // the L2 shock moved the price roll 16.8-30.1 % against the 1 %
+            // vacuity floor. Those are observations, NOT bounds — the assertion
+            // is > 0, so a smaller city or a different seed weakens the evidence
+            // without crying wolf.
+            bool populated = scope > 0 && baseScope > 0 && paired > 0 && scopeP > 0;
+
+            Check("assessment tracks the price it capitalizes (relation, both market paths)",
+                  populated && badResid == 0 && badBase == 0 && comoves && badP == 0,
+                  $"(L1) auction arm: {scope - badResid}/{scope} parcels' residual = (P·cond − S)·units "
+                  + $"(worst rel {worstResid:E1}), {baseScope - badBase}/{baseScope} publish max(0,residual) "
+                  + $"(worst {worstBase:E1}); (L2) rent-share ×2 over {paired} parcels moved the price roll "
+                  + $"{moved:P1} (>1 % required, else vacuous) and ΔΣLR {dLr:F1} vs ΔΣP·cond·units {dPrice:F1} "
+                  + $"(rel {Rel(dLr, dPrice):E1}); (L3) posted-curve arm {scopeP - badP}/{scopeP} "
+                  + $"(worst {worstP:E1}, circular on price by construction)");
+        }
+
+        /// <summary>Worst relative gap, over one run, between what a sector's
+        /// entities actually hold and what the ledger says that sector holds.
+        /// One instance per (run, sector).</summary>
+        private sealed class SectorAudit
+        {
+            public double WorstHh, WorstFirm, WorstEscrow;
+            public int WorstShelterGap, ShelterPeak;
+            public int Ticks;
+
+            /// <summary>Relative because the pools grow: a city three times the
+            /// size would need a three-times-bigger absolute tolerance for the
+            /// same numerical quality, and re-tuning an absolute bound as the
+            /// fixture changes is how a bound stops meaning anything. Scaled by
+            /// the larger of the two records so neither side can shrink the
+            /// denominator to hide a gap (a mutant that zeroes the entity side
+            /// still reads 1.0, not 0/0).</summary>
+            private static double Rel(double entity, double ledger)
+                => Math.Abs(entity - ledger)
+                   / Math.Max(1.0, Math.Max(Math.Abs(entity), Math.Abs(ledger)));
+
+            public void Sample(Sim s)
+            {
+                double hh = 0, firm = 0, escrow = 0;
+                // EXITED households and DEAD firms are included on purpose: the
+                // exit paths zero the entity field and post the matching
+                // transfer, so the field remains the entity-side record after
+                // exit. Skipping them would let "transfer the estate out but
+                // leave the money standing" (MUT-L3) pass.
+                foreach (var h in s.W.Households) hh += h.Money;
+                foreach (var f in s.W.Firms) firm += f.Money;
+                foreach (var pl in s.W.Parcels) escrow += pl.Escrow;
+                WorstHh = Math.Max(WorstHh, Rel(hh, s.W.Ledger.Balance(Account.Households)));
+                WorstFirm = Math.Max(WorstFirm, Rel(firm, s.W.Ledger.Balance(Account.Firms)));
+                WorstEscrow = Math.Max(WorstEscrow, Rel(escrow, s.W.Ledger.Balance(Account.Escrow)));
+
+                // THE SAME SHAPE, APPLIED TO PEOPLE. ShelterOccupied is a
+                // running counter incremented when a household enters shelter
+                // and decremented at every site one leaves; the households
+                // themselves carry Stage == Sheltered. Two independently
+                // maintained records again, so the same reconciliation works —
+                // and this one is not hypothetical. The engine's own comment at
+                // the auction move-in site records that this counter once only
+                // ever went up on that path, and once it passed capacity every
+                // subsequent penniless household was expelled from the city by a
+                // stale counter ("a gap of 30 that never closed"). Rebuilding
+                // that regression as MUT-D showed the 22-check suite passed it
+                // 22/22 on the default arm AND 22/22 under --auction: coverage
+                // was never the problem, the absent assertion was.
+                int inShelter = 0;
+                foreach (var h in s.W.Households)
+                    if (h.ExitedTick < 0 && h.Stage == InsolvencyStage.Sheltered) inShelter++;
+                ShelterPeak = Math.Max(ShelterPeak, inShelter);
+                WorstShelterGap = Math.Max(WorstShelterGap, Math.Abs(s.Engine.ShelterOccupied - inShelter));
+                Ticks++;
+            }
+
+            public double Worst => Math.Max(WorstHh, Math.Max(WorstFirm, WorstEscrow));
+            public override string ToString()
+                => $"hh {WorstHh:E1} / firms {WorstFirm:E1} / escrow {WorstEscrow:E1}";
+        }
+
         private static void LedgerConservation(ulong seed)
         {
             var p = new EconParams();
             var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             double maxDrift = 0;
-            sim.Run(300, s => maxDrift = Math.Max(maxDrift, Math.Abs(s.W.Ledger.Drift())));
+            var audit = new SectorAudit();
+            sim.Run(300, s => { maxDrift = Math.Max(maxDrift, Math.Abs(s.W.Ledger.Drift())); audit.Sample(s); });
 
             // BOTH PATHS. Running this only with the default flags left a whole
             // class of bug invisible: prospect-level migration moves money
@@ -1601,11 +2256,101 @@ namespace CS2Econ.Harness
             var simA = Sim.Create(new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed },
                                   new EconParams(), new FeatureFlags { HousingAuction = true });
             double maxDriftA = 0;
-            simA.Run(300, s => maxDriftA = Math.Max(maxDriftA, Math.Abs(s.W.Ledger.Drift())));
+            var auditA = new SectorAudit();
+            simA.Run(300, s => { maxDriftA = Math.Max(maxDriftA, Math.Abs(s.W.Ledger.Drift())); auditA.Sample(s); });
 
             Check("ledger conservation: money neither created nor destroyed (both market paths)",
                   maxDrift < 1e-3 && maxDriftA < 1e-3,
                   $"max |drift| over 300 ticks = {maxDrift:E2} posted-curve, {maxDriftA:E2} auction");
+
+            // ---- RECONCILIATION, the leg the drift leg cannot be -------------
+            // Ledger.Transfer() debits one account and credits another, so the
+            // sum of balances is invariant BY CONSTRUCTION: drift is a check on
+            // the Ledger class, not on the model. Every way the model can
+            // actually lose money — pay members `payout` while the firm gives up
+            // 0.99·payout, transfer an estate out and leave the money standing,
+            // drain 98 % of what the ledger moved out of escrow — leaves drift
+            // at exactly zero. Measured: MUT-A, MUT-L3, MUT-L4 and MUT-L1a/b
+            // below all passed the old 22-check suite (seed 1, and seeds 3/5
+            // where the seed-1 verdict was ambiguous).
+            //
+            // This leg reconciles TWO INDEPENDENTLY MAINTAINED RECORDS instead:
+            // the left side sums an entity field the model writes at ~30 call
+            // sites, the right side is a running total only ever touched through
+            // Transfer. Nothing here re-derives a number from the code under
+            // test and compares it to itself — which is precisely how three
+            // earlier conditions in this suite ended up vacuous.
+            //
+            // PER SECTOR, never lumped: MUT-A moves money from the ledger's
+            // household account into firms' pockets, so a single citywide sum
+            // cancels it exactly. The message names the sector for the same
+            // reason.
+            //
+            // THE BOUND IS A PROPERTY: "the two records agree to floating-point
+            // noise", expressed relative to the sector's own pool. Measured
+            // noise floor over the eighteen seeds in the table at the head of
+            // this file ({0..7, 9, 13, 25, 26, 138, 208, 271, 327, 549, 910}),
+            // both arms, plus the --auction arm of seeds 0-3: WORST 2.2E-12,
+            // and that worst case is the household pool, which is the largest.
+            // The mildest mutant tried (MUT-L1b, a 0.1 % skim on the pooled
+            // consumption credit) reads 2.1E-2 to 2.8E-2.
+            //
+            // So the observed gap between "clean" and "the gentlest defect
+            // anyone bothered to write" is ten orders of magnitude. No value in
+            // [1e-11, 1e-3] would have decided any run observed here
+            // differently, which is what makes 1e-9 an untuned constant rather
+            // than a fitted one. If a run ever reads within an order of
+            // magnitude of 1e-9, the honest response is to re-measure the noise
+            // floor and find what changed — NOT to raise the bound. Note the
+            // range: eighteen seeds on one city shape. A much larger city
+            // accumulates more rounding, and the right response there is a new
+            // measurement, not a new constant.
+            bool reconciled = audit.Worst < 1e-9 && auditA.Worst < 1e-9;
+            Check("ledger reconciliation: sector balances match the money entities hold (both market paths)",
+                  reconciled,
+                  $"worst relative |Σ entity − ledger| over {audit.Ticks}+{auditA.Ticks} tick samples: "
+                  + $"posted-curve {audit}, auction {auditA} (bound 1e-9)");
+
+            // A THIRD ARM, BECAUSE THE OTHER TWO CAN BE EMPTY. Measured over the
+            // eighteen seeds in the table at the head of this file: the auction
+            // arm's peak shelter population is ZERO on every one of them, and
+            // the posted-curve arm's is zero on three of the eighteen (0-33
+            // across the set). A leg that reads 0 == 0 asserts nothing — the
+            // exact failure mode that made the auction's leg 6a vacuous 45 doors
+            // out of 45. Rather than print a green that means nothing, this arm
+            // MAKES the state the check is about: it runs the auction city, then
+            // empties the pockets of every seventh housed household and charges
+            // them far past their income, which walks them down the insolvency
+            // pipeline into shelter; the auction then re-houses whichever of them
+            // it can, which is the code path that must give their shelter place
+            // back. The stress is applied to households, never to the counter.
+            var simS = Sim.Create(new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed },
+                                  new EconParams(), new FeatureFlags { HousingAuction = true });
+            simS.Run(120);
+            int stressed = 0;
+            foreach (var h in simS.W.Households)
+            {
+                if (h.ExitedTick >= 0 || h.HomeParcel < 0 || h.Id % 7 != 0) continue;
+                h.Money = 0.01; h.ChargedAssessment = 999; h.StressTicks = 999;
+                stressed++;
+            }
+            var auditS = new SectorAudit();
+            simS.Run(80, s => auditS.Sample(s));
+
+            // Integer equality, not a tolerance: the two records count the same
+            // people, so any gap at all is a defect. The guard requires the
+            // stressed arm to have actually put somebody in shelter — without
+            // that, a model change that quietly stopped sheltering anyone would
+            // turn this green and silent.
+            bool shelterOk = audit.WorstShelterGap == 0 && auditA.WorstShelterGap == 0
+                             && auditS.WorstShelterGap == 0 && auditS.ShelterPeak > 0;
+            Check("shelter reconciliation: the occupancy counter equals the households in shelter (auction path, under stress)",
+                  shelterOk,
+                  $"worst |counter − Σ households in shelter| = {audit.WorstShelterGap} posted-curve / "
+                  + $"{auditA.WorstShelterGap} auction / {auditS.WorstShelterGap} auction-under-stress; "
+                  + $"peak shelter population {audit.ShelterPeak} / {auditA.ShelterPeak} / {auditS.ShelterPeak} "
+                  + $"({stressed} households stressed). The plain auction arm's peak is the one to watch: "
+                  + "at 0 it is asserting nothing, which is why the stressed arm exists");
         }
 
         private static void ShadowMode(ulong seed)
@@ -1693,8 +2438,44 @@ namespace CS2Econ.Harness
                 return sim.TelemetryHash();
             }
             ulong h1 = Hash(seed), h2 = Hash(seed), h3 = Hash(seed + 1);
-            Check("determinism: same seed → identical telemetry hash",
+            // RENAMED, because the old name ("determinism") was read as a
+            // guarantee it does not give. This runs the SAME BUILD twice: both
+            // sides of the comparison move together, so any change to the
+            // pricing path changes the hash and still passes. Three one-line
+            // pricing edits were measured doing exactly that at c0c584d
+            // (MUT-B, MUT-2, MUT-3 in the matrix at the head of this file). The
+            // check is true and worth keeping — a non-reproducible model is
+            // untestable — but INVARIANCE is the fingerprint check's job.
+            Check("reproducibility (NOT invariance): same seed → identical telemetry hash",
                   h1 == h2 && h1 != h3, $"h(seed)={h1:X} twice, h(seed+1)={h3:X}");
+        }
+
+        /// <summary>Gates on the four default-arm lanes of the checked-in model
+        /// fingerprint; the auction lanes are printed, not gated (Fingerprint.cs
+        /// states the promotion rule and the measured accept rate that justifies
+        /// the split). A missing or hand-edited baseline FAILS — never skips,
+        /// because a skip is how a check quietly stops existing.</summary>
+        private static void ModelFingerprint()
+        {
+            var lanes = Fingerprint.Compute();
+            var v = Fingerprint.Check(lanes);
+            string detail;
+            if (!v.BaselineFound)
+                detail = $"{Fingerprint.FileName} not found from {System.IO.Directory.GetCurrentDirectory()} "
+                         + "— a missing baseline is a failure, not a skip";
+            else if (!v.SignatureOk)
+                detail = $"baseline {v.Path} is HAND-EDITED: the last stanza's signature does not match its own "
+                         + "text. Re-record with `fingerprint --accept --reason \"...\"`";
+            else if (v.GatePass && v.ReportMismatch.Count == 0 && v.Missing.Count == 0)
+                detail = $"all 8 lanes match stanza recorded {v.Recorded} (\"{v.Reason}\")";
+            else
+                detail = $"gating lanes moved: [{string.Join(", ", v.GatingMismatch)}]; "
+                         + $"report-only (auction) lanes moved: [{string.Join(", ", v.ReportMismatch)}]; "
+                         + $"missing from baseline: [{string.Join(", ", v.Missing)}]. If the change was "
+                         + "intended, record it: `fingerprint --accept --reason \"...\"` (it writes the "
+                         + "computed before→after deltas into the file for the reviewer)";
+            Check("model fingerprint: the model is unchanged, or the change is recorded (default arm gates)",
+                  v.GatePass, detail);
         }
     }
 }

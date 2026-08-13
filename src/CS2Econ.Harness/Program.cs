@@ -31,6 +31,11 @@ namespace CS2Econ.Harness
                     return TestRunner.RunAll(seed, out _);
                 case "scenarios":
                     return Scenarios.RunAll(seed, out _, only);
+                case "fingerprint":
+                    // Print the lanes; --check compares against the checked-in
+                    // baseline; --accept --reason "..." records a new stanza.
+                    // The fixture is PINNED and ignores --seed on purpose.
+                    return Fingerprint.Run(args);
                 case "all":
                 {
                     int v = TestRunner.RunAll(seed, out var verifyMd);
@@ -150,7 +155,8 @@ namespace CS2Econ.Harness
                     return Debugging.MapRun(seed, ticks, file);
                 }
                 default:
-                    Console.WriteLine("usage: harness [verify|scenarios|all|debug|map] [--seed N] [--ticks N] [--file path.cs2city]");
+                    Console.WriteLine("usage: harness [verify|scenarios|all|fingerprint|debug|map] [--seed N] [--ticks N] [--file path.cs2city]");
+                    Console.WriteLine("       fingerprint [--check | --accept --reason \"...\"]");
                     return 2;
             }
         }

@@ -37,8 +37,17 @@ namespace CS2Econ.Harness
                 ("overlay", OverlayHonesty),
                 ("perf", PerformanceShape),
             };
+            // Same instrumentation as the verify suite's coverage table, and for
+            // the same reason: at c0c584d ZERO of these ten scenarios solved the
+            // housing auction even once, and nothing in the output said so. A
+            // printed count cannot go stale the way a comment does. No assertion
+            // — a scenario suite that runs the auction zero times is a decision
+            // about scope with a measured cost (the per-fixture ratio is 3-5×),
+            // not a defect.
+            long solves0 = HousingAuction.SolveCalls;
             foreach (var (key, run) in all)
                 if (only == null || key == only) run(seed);
+            long solves = HousingAuction.SolveCalls - solves0;
 
             int failed = Results.Count(r => !r.pass);
             var sb = new StringBuilder();
@@ -48,8 +57,12 @@ namespace CS2Econ.Harness
             sb.AppendLine("|---|---|---|");
             foreach (var (name, pass, detail) in Results)
                 sb.AppendLine($"| {name} | {(pass ? "✅" : "❌")} | {detail} |");
+            sb.AppendLine();
+            sb.AppendLine($"Auction coverage: {solves} housing-auction solves across these scenarios "
+                          + "(`HousingAuction.SolveCalls`).");
             report = sb.ToString();
-            Console.WriteLine($"\nscenarios: {Results.Count - failed}/{Results.Count} targets met");
+            Console.WriteLine($"\nscenarios: {Results.Count - failed}/{Results.Count} targets met "
+                              + $"({solves} housing-auction solves)");
             return failed == 0 ? 0 : 1;
         }
 

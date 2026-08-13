@@ -1,0 +1,40 @@
+# MODEL FINGERPRINT — append-only baseline for the acceptance suite.
+#
+# Each stanza records what the pinned fixture produced at one commit:
+# eight lanes (demography / built / price / money, on the default and
+# auction arms), each an entity-level hash plus the human-readable
+# scalars behind it. `verify` gates on the four default-arm lanes and
+# REPORTS the auction lanes (see Fingerprint.cs for why that split, and
+# for the rule that would promote them).
+#
+# DO NOT HAND-EDIT. Each stanza is signed over its own text, deltas
+# included, so an edited hash fails as 'hand-edited' rather than
+# passing quietly. To record an intentional model change:
+#
+#   dotnet run --project src/CS2Econ.Harness -c Release -- \
+#       fingerprint --accept --reason "<what changed in the model, and why>"
+#
+# The delta lines are COMPUTED by that command, never typed. They are
+# the part a reviewer should read: they state the magnitude of what the
+# commit moved, in the commit's own diff.
+
+=== stanza 1
+recorded: 2026-08-12T16:12:36Z
+reason: First baseline: the model as it stands at c0c584d, recorded so a later pricing-path change has to be declared rather than discovered.
+lane default.demography hash=1B4B114FF4C821BB pop=1026 housed=807 sheltered=2
+lane default.built hash=05352836E05C3F47 built=322 meanLevel=1.639751553 units=1930
+lane default.price hash=56863008365C67D7 sumLR=17770.10645 sumLR.high=1670.55774 sumLR.low=1537.155564 meanRent=4.241551433
+lane default.money hash=509F93700C936F81 treasury=233363.4208 hhMoney=310074.5584 firmMoney=77341.63689 escrow=151591.9786 phantoms=-696487.321 drift=2.252636477E-08
+lane auction.demography hash=DB86A59E30538CC5 pop=1448 housed=1168 sheltered=0
+lane auction.built hash=97B4B453C93F5E80 built=400 meanLevel=1.91 units=2250
+lane auction.price hash=4AF4782A5069D37F sumLR=18431.14016 sumLR.high=839.3725568 sumLR.low=812.2936561 meanRent=2.240220003
+lane auction.money hash=050C088D9825EC29 treasury=120957.8971 hhMoney=474902.9801 firmMoney=111927.9644 escrow=122110.9034 phantoms=-754015.4713 drift=-3.317836672E-09
+delta: default.demography (new lane)
+delta: default.built (new lane)
+delta: default.price (new lane)
+delta: default.money (new lane)
+delta: auction.demography (new lane)
+delta: auction.built (new lane)
+delta: auction.price (new lane)
+delta: auction.money (new lane)
+sig: 93545DD05A648C23

@@ -101,6 +101,16 @@ namespace CS2Econ.Harness
             {
                 Mix((ulong)pl.Level); Mix((ulong)pl.State);
                 Mix((ulong)BitConverter.DoubleToInt64Bits(Math.Round(pl.Escrow, 6)));
+                // AssessedLR joined this hash after an adversarial round found a
+                // change that moved land assessment citywide by -4.2 % with the
+                // whole suite silent. Escrow is a FILTERED view of assessment
+                // (only the earmarked wedge, only where levying is on), so it
+                // does not stand in for the tax base: MUT-C below (AssessedLR ×
+                // 0.958) moved ΣLR visibly while every hash in the suite
+                // covered it only through that filter. Rounded to 6 dp on the
+                // same rationale as the other terms — the last bits of a
+                // Math.Pow chain are not a model change.
+                Mix((ulong)BitConverter.DoubleToInt64Bits(Math.Round(pl.AssessedLR, 6)));
             }
             Mix((ulong)BitConverter.DoubleToInt64Bits(Math.Round(W.Ledger.Balance(Account.Treasury), 6)));
             return h;

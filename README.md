@@ -38,7 +38,45 @@ dotnet run -c Release --project src/CS2Econ.Harness -- verify     # correctness 
 dotnet run -c Release --project src/CS2Econ.Harness -- scenarios  # §6 acceptance scenarios
 dotnet run -c Release --project src/CS2Econ.Harness -- all        # everything → RESULTS.md
 dotnet run -c Release --project src/CS2Econ.Harness -- map        # economy on the real Chicago road network
+
+dotnet run -c Release --project src/CS2Econ.Harness -- fingerprint          # print the model's lanes
+dotnet run -c Release --project src/CS2Econ.Harness -- fingerprint --check  # compare to the baseline
+dotnet run -c Release --project src/CS2Econ.Harness -- fingerprint --accept --reason "..."
 ```
+
+### What the suite costs, and what a green run does not mean
+
+Measured on this container, .NET 8 Release, seed 1, at `c0c584d` + the acceptance work
+on top of it:
+
+| run | cost | gate? |
+|---|---|---|
+| `verify` | 55.1 s, 26 checks (42.5 s / 22 at `c0c584d`) | yes — the per-commit gate, budgeted at 60 s |
+| `verify --auction` | ~150 s (146.5–160.2 s over seeds 0–3) | no — a manual sweep for anyone editing `HousingAuction.cs` |
+| `scenarios` | 4 m 23 s, 7/10 | no |
+
+`--auction` **swaps** the arm rather than adding one (`Sim.Create` forces the flag onto
+every sim), so under it nothing exercises the posted curve, which is still the shipping
+default. That is why the auction stays an opt-in per-fixture choice — four of `verify`'s
+twenty fixtures build auction-enabled cities — instead of a global flag. `verify` prints a
+per-fixture coverage table with the auction-solve count, so the gap is visible in the
+output rather than asserted in a comment that can rot. `scenarios` prints the same count,
+and it currently reads **0**: none of the ten acceptance scenarios runs the auction.
+
+**A green `verify` means "green on the seed you ran."** Measured over eighteen seeds at
+`c0c584d` and again here, with `c0c584d` rebuilt from source rather than assumed: six of
+the eighteen are red in *both* columns, on the same seed and in the same check — seeds 9
+and 910 (occupancy channel), 26 and 208 (auction equilibrium), 138 and 549 (clearing
+price). `scenarios --seed 1` is 7/10 in both columns (vacancy suppression, level/access
+correlation, Tier B performance shape). All of that pre-dates this round and none of it is
+fixed by it — do not read a green seed-1 run as a green suite. The full table, and the
+mutant matrix behind every check, live in the comment at the head of
+`src/CS2Econ.Harness/TestRunner.cs`.
+
+`model-fingerprint.txt` is an append-only, signed baseline of what the model produces on a
+pinned fixture. `verify` gates on its four default-arm lanes; a legitimate model change is
+recorded with `fingerprint --accept --reason "..."`, which computes the before→after deltas
+and writes them into the file so the magnitude lands in the commit diff.
 
 To build and install the actual mod on a machine that owns the game, follow
 [`MOD-BRINGUP.md`](MOD-BRINGUP.md) (`dotnet build src/CS2Econ.Mod -c Release

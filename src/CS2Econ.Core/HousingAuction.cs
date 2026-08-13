@@ -125,6 +125,18 @@ namespace CS2Econ.Core
                              MsCutVacancies, MsShadow;
         public static long CallsValueSlot, CallsValueAt, CallsSoftCap;
 
+        /// <summary>How many times Solve() has run in this process. Exists for
+        /// one reason: the suite could not say which of its own checks touch
+        /// this mechanism at all, and the answer turned out to be two of
+        /// twenty-two (measured at c0c584d: only the auction-equilibrium and
+        /// ledger-conservation fixtures build an auction-enabled city). A prose
+        /// claim about that rots the moment a fixture is added or a flag
+        /// flipped; a counter the runner prints per fixture cannot. Read by
+        /// TestRunner's coverage table — never by the model, and never
+        /// asserted on as a magnitude (a check on "how many solves" would fail
+        /// on any legitimate change to refresh cadence).</summary>
+        public static long SolveCalls;
+
         /// <summary>DIFFERENTIAL ORACLE. When set, every repair scan is run
         /// TWICE: once by the production path and once by RefScanBest, which is
         /// the pre-optimization scan copied verbatim — a Math.Pow pair per cell,
@@ -322,6 +334,7 @@ namespace CS2Econ.Core
         /// can be run twice on the same state in a test.</summary>
         public void Solve(WorldState w, AccessState acc, EconParams p)
         {
+            SolveCalls++;
             C = acc.C;
             int nSub = S;
             EnsureArrays(w, nSub);
