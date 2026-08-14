@@ -368,6 +368,42 @@ namespace CS2Econ.Harness
                           HousingAuction.SolveCalls - s0, Results.Count - c0));
         }
 
+        /// <summary>THE AUCTION CANARY: the auction-equilibrium check alone,
+        /// across many seeds, in about a minute of fixture per fifteen seeds.
+        ///
+        /// Exists because every auction defect in this file's history became
+        /// visible on a seed nobody ran: the CutVacancies indifference defect
+        /// rested a hair inside the check's tolerance on seeds 0-7 and fired
+        /// only on 26 and 208, which no round ran until a bisect went looking;
+        /// a pairwise-stability knife on 13 and 549 was found the same way.
+        /// The full suite costs ~57s per seed, so nobody sweeps it; this
+        /// fixture costs ~6s per seed, so a 40-seed sweep is affordable on
+        /// every auction change. It is a gate for auction work precisely
+        /// because the model fingerprint cannot be one there: the fingerprint's
+        /// default arm never runs the auction, so a pricing-shape change moves
+        /// zero gating lanes.
+        ///
+        /// Cross-reference KNOWN-RED.md before attributing a failure: a red
+        /// here is a finding only if that file does not already own it.</summary>
+        public static int Canary(List<ulong> seeds)
+        {
+            Console.WriteLine($"auction canary: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                AuctionEquilibrium(seed);
+                bool ok = Results.Count > before && Results[Results.Count - 1].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"canary: {seeds.Count - failed.Count}/{seeds.Count} seeds pass "
+                + $"({sw.Elapsed.TotalSeconds:F0}s)"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
         public static int RunAll(ulong seed, out string report)
         {
             Results.Clear();
