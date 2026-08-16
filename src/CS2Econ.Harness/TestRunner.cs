@@ -419,6 +419,9 @@ namespace CS2Econ.Harness
             Timed("claim-vacancy-wash", () => ClaimVacancyWash(seed));
             Timed("occupancy-channel", () => OccupancyChannel(seed));
             Timed("auction-equilibrium", () => AuctionEquilibrium(seed));
+            Timed("assignment-oracle", () => {
+                var (lpOk, lpDetail) = AssignmentOracle.Run(seed);
+                Check("auction total surplus is LP-optimal within the epsilon budget", lpOk, lpDetail); });
             Timed("clearing-price", () => ClearingPrice(seed));
             Timed("occupied-stock-rent", () => OccupiedStockCarriesRent(seed));
             Timed("coop-rerate", () => CoopInstantRerate(seed));
