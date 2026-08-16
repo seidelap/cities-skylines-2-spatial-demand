@@ -493,9 +493,13 @@ namespace CS2Econ.Core
             bool warm = p.AuctionWarmStart && _prevStride == _stride && _prevCount.Length > 0;
 
             // Scratch for the shortlist selection: a K-sized insertion list.
-            Span<double> bestV = stackalloc double[64];
-            Span<int> bestKC = stackalloc int[64];
-            if (K > 64) K = 64;
+            // Stack for every real configuration; heap when K exceeds it, which
+            // only the exhaustive-shortlist oracle check does — it sets K past
+            // the number of live keys so the "shortlist" is every door worth
+            // more than leaving, and the column-generation solve can be
+            // compared against a solve that was shown everything.
+            Span<double> bestV = K <= 64 ? stackalloc double[64] : new double[K];
+            Span<int> bestKC = K <= 64 ? stackalloc int[64] : new int[K];
 
             for (int i = 0; i < nh; i++)
             {

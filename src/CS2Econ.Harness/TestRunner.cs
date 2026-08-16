@@ -419,6 +419,7 @@ namespace CS2Econ.Harness
             Timed("claim-vacancy-wash", () => ClaimVacancyWash(seed));
             Timed("occupancy-channel", () => OccupancyChannel(seed));
             Timed("auction-equilibrium", () => AuctionEquilibrium(seed));
+            Timed("exhaustive-shortlist", () => ExhaustiveShortlist(seed));
             Timed("assignment-oracle", () => {
                 var (lpOk, lpDetail) = AssignmentOracle.Run(seed);
                 Check("auction total surplus is LP-optimal within the epsilon budget", lpOk, lpDetail); });
@@ -1577,6 +1578,110 @@ namespace CS2Econ.Harness
         /// that only ever looks inside it. Sweeping everything is the only way
         /// this check can catch a broken shortlist, which is exactly the failure
         /// mode most likely to hide (mutation M6 below).</summary>
+        /// <summary>THE EXHAUSTIVE-SHORTLIST ORACLE: solve the same world twice,
+        /// once through the K-door shortlist plus column generation, once with
+        /// every door in the city on every household's list, and require the
+        /// same total surplus within the ε budget.
+        ///
+        /// This tests the structural claim the shortlist design rests on. The
+        /// initial list is ranked PRICE-FREE (top K by access, density taste
+        /// and the household's own idiosyncratic draw, everything below the
+        /// household's outside option dropped, home always included), so it is
+        /// "what you would love", not "what is cheap" — and it carries no
+        /// guarantee of containing the best surplus-at-price door. The
+        /// guarantee is supplied by the repair loop: the scan sweeps EVERY live
+        /// key for every household after every clearing, with an exact upper
+        /// bound (a skip, never an approximation), and the solve cannot
+        /// terminate cleanly while any household strictly prefers a missing
+        /// door beyond its band. The global no-envy sweep in the equilibrium
+        /// check verifies the END STATE against every submarket; what it
+        /// cannot see is the counterfactual — whether being shown everything
+        /// from the start would have cleared to a materially better market.
+        /// This check measures exactly that counterfactual.
+        ///
+        /// With complete lists the repair loop must have nothing to add:
+        /// RepairRounds == 0 is asserted, because a repair round firing when
+        /// every door is already listed would mean the scan found a door that
+        /// does not exist.</summary>
+        private static void ExhaustiveShortlist(ulong seed)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 8, Rows = 8, SeedHouseholds = 1200, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+            sim.Run(160);
+            var w = sim.W;
+            var a = sim.Engine.Auction;                      // the shortlist arm, as the run left it
+
+            // Every door: K past any live-key count (2 clusters-kinds × 64
+            // clusters on this fixture), so the ranking keeps every key worth
+            // more than leaving. The AuctionShortlist ceiling is what the
+            // widened selection buffer in BuildHouseholds exists for.
+            var px = new EconParams { AuctionShortlist = 512 };
+            var ax = new HousingAuction();
+            ax.Solve(w, sim.Engine.Access, px);
+
+            int over = 0;
+            for (int s2 = 0; s2 < ax.Capacity.Length; s2++)
+                if (ax.Filled[s2] > ax.Capacity[s2]) over++;
+
+            // Global no-envy on the exhaustive arm, same band as everywhere.
+            int envyX = 0;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)ax.Assignment.Length) continue;
+                int mine = ax.Assignment[h.Id];
+                if (mine < 0) continue;
+                double myVal = ax.ValueOf(h.Id, mine, px);
+                double mySur = myVal - ax.Price[mine];
+                double myEps = Math.Max(px.AuctionEpsilon, px.AuctionEpsilonRel * Math.Abs(myVal));
+                for (int s2 = 0; s2 < ax.Capacity.Length; s2++)
+                {
+                    if (ax.Capacity[s2] <= 0 || s2 == mine) continue;
+                    double val = ax.ValueOf(h.Id, s2, px);
+                    double gain = (val - ax.EntryPrice(s2)) - mySur;
+                    if (gain <= 0) continue;
+                    double band = myEps + Math.Max(px.AuctionEpsilon, px.AuctionEpsilonRel * Math.Abs(val));
+                    if (gain > band) { envyX++; break; }
+                }
+            }
+
+            // Total surplus over DEFAULTS, the same objective the LP oracle
+            // maximises: value minus the room's cost for the housed, the
+            // outside option for everyone else. Computed identically for both
+            // arms, so the difference is well-defined.
+            double totA = 0, totX = 0, bound = 0;
+            int housedA = 0, housedX = 0;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
+                int sA = a.Assignment[h.Id], sX = ax.Assignment[h.Id];
+                double vA = sA >= 0 ? a.ValueOf(h.Id, sA, p) : 0;
+                double vX = sX >= 0 ? ax.ValueOf(h.Id, sX, px) : 0;
+                totA += sA >= 0 ? vA - a.Reserve[sA] : a.OutsideOf(h.Id);
+                totX += sX >= 0 ? vX - ax.Reserve[sX] : ax.OutsideOf(h.Id);
+                if (sA >= 0) housedA++;
+                if (sX >= 0) housedX++;
+                // Each arm is an ε-equilibrium whose per-household slack is its
+                // band at the doors it actually weighs; twice the larger
+                // valuation's band is a conservative per-household budget for
+                // the DIFFERENCE of two such equilibria. Stated over the
+                // measured fixture only.
+                double refV = Math.Max(Math.Max(Math.Abs(vA), Math.Abs(vX)), a.OutsideOf(h.Id));
+                bound += 2 * Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * refV);
+            }
+            double gap = Math.Abs(totA - totX);
+
+            bool ok = ax.Converged && ax.RepairClean && ax.RepairRounds == 0
+                      && over == 0 && envyX == 0 && gap <= bound;
+            Check("exhaustive shortlist: the every-door solve matches column generation",
+                  ok,
+                  $"shortlist arm {totA:F2} vs every-door arm {totX:F2}: gap {gap:F2} "
+                  + $"({gap / Math.Max(1e-9, Math.Abs(totX)):P2} of every-door) against budget {bound:F2}; "
+                  + $"housed {housedA}/{housedX}, every-door repair {ax.RepairRounds} rounds "
+                  + $"(clean {ax.RepairClean}, converged {ax.Converged}, envious {envyX}, oversub {over}, "
+                  + $"{ax.Bids} bids)");
+        }
+
         private static void AuctionEquilibrium(ulong seed)
         {
             var p = new EconParams();

@@ -11,7 +11,7 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (27 checks)
+## verify (28 checks)
 
 | Seed | Check | Status | Attribution |
 |---|---|---|---|
