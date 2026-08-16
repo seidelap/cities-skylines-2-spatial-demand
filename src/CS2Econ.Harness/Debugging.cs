@@ -430,7 +430,7 @@ namespace CS2Econ.Harness
 
             Console.WriteLine($"phases(ms, cumulative over run): submarkets={HousingAuction.MsSubmarkets:F0} "
                 + $"households={HousingAuction.MsHouseholds:F0} auction={HousingAuction.MsAuction:F0} "
-                + $"repairScan={HousingAuction.MsRepairScan:F0} cutVacancies={HousingAuction.MsCutVacancies:F0} "
+                + $"repairScan={HousingAuction.MsRepairScan:F0} "
                 + $"shadow={HousingAuction.MsShadow:F0}");
             Console.WriteLine($"calls: valueAtSlot={HousingAuction.CallsValueSlot:N0} softCap={HousingAuction.CallsSoftCap:N0}");
             if (HousingAuction.ScanOracle)

@@ -475,8 +475,15 @@ namespace CS2Econ.Core
         /// of value, and at 8 it reached zero envy but still could not say so,
         /// because a cap that binds means the last solve was never checked.
         /// Zero disables the repair entirely and leaves the result an
-        /// equilibrium only over the initial shortlists.</summary>
-        public int AuctionRepairRounds = 12;
+        /// equilibrium only over the initial shortlists.
+        ///
+        /// Raised 12 -> 16 with the full-re-clear repair rounds: each round now
+        /// rebuilds the whole market, so a solve needs as many rounds as its
+        /// longest column-generation chain, and seed 22 measurably hit the cap
+        /// at 12 (converged False, clean False) while 16 cleared it. No
+        /// headroom beyond that is claimed; Converged is the arbiter and the
+        /// canary sweeps it.</summary>
+        public int AuctionRepairRounds = 16;
         /// <summary>How much a household favours the shop it already uses, in
         /// the units of its shop taste shock (Gumbel, σ ≈ 1.28). Switching
         /// friction: people go back to their usual shop unless another is

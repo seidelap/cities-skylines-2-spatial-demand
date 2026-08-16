@@ -122,7 +122,7 @@ namespace CS2Econ.Core
         /// which is a cross product in its own right and deserves its own
         /// line.</summary>
         public static double MsSubmarkets, MsHouseholds, MsAuction, MsRepairScan,
-                             MsCutVacancies, MsShadow;
+                             MsShadow;
         public static long CallsValueSlot, CallsValueAt, CallsSoftCap;
 
         /// <summary>How many times Solve() has run in this process. Exists for
@@ -198,9 +198,9 @@ namespace CS2Econ.Core
         ///
         /// A snapshot taken at the top of the scan is exact for the whole scan.
         /// EntryPrice reads Capacity, _slots.Count, Admitted and Price; every
-        /// write to all four is in BuildSubmarkets, RunAuction, SetPrices,
-        /// Vacate, Offer or CutVacancies, and none of those is reachable from
-        /// AddEnviedColumns, which writes only _dirty, the shortlist and the
+        /// write to all four is in BuildSubmarkets, RunAuction or SetPrices,
+        /// and none of those is reachable from
+        /// AddEnviedColumns, which writes only the shortlist and the
         /// frozen slot caches. The full/non-full branch is CAPTURED rather than
         /// assumed: the table stores whichever of Admitted and Price is live at
         /// snapshot time, so a door filling up (a price RISE for a challenger)
@@ -245,61 +245,11 @@ namespace CS2Econ.Core
         private double[] _outside = Array.Empty<double>();
         private double[][] _premium = Array.Empty<double[]>(); // [segment][cluster]
         private readonly List<int> _queue = new List<int>();
-        /// <summary>The vacancy chain, followed depth-first. When a slot frees,
-        /// the household next in line behind that door goes here rather than on
-        /// the back of the queue, and is served before anything else. The
-        /// difference is not cosmetic: a freed slot posts at its reserve until
-        /// somebody takes it, so every bid that happens in between is priced
-        /// against a door that is about to be gone. Depth-first keeps that
-        /// window one bid wide.</summary>
-        private readonly List<int> _chain = new List<int>();
-        /// <summary>Parallel to _chain: the door each offer came from, so that
-        /// a household which turns the offer down leaves the slot free for the
-        /// next in line rather than swallowing it.</summary>
-        private readonly List<int> _chainDoor = new List<int>();
-        /// <summary>The households that got a new column this round — the only
-        /// ones with any reason to bid again. Everyone else's choice set is
-        /// unchanged, so re-running their decision can only reproduce it.</summary>
-        private readonly List<int> _dirty = new List<int>();
-        /// <summary>Each household's surplus where it currently is, as of the
-        /// last repair scan. −inf marks a household that is not in this market.
-        /// Held so the owner's vacancy decision can price against real
-        /// alternatives without recomputing every one of them.</summary>
-        private double[] _surplus = Array.Empty<double>();
         /// <summary>Per submarket, the bids currently holding its slots. Kept as
         /// a plain list because capacity is small (a submarket is one density at
         /// one cluster at one level); the min is found by scan.</summary>
         private List<(double bid, int hh)>[] _slots = Array.Empty<List<(double, int)>>();
 
-        /// <summary>How deep the queue behind each door is kept. Eight, because
-        /// its only job is to name the next taker for a freed slot and the
-        /// entries below the top few are stale by the time anyone reaches
-        /// them.</summary>
-        private const int WaitDepth = 8;
-        /// <summary>The queue behind the door, as an auction actually produces
-        /// it: the households that bid HERE and did not get in, best bid first.
-        /// Kept live through the solve so that a freed slot has somebody to
-        /// offer itself to.
-        ///
-        /// This is what makes a vacancy chain a chain. When an incumbent moves
-        /// out, its door drops to the reserve — not because the market cooled,
-        /// but because the bookkeeping has momentarily forgotten the challenger
-        /// it turned away five minutes ago. Left alone, that phantom discount
-        /// is visible to every household that bids next, and the repair scan
-        /// then finds a crowd of them "envious" of a door whose price is about
-        /// to snap back. Handing the slot straight to the excluded challenger
-        /// closes the gap in one bid, and its own door frees in turn, which is
-        /// the chain.
-        ///
-        /// Entries go stale — a waiter may have since won somewhere better, or
-        /// been evicted, or seen this door's price climb past it. None of that
-        /// is checked on the way in. The offer just puts the household back in
-        /// the queue and lets it decide again from its whole shortlist, which
-        /// is both cheaper than validating and more correct than trusting a bid
-        /// it made at prices that have since moved.</summary>
-        private double[] _waitBid = Array.Empty<double>();
-        private int[] _waitHh = Array.Empty<int>();
-        private int[] _waitCount = Array.Empty<int>();
         /// <summary>The (density, cluster) keys that hold ANY lettable stock,
         /// and for each the levels that do. The submarket space is
         /// 2 × clusters × 5 levels — about 1960 on the reference city — and
@@ -347,7 +297,7 @@ namespace CS2Econ.Core
             MsHouseholds += sw.Elapsed.TotalMilliseconds; sw.Restart();
             BuildScanTaste(w, p);
             MsHouseholds += sw.Elapsed.TotalMilliseconds; sw.Restart();
-            RunAuction(w, p, nSub, resume: false);
+            RunAuction(w, p, nSub);
             MsAuction += sw.Elapsed.TotalMilliseconds; sw.Restart();
             // COLUMN GENERATION. A shortlist ranked price-free is stable and
             // cheap, and on its own it is not enough: a household whose top
@@ -378,20 +328,34 @@ namespace CS2Econ.Core
             RepairRounds = 0; RepairClean = false;
             for (int round = 0; round < Math.Max(0, p.AuctionRepairRounds); round++)
             {
-                // Owners re-price their vacancies FIRST, then everybody
-                // decides at the prices that are actually being asked. The
-                // other order looks equivalent and is not: a cut made after the
-                // scan is invisible to every household except the one it was
-                // made for, so the bargain sits there unadvertised until the
-                // next round — measured, 885 households envious of doors nobody
-                // had been told about.
-                int cuts = CutVacancies(w, p, nSub);
-                MsCutVacancies += sw.Elapsed.TotalMilliseconds; sw.Restart();
-                int pending = AddEnviedColumns(w, p, nSub);
+                // Every round is a FULL RE-CLEAR from the reserve. The
+                // resumed-round world this replaces kept stale prices standing
+                // between rounds and needed a between-round repricing pass
+                // (CutVacancies) to walk them down; three such mechanisms were
+                // built and measured, and none converged — undershooting
+                // ping-pongs door pairs at ε granularity, overshooting mints
+                // bargains out of double-claimed demand, and the feasible
+                // middle is a limit cycle that a round cap of 200 did not
+                // close (KNOWN-RED.md, "measured dead ends"). A monotone
+                // ascent from below is the case the ε-auction's termination
+                // theorem actually covers. The cost, measured over a 300-tick
+                // auctionprobe rather than predicted: the auction phase rises
+                // 1.3s -> 7.3s (every round re-bids everybody), the deleted
+                // cut pass gives back 3.5s, and the net solve is ~10% dearer
+                // (phase total 26.4s -> 29.2s at the shipped cap of 16) —
+                // not the "few percent" first claimed for this change, and
+                // recorded here because this file has believed its own cost
+                // stories before. What the 8% buys is convergence (canary
+                // 33/39 -> 38/39, the one residual a knife-edge ε case, not a
+                // mechanism defect) and a STRUCTURAL invariant: in a pure
+                // build a non-full door's posted price never leaves its
+                // reserve, so a stranded-high vacancy cannot exist at the end
+                // of a round.
+                int added = AddEnviedColumns(w, p, nSub);
                 MsRepairScan += sw.Elapsed.TotalMilliseconds; sw.Restart();
-                if (pending == 0 && cuts == 0) { RepairClean = true; break; }
+                if (added == 0) { RepairClean = true; break; }
                 RepairRounds++;
-                RunAuction(w, p, nSub, resume: true);
+                RunAuction(w, p, nSub);
                 MsAuction += sw.Elapsed.TotalMilliseconds; sw.Restart();
             }
             if (p.AuctionRepairRounds <= 0) RepairClean = true;   // repair disabled on purpose
@@ -416,9 +380,6 @@ namespace CS2Econ.Core
                 Filled = new int[nSub]; Excluded = new int[nSub];
                 _slots = new List<(double, int)>[nSub];
                 for (int s = 0; s < nSub; s++) _slots[s] = new List<(double, int)>();
-                _waitBid = new double[nSub * WaitDepth];
-                _waitHh = new int[nSub * WaitDepth];
-                _waitCount = new int[nSub];
             }
             int nh = w.Households.Count;
             if (Assignment.Length != nh)
@@ -752,57 +713,44 @@ namespace CS2Econ.Core
         }
 
         // ------------------------------------------------------------------
-        /// <summary>Clear the market and bid it out from scratch, or RESUME the
-        /// standing one with a handful of households that have learned about a
-        /// door they had never been shown.
+        /// <summary>Clear the market and bid it out from scratch. Every call —
+        /// the opening build and every repair round alike — starts all prices
+        /// at the reserve and lets the ascent find the level under live bids.
         ///
-        /// The restart was not a stylistic choice: leaving the previous round's
-        /// slots standing and re-queueing EVERYBODY meant every household bid a
-        /// second time for a market already holding it — households evicting
-        /// themselves, the loser bookkeeping unwinding, and the city emptying,
-        /// 1817 housed down to 264 (measured). But the fault there was the
-        /// re-queue, not the standing market. A household whose choice set did
-        /// not change has nothing new to decide; asking it again can only
-        /// reproduce its own answer, and asking it while it holds a slot makes
-        /// it bid against itself.
+        /// This is deliberately the ONLY way prices form. A round that
+        /// resumed the standing market kept prices no live bid supported —
+        /// a door whose tenants churned away held yesterday's number — and
+        /// walking those stale prices down again from outside the ascent was
+        /// tried three measured ways and never converged (KNOWN-RED.md,
+        /// "measured dead ends"). Monotone ascent from below is the case the
+        /// ε-auction's termination theorem covers; nothing else here is.
         ///
-        /// So a resumed round queues only the households a column was added
-        /// for. They shop as INCUMBENTS — comparing what they pay where they
-        /// are against what it would cost to get in somewhere else — and when
-        /// one moves, its old door frees and offers itself down the queue
-        /// behind it. That is the whole mechanism: nobody is re-decided who has
-        /// no reason to decide again, and every consequence propagates along
-        /// the chain it actually travels.
+        /// Two structural consequences the acceptance checks lean on. A
+        /// non-full door's posted price never leaves its reserve — SetPrices
+        /// clamps the non-full branch — so a room that never fills is priced
+        /// at cost by construction. And nobody mid-build holds a slot while
+        /// bidding (winners leave the queue, losers re-enter holding
+        /// nothing), so a door that fills can only churn tenants by eviction
+        /// and stays full: the stranded-high vacancy cannot be produced.
         ///
-        /// The counters (bids, evictions) accumulate across the resumed rounds,
-        /// so the bid budget bounds the SOLVE rather than each round of it, and
-        /// a solve that spends it says it did not converge.</summary>
-        private void RunAuction(WorldState w, EconParams p, int nSub, bool resume)
+        /// The counters (bids, evictions) accumulate across rounds, so the
+        /// bid budget bounds the SOLVE rather than each round of it, and a
+        /// solve that spends it says it did not converge.</summary>
+        private void RunAuction(WorldState w, EconParams p, int nSub)
         {
-            if (!resume)
+            for (int s = 0; s < nSub; s++)
             {
-                for (int s = 0; s < nSub; s++)
-                {
-                    _slots[s].Clear();
-                    Price[s] = Reserve[s];
-                    Admitted[s] = double.PositiveInfinity;
-                    _waitCount[s] = 0;
-                }
-                for (int i = 0; i < w.Households.Count; i++)
-                { Assignment[i] = -1; WinningBid[i] = 0; Why[i] = Outcome.Outbid; }
-                Bids = 0; Evictions = 0; Rounds = 0;
+                _slots[s].Clear();
+                Price[s] = Reserve[s];
+                Admitted[s] = double.PositiveInfinity;
             }
+            for (int i = 0; i < w.Households.Count; i++)
+            { Assignment[i] = -1; WinningBid[i] = 0; Why[i] = Outcome.Outbid; }
+            Bids = 0; Evictions = 0; Rounds = 0;
             Unassigned = 0; Converged = false;
-            _queue.Clear(); _chain.Clear(); _chainDoor.Clear();
-            if (resume)
-            {
-                for (int q = 0; q < _dirty.Count; q++) _queue.Add(_dirty[q]);
-            }
-            else
-            {
-                for (int i = 0; i < w.Households.Count; i++)
-                    if (_shortCount[i] > 0) _queue.Add(i);
-            }
+            _queue.Clear();
+            for (int i = 0; i < w.Households.Count; i++)
+                if (_shortCount[i] > 0) _queue.Add(i);
 
             // ε keeps the ascent finite: every eviction lifts a submarket's
             // admitted price by at least this much, and prices are bounded above
@@ -814,46 +762,13 @@ namespace CS2Econ.Core
             double epsAbs = Math.Max(1e-9, p.AuctionEpsilon);
             long budget = (long)p.AuctionBidBudget * Math.Max(1, w.Households.Count);
 
-            int head = 0, offeredDoor = -1;
-            while (true)
+            int head = 0;
+            while (head < _queue.Count)
             {
-                // Settle the last offer before anything else decides anything.
-                // The test is whether the SLOT is still free, not whether the
-                // household we offered it to took it. Those come apart: a
-                // waiter can win a slot at this very door by the ordinary route
-                // while still sitting in its queue, and then an offer made to
-                // it is answered by "I already live here" — which is true, and
-                // which under the narrower test swallowed the vacancy and left
-                // the other six households queued behind a door with a room in
-                // it. Whoever the slot went to, the only thing that matters is
-                // whether it is still going.
-                if (offeredDoor >= 0)
-                {
-                    if (_slots[offeredDoor].Count < Capacity[offeredDoor]) Offer(offeredDoor);
-                    offeredDoor = -1;
-                }
                 if (Bids >= budget) break;                 // out of budget: ε-equilibrium not reached
-                int i;
-                // The chain first, and last-in-first-out. A freed slot sits at
-                // its reserve until its next taker claims it, so anything that
-                // bids in the meantime reads a price that is about to vanish.
-                if (_chain.Count > 0)
-                {
-                    int last = _chain.Count - 1;
-                    i = _chain[last]; offeredDoor = _chainDoor[last];
-                    _chain.RemoveAt(last); _chainDoor.RemoveAt(last);
-                }
-                else if (head < _queue.Count) i = _queue[head++];
-                else break;
+                int i = _queue[head++];
                 Bids++;
                 if (head > 1_000_000) { _queue.RemoveRange(0, head); head = 0; }
-
-                // Where it lives right now. Only ever set on a resumed round —
-                // a fresh build queues nobody who holds anything — and it is
-                // what turns the scan below from "shopping" into "shopping
-                // while housed": its own door is costed at what it PAYS, every
-                // other at what it would take to get in.
-                int mine = Assignment[i];
 
                 // Best and runner-up SURPLUS over this household's shortlist,
                 // at the prices standing right now.
@@ -897,25 +812,15 @@ namespace CS2Econ.Core
                     }
                 }
 
-                // Nothing in this city beats leaving it. An incumbent cannot
-                // normally get here — it pays no more than it bid, so its own
-                // door alone clears its reservation — but if it does, it has to
-                // hand the keys back on the way out.
+                // Nothing in this city beats leaving it.
                 if (bestSub < 0 || bestSur <= _outside[i])
                 {
-                    if (mine >= 0) Vacate(i, mine);
                     Assignment[i] = -1; WinningBid[i] = 0;
                     // Nothing it could win at all is being OUTBID; something it
                     // could win but would rather not have is DECLINING.
                     Why[i] = bestSub < 0 ? Outcome.Outbid : Outcome.Declined;
                     continue;
                 }
-
-                // Already where it most wants to be. This is the ordinary
-                // outcome of a resumed round: the new column was worth looking
-                // at and not worth moving for. It must not re-queue, and it
-                // must not bid — bidding here would evict itself.
-                if (bestSub == mine) continue;
 
                 // The bid: what this household will pay here given what it
                 // gives up by not taking its next best. This is the quantity the
@@ -944,7 +849,6 @@ namespace CS2Econ.Core
                 var slot = _slots[bestSub];
                 if (slot.Count < Capacity[bestSub])
                 {
-                    if (mine >= 0) Vacate(i, mine);        // moving out starts a chain
                     slot.Add((bid, i));
                     Assignment[i] = bestSub; WinningBid[i] = bid; Why[i] = Outcome.Housed;
                     SetPrices(bestSub, band: eps);
@@ -957,14 +861,12 @@ namespace CS2Econ.Core
                 if (bid > weak)
                 {
                     int loser = slot[weakAt].hh;
-                    if (mine >= 0) Vacate(i, mine);
                     slot[weakAt] = (bid, i);
                     Assignment[i] = bestSub; WinningBid[i] = bid; Why[i] = Outcome.Housed;
                     Assignment[loser] = -1; WinningBid[loser] = 0; Why[loser] = Outcome.Outbid;
                     Evictions++;
                     SetPrices(bestSub, weak, eps);
-                    Wait(bestSub, weak, loser);             // it is now the queue here
-                    _queue.Add(loser);                      // and it bids again, elsewhere
+                    _queue.Add(loser);                      // it bids again, elsewhere
                 }
                 else
                 {
@@ -972,8 +874,7 @@ namespace CS2Econ.Core
                     // behind the door and re-bid: the loop above will now pick
                     // its next best, because Price[bestSub] has risen past it.
                     SetPrices(bestSub, bid, eps);
-                    Wait(bestSub, bid, i);
-                    if (mine >= 0) { _chain.Add(i); _chainDoor.Add(-1); } else _queue.Add(i);
+                    _queue.Add(i);
                 }
                 Rounds++;
             }
@@ -985,114 +886,20 @@ namespace CS2Econ.Core
             for (int s = 0; s < nSub; s++)
             {
                 Filled[s] = _slots[s].Count;
-                // An EMPTY door has no tenants to reprice and nothing to lose by
-                // asking its floor. A door that still holds tenants does: they
-                // all pay one price, so filling the last room means cutting the
-                // rent on every room. Whether that is worth doing is the
-                // owner's arithmetic and it happens between rounds, in
-                // CutVacancies, where there are real bids to do it against.
-                //
-                // Cutting every partially-filled door to its reserve here
-                // instead — the obvious thing — is a citywide price shock once
-                // per round: measured, 1473 to 1664 households envious and
-                // 250-290 stranded, on every seed, because each round created as
-                // many bargain doors as it filled.
+                // A pure build already leaves every non-full door posted at its
+                // reserve (SetPrices clamps that branch), so only the Admitted
+                // of never-filled doors needs settling: nothing was admitted,
+                // and the honest number for a door with every room open is the
+                // floor a taker would actually pay.
                 if (_slots[s].Count == 0 && Capacity[s] > 0)
                 { Admitted[s] = Reserve[s]; Price[s] = Reserve[s]; }
             }
             // Counted from the standing assignment rather than tallied in the
-            // loop, because a resumed round only ever sees a handful of
-            // households and a tally would report the round instead of the
-            // market. Households with no shortlist never bid and are not part
-            // of this market at all.
+            // loop. Households with no shortlist never bid and are not part of
+            // this market at all.
             Unassigned = 0;
             for (int i = 0; i < w.Households.Count; i++)
                 if (_shortCount[i] > 0 && Assignment[i] < 0) Unassigned++;
-        }
-
-        /// <summary>Hand back a slot and offer it to whoever is next behind
-        /// that door. The offer is a place in the chain, not an assignment: the
-        /// household re-decides over its whole shortlist and may well want
-        /// something else by now.</summary>
-        private void Vacate(int hid, int sub)
-        {
-            var slot = _slots[sub];
-            for (int q = 0; q < slot.Count; q++)
-                if (slot[q].hh == hid) { slot.RemoveAt(q); break; }
-            SetPrices(sub);
-            Offer(sub);
-        }
-
-        /// <summary>Offer a free slot to the next household in the queue behind
-        /// that door, at the rate the door is asking.
-        ///
-        /// One at a time. The head has usually been waiting for exactly this
-        /// and takes it; offering the whole queue on the off chance it does not
-        /// costs eight bids per vacancy, which took a converging solve from
-        /// 13.6k bids to 119k and out of budget (measured). If the head
-        /// declines, the loop sees the slot is still free and offers the next,
-        /// so the queue is walked when it needs to be and not when it does not.
-        ///
-        /// What this deliberately does NOT do is cut the price as it goes. That
-        /// is what a landlord would do and it is defensible in isolation, but
-        /// inside the round it is fatal: a posted price that FALLS is precisely
-        /// what an ascending auction's termination argument forbids. Every
-        /// eviction is supposed to lift some price by at least ε so that no
-        /// state of the market can recur, and one collapsing door re-opens every
-        /// state the market had already left. Measured both ways — dropping to
-        /// the reserve on vacancy left 19 households envious after 12 rounds;
-        /// walking the price down the queue left 40, 139, 12 and 43 on four
-        /// seeds, none of them clean. Cutting is the OUTER loop's move, and it
-        /// lives in CutVacancies.</summary>
-        private void Offer(int sub)
-        {
-            if (_slots[sub].Count >= Capacity[sub]) return;
-            int next = PopWaiter(sub);
-            if (next < 0) return;
-            _chain.Add(next); _chainDoor.Add(sub);
-        }
-
-        /// <summary>Record a household in the queue behind a door, best bid
-        /// first. A household that bids here twice keeps its higher bid rather
-        /// than occupying two places in a queue eight deep.</summary>
-        private void Wait(int sub, double bid, int hh)
-        {
-            if (Assignment[hh] == sub) return;    // it already lives here
-            int at = sub * WaitDepth, n = _waitCount[sub];
-            for (int q = 0; q < n; q++)
-                if (_waitHh[at + q] == hh)
-                {
-                    if (bid <= _waitBid[at + q]) return;
-                    for (int r = q; r + 1 < n; r++)
-                    { _waitBid[at + r] = _waitBid[at + r + 1]; _waitHh[at + r] = _waitHh[at + r + 1]; }
-                    _waitCount[sub] = --n;
-                    break;
-                }
-            if (n == WaitDepth && bid <= _waitBid[at + WaitDepth - 1]) return;
-            int pos = n < WaitDepth ? n : WaitDepth - 1;
-            while (pos > 0 && _waitBid[at + pos - 1] < bid)
-            {
-                _waitBid[at + pos] = _waitBid[at + pos - 1];
-                _waitHh[at + pos] = _waitHh[at + pos - 1];
-                pos--;
-            }
-            _waitBid[at + pos] = bid; _waitHh[at + pos] = hh;
-            if (n < WaitDepth) _waitCount[sub] = n + 1;
-        }
-
-        /// <summary>How many households are still queued behind this door.</summary>
-        public int WaitingAt(int sub)
-            => (uint)sub < (uint)_waitCount.Length ? _waitCount[sub] : 0;
-
-        private int PopWaiter(int sub)
-        {
-            int n = _waitCount[sub];
-            if (n <= 0) return -1;
-            int at = sub * WaitDepth, hh = _waitHh[at];
-            for (int q = 0; q + 1 < n; q++)
-            { _waitBid[at + q] = _waitBid[at + q + 1]; _waitHh[at + q] = _waitHh[at + q + 1]; }
-            _waitCount[sub] = n - 1;
-            return hh;
         }
 
         /// <summary>Recompute a submarket's posted and admitted prices. Posted
@@ -1428,8 +1235,9 @@ namespace CS2Econ.Core
 
         private int AddEnviedColumns(WorldState w, EconParams p, int nSub)
         {
-            _dirty.Clear();
             BuildDoorTable();
+            int added = 0;
+            var oracleAdded = ScanOracle ? new List<int>() : null;
             if (ScanOracle) { _refDirty.Clear(); OracleScans++; }
             BlockedListed = 0; BlockedFull = 0;
             int nKeys = _liveKc.Count;
@@ -1541,7 +1349,7 @@ namespace CS2Econ.Core
                         bool refListed = false;
                         for (int q = 0; q < n; q++)
                             if (_shortItems[_shortStart[i] + q] == refKC) { refListed = true; break; }
-                        if (refListed || n < _stride) _refDirty.Add(i);
+                        if (!refListed && n < _stride) _refDirty.Add(i);
                     }
                 }
                 if (bestKC < 0) continue;
@@ -1572,15 +1380,19 @@ namespace CS2Econ.Core
                     // — with no way to say so, because that submarket shares its
                     // (density, cluster) key and the key was already listed.
                     //
-                    // It does not need a column. It needs to be asked again.
+                    // With full re-clear rounds this needs NO queueing: the
+                    // next round re-decides everyone from the reserve, so a
+                    // household envious of a door already on its list gets its
+                    // contest by construction. The counter stays as the
+                    // diagnostic that says how often that case arises.
                     BlockedListed++;
-                    _dirty.Add(i);
                     continue;
                 }
                 if (n >= _stride) { BlockedFull++; continue; }  // list full; nothing safe to drop
                 _shortItems[st + n] = bestKC; _shortCount[i] = n + 1;
                 FreezeSlot(i, n, p);
-                _dirty.Add(i);
+                added++;
+                oracleAdded?.Add(i);
             }
             // THE SET, not just the per-household answer: same households, same
             // order. This is the invariant the brief asks for, and it is
@@ -1588,95 +1400,20 @@ namespace CS2Econ.Core
             // run, so a divergence is attributed to the scan that caused it.
             if (ScanOracle)
             {
-                bool same = _refDirty.Count == _dirty.Count;
-                for (int q = 0; same && q < _dirty.Count; q++)
-                    if (_refDirty[q] != _dirty[q]) same = false;
+                bool same = _refDirty.Count == oracleAdded.Count;
+                for (int q = 0; same && q < oracleAdded.Count; q++)
+                    if (_refDirty[q] != oracleAdded[q]) same = false;
                 if (!same) OracleSetMismatch++;
             }
-            // The loop's business is households with something left to do, not
-            // columns. Counting columns let it stop while tenants who had been
-            // repriced in place were still strictly better off somewhere else —
-            // "nothing left to add" reported as "this is an equilibrium".
-            return _dirty.Count;
+            // Counting ADDED COLUMNS is the loop's correct stopping condition
+            // again, because a full re-clear re-decides every household every
+            // round: the only way progress can still be possible is a door
+            // somebody has never been shown. (Under resumed rounds this
+            // counted re-decisions instead, because a tenant repriced in
+            // place needed asking again — that case no longer exists.)
+            return added;
         }
 
-        /// <summary>The owner's side of the market: what to do with a room
-        /// nobody took.
-        ///
-        /// A submarket lets every room at ONE price, so filling the last one
-        /// means cutting the rent on all of them. That is a trade, not an
-        /// obligation, and it is the owner's to make: three rooms at 2.14 beats
-        /// four at 1.50. Leaving the fourth empty is then a decision rather than
-        /// a failure to clear, and it is the same decision the posted-curve path
-        /// already makes when it maximises n×P(n) — the auction had simply never
-        /// been given a way to make it.
-        ///
-        /// The bid it decides against is real: the best offer in the city for
-        /// one more room here, from a household that does not already have one,
-        /// competition-adjusted exactly as in the auction. Whoever made it is
-        /// marked for re-decision, so a cut is always accompanied by the
-        /// household it was made for.
-        ///
-        /// This runs BETWEEN rounds. Inside a round, prices only rise, which is
-        /// what makes the round terminate; cutting is the outer loop's move —
-        /// the market failing to clear at one price vector and being asked again
-        /// at a lower one.</summary>
-        private int CutVacancies(WorldState w, EconParams p, int nSub)
-        {
-            int cuts = 0;
-            int nh = w.Households.Count;
-            if (_surplus.Length != nh) _surplus = new double[nh];
-            for (int i = 0; i < nh; i++)
-            {
-                int mine = Assignment[i];
-                _surplus[i] = _shortCount[i] <= 0 ? double.NegativeInfinity
-                            : mine >= 0 ? ValueAt(i, mine, p) - Price[mine]
-                            : _outside[i];
-            }
-            for (int s = 0; s < nSub; s++)
-            {
-                int f = _slots[s].Count;
-                if (Capacity[s] <= 0 || f <= 0 || f >= Capacity[s]) continue;
-                if (Price[s] <= Reserve[s] + 1e-12) continue;      // already at the floor
-                // STOP AS SOON AS THE ANSWER IS "NO CUT", which is the common
-                // case: the loop below is a pass over every household in the
-                // city for every partially-filled door, and most doors are
-                // answered by the first bid that reaches the asking rate.
-                // Measured, once CutVacancies had its own phase timer to be
-                // measured in: 8009 → 3841 ms over a 300-tick run, 2.1×, for
-                // one clause.
-                //
-                // The break is EXACT, and here the argument is a real one rather
-                // than "the same bits". After the loop, `best` and `who` are
-                // read only through ask = Max(Reserve[s], best), the guard
-                // `ask >= stop`, the revenue test, and then Price/_dirty. If
-                // best >= stop then ask >= best >= stop, so the guard fires and
-                // neither local is ever read again — the break therefore changes
-                // them ONLY in the cases where nothing reads them. And `who` is
-                // always valid when we break, because the test sits inside the
-                // update: the first bid to cross the threshold is by definition
-                // the one that just became the new best, and it set `who` in the
-                // same iteration.
-                double stop = Price[s] - 1e-12;
-                double best = double.NegativeInfinity; int who = -1;
-                for (int i = 0; i < w.Households.Count; i++)
-                {
-                    if (Assignment[i] == s) continue;              // already has a room here
-                    double alt = _surplus[i];
-                    if (double.IsNegativeInfinity(alt)) continue;  // not in this market
-                    double bid = ValueAt(i, s, p) - Math.Max(alt, _outside[i]);
-                    if (bid > best) { best = bid; who = i; if (best >= stop) break; }
-                }
-                if (who < 0) continue;
-                double ask = Math.Max(Reserve[s], best);
-                if (ask >= stop) continue;               // it would pay the asking rate already
-                if ((f + 1) * ask <= f * Price[s]) continue;       // the cut costs more than it earns
-                Price[s] = ask;
-                _dirty.Add(who);
-                cuts++;
-            }
-            return cuts;
-        }
 
         private void BuildShadow(WorldState w, EconParams p, int nSub)
         {

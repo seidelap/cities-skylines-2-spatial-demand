@@ -1677,67 +1677,49 @@ namespace CS2Econ.Harness
             // (6) THE MARKET CLEARS ON THE DEMAND SIDE. Two conditions, and
             // they are the ones that turn "no envy" into "efficient".
             //
-            //   (6a) a submarket holding an empty room above its reserve is
-            //        BETTER OFF for it — no price cut that would let the room
-            //        earns the owner more than the rent it would give up on the
-            //        rooms already let;
-            //   (6b) no household the auction left unassigned strictly prefers a
-            //        submarket that still has room.
+            //   (6a) UNSOLD ROOMS REST AT COST: a door with a free room posts
+            //        its reserve;
+            //   (6b) no household the auction left unassigned strictly prefers
+            //        a submarket that still has room.
             //
-            // (6a) used to read "a submarket with a free slot is priced at its
-            // reserve", which is the right condition for a price-taking seller
-            // of ONE unit and the wrong one here. Every room in a submarket lets
-            // at the same price, so filling the last of four means cutting the
-            // rent on all four; three at 2.14 beats four at 1.50 and an owner
-            // that cuts anyway is not competitive, it is bad at arithmetic. The
-            // old form was not merely too strict — it demanded behaviour the
-            // rest of the model already rejects, since the posted-curve path has
-            // maximised n×P(n) since the clearing-price work. What it was really
-            // protecting against is (6b), which is untouched: rooms standing
-            // empty while households stand outside. That still fails, and it is
-            // what killed the first-come-first-served and stale-price mutants.
+            // (6a) has been three things. Its first form was exactly this. It
+            // was then replaced by the owner's n×P(n) revenue test, on an
+            // argument that sounded economic — every room lets at one price,
+            // so filling the last of four cuts the rent on all four — and
+            // that form died on three measured facts: the "owner" spans 2-8
+            // separate parcels and the design's §2 charter forbids a landlord
+            // class, so no such agent exists; the revenue it protected is
+            // paid to NO account (occupants pay S + φ·LR to the treasury), so
+            // the rule optimised a number absent from the ledger; and what it
+            // actually propped up, through price → assessment → charge, was
+            // the land levy. It was also satisfied by construction — the cut
+            // priced at the marginal bidder's exact indifference, so over
+            // 2,463 cuts nobody was ever made strictly better off — except on
+            // the six seeds where rounding left it a hair past its own gate
+            // (20, 22, 23, 26, 28, 208, found by bisect and canary).
             //
-            // The bid below is re-derived here rather than read off the auction,
-            // so the check tests the outcome and not the code that produced it.
-            //
-            // Adding these was not tidiness. Mutation testing put a
-            // first-come-first-served market (never evict a weaker holder) and a
-            // stale-price market (bidders read the reserve instead of the live
-            // price) through the checks above and BOTH passed every equilibrium
-            // condition — no envy, no oversubscription, everyone individually
-            // rational — because the price simply rose to price out whoever
-            // should have won. They died only on the convergence budget, which
-            // is luck: a subtler version that happened to converge would have
-            // walked straight through. The tell in both was households sitting
-            // unhoused next to rooms nobody was in, and nothing was looking at
-            // the unhoused at all.
+            // The first form is back because it is now STRUCTURAL, not
+            // aspirational: every auction round is a full re-clear from the
+            // reserve, a non-full door's posted price never leaves its
+            // reserve (SetPrices clamps that branch), and nobody mid-build
+            // holds a slot while bidding, so a door that fills stays full.
+            // Three between-round repricing mechanisms that tried to reach
+            // this fixed point from stale prices are recorded in KNOWN-RED.md
+            // ("measured dead ends"); none converged. The tolerance here is a
+            // hair, not a band, because the property is an invariant of the
+            // build, not an equilibrium residual.
             int unsoldOverpriced = 0, strandedDemand = 0, unassignedChecked = 0;
             string unsoldWhy = "";
             for (int s = 0; s < a.Capacity.Length; s++)
             {
                 int f = a.Filled[s];
-                if (a.Capacity[s] <= f || f <= 0 || a.Price[s] <= a.Reserve[s] + 1e-9) continue;
-                // The best offer in the city for one more room here, from a
-                // household that has not got one, net of what it gives up.
-                double best = double.NegativeInfinity;
-                foreach (var h in w.Households)
-                {
-                    if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
-                    int mine = a.Assignment[h.Id];
-                    if (mine == s) continue;
-                    double alt = mine >= 0 ? a.ValueOf(h.Id, mine, p) - a.Price[mine]
-                                           : a.OutsideOf(h.Id);
-                    double bid = a.ValueOf(h.Id, s, p) - Math.Max(alt, a.OutsideOf(h.Id));
-                    if (bid > best) best = bid;
-                }
-                double ask = Math.Max(a.Reserve[s], best);
-                if (ask >= a.Price[s] - 1e-9) continue;      // it would pay the asking rate
-                if ((f + 1) * ask <= f * a.Price[s] + 1e-9) continue;   // holding earns more
+                if (a.Capacity[s] <= f) continue;              // full or warehoused
+                double tol = Math.Max(1e-9, 1e-9 * a.Reserve[s]);
+                if (a.Price[s] <= a.Reserve[s] + tol) continue;
                 unsoldOverpriced++;
                 if (unsoldWhy.Length == 0)
-                    unsoldWhy = $"sub{s} {f}/{a.Capacity[s]} at {a.Price[s]:F2} earns {f * a.Price[s]:F2};"
-                              + $" cutting to {ask:F2} would let {f + 1} for {(f + 1) * ask:F2}"
-                              + $" (reserve {a.Reserve[s]:F2}, {a.WaitingAt(s)} still queued)";
+                    unsoldWhy = $"sub{s} {f}/{a.Capacity[s]} resting at {a.Price[s]:F2}"
+                              + $" above reserve {a.Reserve[s]:F2}";
             }
             foreach (var h in w.Households)
             {

@@ -11,14 +11,12 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (26 checks)
+## verify (27 checks)
 
 | Seed | Check | Status | Attribution |
 |---|---|---|---|
 | 9 | occupancy channel: realized vacancy softens rent | red | Predates `2eeefc3`; fails identically at `2eeefc3`, `7dcaf08`, `ffd9a03`, `6104275`, `694fbd3`, HEAD. Not an auction-era regression. Unowned. |
-| 26 | housing auction is a competitive equilibrium | red | **Bisected to `694fbd3`** (vacancy chains / CutVacancies). Signature: `unsold-above-reserve 1`, envy 0, swaps 0 — the CutVacancies indifference defect (cut price equals current price to two decimals; `sub681 34/36 at 1.52, cutting to 1.52 would let 35`). |
-| 208 | housing auction is a competitive equilibrium | red | Same as seed 26: **bisected to `694fbd3`**, same signature (`sub210 1/4 at 1.89, cutting to 1.88 would let 2`). |
-| 20, 22, 23, 28 | housing auction is a competitive equilibrium | red | Same defect family as 26/208, found by the canary's very first baseline sweep (`canary` at `0035ded`: 33/39, FAILED 20, 22, 23, 26, 28, 208). The known-red set for this defect was 2 seeds by bisect and is 6 by sweep. |
+| 25 | housing auction is a competitive equilibrium | red | Knife-edge ε-residual under the full-re-clear mechanism: envy 2 households, worst 1.50% of value against the ~1% band, converged True, clean True, `unsold-above-reserve 0`. Not the CutVacancies defect class (that class is structurally dead — see Closed). The one residual of `canary` 38/39 at the fix commit. |
 
 ## Measured dead ends — do not retry blind
 
@@ -47,16 +45,18 @@ point in this architecture.
    clean False)` on 8 of 8 fixtures measured, unsold 39–53 throughout.
 
 The old rule "converges" only because its cuts close no deals — the loop
-runs dry trivially. Conclusion recorded for the next design: the down-phase
-must live *inside* the auction, not between its rounds — e.g. a clearance
-step where free rooms **accept their standing wait-queue bids as
-admissions** (the taker enters at its recorded bid, `Admitted` drops to
-that bid, so the door closes behind the taker and no posted bargain is ever
-visible to third parties). That is also the individual-decisions answer: a
-household's own standing bid is accepted, rather than an ownerless door
-computing a price.
+runs dry trivially.
 
-Seeds 0–7, 13, 25 are 26/26 at HEAD `0b5b658`.
+**RESOLVED** — the down-phase moved inside the auction in the simplest
+possible way: every repair round is a full re-clear from the reserve, so a
+stale price cannot exist for anything to walk down. The accepted-standing-
+bid design sketched at the time was never needed. Cost, measured: net solve
+~10% dearer (phase total 26.4s → 29.2s over a 300-tick probe at the
+shipped cap of 16). Bought: canary 33/39 → 38/39, `unsold-above-reserve`
+structurally zero, and an LP-optimality gap of 0.01–0.03% of LP* where the
+resumed regime measured 0.81–1.61%.
+
+Seeds 0–7 and 13 are 27/27 at the fix commit; seed 25 is the one canary red.
 
 ## scenarios (seed 1)
 
@@ -74,5 +74,6 @@ predate the auction era; true origins untested further back.
 
 | What | Was | Resolution |
 |---|---|---|
+| seeds 20, 22, 23, 26, 28, 208, auction equilibrium | red (`unsold-above-reserve`, the CutVacancies indifference defect, bisected to `694fbd3`, resized 2→6 by the canary's first sweep) | Fixed by making every repair round a full re-clear from the reserve and deleting CutVacancies, the vacancy chains and the wait queues outright. The invariant "a non-full door posts its reserve" is now structural (SetPrices clamps the non-full branch; nobody mid-build holds a slot while bidding). Canary 33/39 → 38/39; LP-optimality gap 0.81–1.61% → 0.01–0.03% of LP*. Fiscal shift recorded in the fingerprint log: sumLR −0.95% (high −17.5%, low −13.2%), meanRent −7.7%, treasury −13.5%, household money +5.7% — phantom scarcity leaving the tax base. |
 | seed 3, clearing price / tracksIncome | red before `3a507e9` | Fixed by pairing the income legs (`3a507e9`) and the four-leg restatement (`c0c584d`). |
 | seeds 271, 327, clearing price / tracksIncome | red before `c0c584d` | Transfer-anchored tail; fixed by doubling the transfer through a save/restore clone (`c0c584d`). |

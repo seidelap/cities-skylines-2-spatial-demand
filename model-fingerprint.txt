@@ -38,3 +38,24 @@ delta: auction.built (new lane)
 delta: auction.price (new lane)
 delta: auction.money (new lane)
 sig: 93545DD05A648C23
+
+=== stanza 2
+recorded: 2026-08-16T04:09:40Z
+reason: Repair rounds are full re-clears from the reserve; CutVacancies and the vacancy-chain/wait-queue machinery deleted. Auction-arm lanes move (prices and allocation re-form each round from live bids); default arm does not run the auction and is unchanged. Canary 33/39 -> 38/39; unsold-above-reserve structurally zero.
+lane default.demography hash=1B4B114FF4C821BB pop=1026 housed=807 sheltered=2
+lane default.built hash=05352836E05C3F47 built=322 meanLevel=1.639751553 units=1930
+lane default.price hash=56863008365C67D7 sumLR=17770.10645 sumLR.high=1670.55774 sumLR.low=1537.155564 meanRent=4.241551433
+lane default.money hash=509F93700C936F81 treasury=233363.4208 hhMoney=310074.5584 firmMoney=77341.63689 escrow=151591.9786 phantoms=-696487.321 drift=2.252636477E-08
+lane auction.demography hash=C2B5D1D83D1A3C5A pop=1566 housed=1206 sheltered=0
+lane auction.built hash=E3F90997A4A38D82 built=407 meanLevel=1.936117936 units=2284
+lane auction.price hash=2163FC3621DA4CFF sumLR=18256.84822 sumLR.high=692.6070226 sumLR.low=705.4778495 meanRent=2.068416467
+lane auction.money hash=DA97FFCEE92F68C5 treasury=104688.9682 hhMoney=502058.8347 firmMoney=119808.3856 escrow=131262.4149 phantoms=-781934.3295 drift=4.384783097E-07
+delta: default.demography =
+delta: default.built =
+delta: default.price =
+delta: default.money =
+delta: auction.demography hash moved; pop 1448 -> 1566 (+8.15%); housed 1168 -> 1206 (+3.25%); sheltered =
+delta: auction.built hash moved; built 400 -> 407 (+1.75%); meanLevel 1.91 -> 1.9361179 (+1.37%); units 2250 -> 2284 (+1.51%)
+delta: auction.price hash moved; sumLR 18431.14 -> 18256.848 (-0.95%); sumLR.high 839.37256 -> 692.60702 (-17.49%); sumLR.low 812.29366 -> 705.47785 (-13.15%); meanRent 2.24022 -> 2.0684165 (-7.67%)
+delta: auction.money hash moved; treasury 120957.9 -> 104688.97 (-13.45%); hhMoney 474902.98 -> 502058.83 (+5.72%); firmMoney 111927.96 -> 119808.39 (+7.04%); escrow 122110.9 -> 131262.41 (+7.49%); phantoms -754015.47 -> -781934.33 (-3.70%); drift -3.3178367E-09 -> 4.3847831E-07 (+13315.79%)
+sig: 955B6A9A34BEE869
