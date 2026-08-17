@@ -1995,8 +1995,18 @@ namespace CS2Econ.Harness
         /// 1000–1150, every one tied), mutant arm −0.004..+0.006. The 0.015
         /// bar is ~1.8x under the worst clean seed and ~2.5x over the worst
         /// mutant reading — the same margin class as the uniform-pulse bar;
-        /// re-run the 16-seed sweep before tightening. Dose-response of the
-        /// bonus itself: EconParams.NetworkTieBonusScale.</summary>
+        /// re-run the 16-seed sweep before tightening. Against the DRAW
+        /// rather than the bonus the margin is thinner and seed-dependent:
+        /// a UNIFORM tie draw with the bonus alive (the "people follow
+        /// people" proportionality severed) read clean lift +0.012..+0.019
+        /// on seeds 0/9/13 and was caught only at seed 9 (fix-round
+        /// weakening run, reverted; the adversarial round's variant of the
+        /// same weakening read +0.010..+0.012, caught 3/3) — the bonus
+        /// alone manufactures some tie-landing dependence, so this bar
+        /// gates the BONUS channel and only brushes the draw; a draw
+        /// regression is not reliably caught here, and any bar move needs
+        /// that weakening re-run, not just the clean sweep. Dose-response
+        /// of the bonus itself: EconParams.NetworkTieBonusScale.</summary>
         /// <summary>Sweep instrument only (`tiesweep --tie-bonus X`): overrides
         /// NetworkTieBonusScale in the tie-channel fixture's arms, so the
         /// parameter's dose-response is one command per value. Null in every
@@ -2467,11 +2477,41 @@ namespace CS2Econ.Harness
             // test cannot be fooled that way: it never looks at a price.
             //
             // O(housed²) and deliberately exhaustive. This is a test.
+            //
+            // THE BAND COMPOSES THE ENVY SWEEP'S OWN TWO-SIDED ACCOUNTING,
+            // once per side of the trade. The price-free GAIN is not
+            // band-free: identically,
+            //   gain(i,j) = envy_i(sj) + envy_j(si)
+            //             + (Entry(si) − Price(si)) + (Entry(sj) − Price(sj)),
+            // so a pair of households each sitting inside the envy leg's band
+            // can show a positive "swap" up to the SUM of their two envy
+            // bands plus the doors' entry−posted gaps — an ε-residual of the
+            // finite auction, not value the solve left on the table. The old
+            // band (ε of each holder's OWN value only) granted the pair —
+            // two envies — the allowance the envy leg grants ONE envy: the
+            // same under-derived arithmetic the envy leg's band was fixed
+            // for, and it fired on exactly that residual: canary seed 28 at
+            // the per-cluster-memory commit read gain 0.173 against the old
+            // 0.166 band, decomposing as 0.037 (envy_i, its envy band 0.167)
+            // + 0.120 (envy_j, band 0.165) + 0.016 (entry−posted at i's
+            // door) + 0.000 — every term inside the mechanism's own
+            // guarantee (fix-round single-seed canary run, pair
+            // hh285/sub252 ↔ hh1609/sub767). The band is therefore the two
+            // envy bands, each ε of the holder's value plus ε of the value
+            // it is reading — the envy leg's exact derivation. The
+            // entry−posted gaps stay OUT of the band on purpose: with them
+            // in, the leg is a near-consequence of the envy sweep and can no
+            // longer fail on its own; and resting prices far below entry is
+            // how restricted competition (M5) shows, so a band that absorbed
+            // the gaps would re-blind this leg to the failure it exists for.
+            // M5 (repair rounds 0) still reds this leg under the restated
+            // band — see the mutant run recorded in the leg's registry
+            // paragraph (fix-round M5 run, reverted).
             var occ = new List<int>();
             foreach (var h in w.Households)
                 if (h.ExitedTick < 0 && (uint)h.Id < (uint)a.Assignment.Length && a.Assignment[h.Id] >= 0)
                     occ.Add(h.Id);
-            int swaps = 0; double bestSwapGain = 0;
+            int swaps = 0; double bestSwapGain = 0; string swapWhy = "";
             for (int x = 0; x < occ.Count && swaps == 0; x++)
             {
                 int i = occ[x], si = a.Assignment[i];
@@ -2480,13 +2520,27 @@ namespace CS2Econ.Harness
                 {
                     int j = occ[y], sj = a.Assignment[j];
                     if (sj == si) continue;
-                    double gain = (a.ValueOf(i, sj, p) + a.ValueOf(j, si, p)) - (vii + a.ValueOf(j, sj, p));
-                    // Same ε accounting as the envy sweep: a finite auction
-                    // leaves each side within its own ε of its best, so a swap
-                    // has to beat both to count.
+                    double vij = a.ValueOf(i, sj, p), vji = a.ValueOf(j, si, p), vjj = a.ValueOf(j, sj, p);
+                    double gain = (vij + vji) - (vii + vjj);
                     double band = Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vii))
-                                + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(a.ValueOf(j, sj, p)));
-                    if (gain > band) { swaps++; bestSwapGain = gain; break; }
+                                + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vij))
+                                + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vjj))
+                                + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vji));
+                    if (gain > band)
+                    {
+                        swaps++; bestSwapGain = gain;
+                        // Say WHICH pair and how the gain decomposes — the
+                        // identity above turns the raw number into the
+                        // mechanism responsible (envy vs resting price).
+                        double ei = (vij - a.EntryPrice(sj)) - (vii - a.Price[si]);
+                        double ej = (vji - a.EntryPrice(si)) - (vjj - a.Price[sj]);
+                        swapWhy = $"hh{i}@sub{si} ↔ hh{j}@sub{sj}: gain {gain:F3} > band {band:F3}"
+                                + $" = envy_i {ei:F3} + envy_j {ej:F3}"
+                                + $" + gaps {a.EntryPrice(si) - a.Price[si]:F3}/{a.EntryPrice(sj) - a.Price[sj]:F3}"
+                                + $" (i: {vii:F2}→{vij:F2}, j: {vjj:F2}→{vji:F2};"
+                                + $" si {a.Filled[si]}/{a.Capacity[si]}, sj {a.Filled[sj]}/{a.Capacity[sj]})";
+                        break;
+                    }
                 }
             }
 
@@ -2523,7 +2577,8 @@ namespace CS2Econ.Harness
                   + $"({a.Bids} bids, {a.Evictions} evictions, "
                   + $"blocked listed {a.BlockedListed} / list-full {a.BlockedFull})"
                   + (envy > 0 ? $"\n      worst envy: {worstWhy}" : "")
-                  + (unsoldOverpriced > 0 ? $"\n      unsold: {unsoldWhy}" : ""));
+                  + (unsoldOverpriced > 0 ? $"\n      unsold: {unsoldWhy}" : "")
+                  + (swaps > 0 ? $"\n      swap: {swapWhy}" : ""));
         }
 
         /// <summary>The labor-auction fixture: the auction-arm city with the

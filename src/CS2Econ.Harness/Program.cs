@@ -37,11 +37,20 @@ namespace CS2Econ.Harness
                     return TestRunner.RunAll(seed, out _);
                 case "canary":
                 {
-                    int n = 32;
+                    int n = 32, from = 0;
                     for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
                         if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                        // `--from K` sweeps [K, n) alone, without the pinned
+                        // extras: the instrument for dissecting one failing
+                        // seed (a full canary pays ~9s a seed; a knife-edge
+                        // dissection needs one).
+                        if (args[i] == "--from") from = int.Parse(args[i + 1]);
+                    }
                     var set = new List<ulong>();
-                    for (ulong s = 0; s < (ulong)n; s++) set.Add(s);
+                    for (ulong s = (ulong)from; s < (ulong)n; s++) set.Add(s);
+                    if (from > 0) return TestRunner.Canary(set);
+
                     foreach (ulong s in new ulong[] { 138, 208, 271, 327, 549, 910, 6550 })
                         if (!set.Contains(s)) set.Add(s);
                     return TestRunner.Canary(set);

@@ -77,7 +77,19 @@ namespace CS2Econ.Core
             // batch's worth before this batch adds to it (see the field's own
             // anti-smuggling guard in MigrationState).
             var ties = w.Migration.NetworkTies;
-            if (ties.Length != acc.C) ties = w.Migration.NetworkTies = new double[acc.C];
+            if (ties.Length != acc.C)
+            {
+                // The serializer packs only nonzero clusters, so a loaded
+                // array is routinely shorter than C (any save made before the
+                // top-index cluster's first remembered arrival); the resize
+                // must CARRY THE STOCK OVER — a fresh array here silently
+                // zeroed every neighborhood's chain-migration memory on the
+                // first post-load tick (mod load path only; the harness never
+                // round-trips globals, so no check reaches this).
+                var resized = new double[acc.C];
+                Array.Copy(ties, resized, Math.Min(ties.Length, acc.C));
+                ties = w.Migration.NetworkTies = resized;
+            }
             double tiesTotal = 0;
             for (int c = 0; c < acc.C; c++) { ties[c] *= p.NetworkTieDecay; tiesTotal += ties[c]; }
 
