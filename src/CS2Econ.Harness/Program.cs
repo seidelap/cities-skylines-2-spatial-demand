@@ -83,6 +83,17 @@ namespace CS2Econ.Harness
                 }
                 case "assesscheck": // assessment-tracks-price fixture alone (see TestRunner.AssessCheck)
                     return TestRunner.AssessCheck(seed);
+                case "pulsesweep": // uniform-pulse check alone across seeds (see TestRunner.PulseSweep)
+                {
+                    int n = 8;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    var set = new List<ulong>();
+                    for (ulong s = 0; s < (ulong)n; s++) set.Add(s);
+                    foreach (ulong s in new ulong[] { 9, 13 })   // the verify-pinned seeds ride along
+                        if (!set.Contains(s)) set.Add(s);
+                    return TestRunner.PulseSweep(set);
+                }
                 case "scenarios":
                     return Scenarios.RunAll(seed, out _, only);
                 case "fingerprint":

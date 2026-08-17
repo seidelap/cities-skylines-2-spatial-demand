@@ -80,6 +80,11 @@ namespace CS2Econ.Core
             if (nOffer <= 0) return res;
 
             int nSeg = Segment.Count;
+            // The outside region's door premium — its access level priced by
+            // the same rule as every city door (AccessState.OutsidePremium).
+            // One value for the whole batch: the outside world is the same
+            // place for everyone looking from it.
+            double outsidePrem = acc.OutsidePremium(p);
             // Scratch for the per-cluster evaluation below; one allocation per
             // batch, reused across the batch's prospects.
             var budgetByCluster = new double[acc.C];
@@ -124,13 +129,20 @@ namespace CS2Econ.Core
                     budgetByCluster[c] = rentShare * acc.ProspectIncome(seg, jobLevel, c, p);
                     if (budgetByCluster[c] > maxBudget) maxBudget = budgetByCluster[c];
                 }
-                // The reservation is what NOT coming is worth, so it is priced
-                // at the OUTSIDE region's odds — the default is staying
-                // outside, and no statistic of this city can change what that
-                // is worth. This removes the last citywide read from the
-                // prospect's decision.
+                // The reservation is what NOT coming is worth, so both its
+                // legs are priced at the OUTSIDE region's own levels — income
+                // at the outside employment odds (#31), access at the outside
+                // region's access level (#42, the outsidePrem factor) — the
+                // default is staying outside, and no statistic of this city
+                // can change what the outside is worth. MeanAccess inside
+                // outsidePrem is not a citywide read of the kind that rule
+                // forbids: it is the shared normalizer every city door's
+                // premium carries too, so it is the unit the comparison is
+                // stated in — and it is exactly what lets a uniformly better
+                // city win the comparison at every door at once.
                 double reservation = reservationShare
-                                     * rentShare * acc.ProspectOutsideIncome(seg, jobLevel, p);
+                                     * rentShare * acc.ProspectOutsideIncome(seg, jobLevel, p)
+                                     * outsidePrem;
                 if (maxBudget <= 0) continue;
 
                 int bestSub = a.QuoteOutsider(s, maxBudget, budgetByCluster, densTol, reservation,

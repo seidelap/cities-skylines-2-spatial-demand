@@ -480,6 +480,35 @@ namespace CS2Econ.Core
         /// (0.08, vanilla's m_NeutralUnemployment): the region at its neutral
         /// unemployment rate.</summary>
         public double OutsideEmploymentOdds = 0.92;
+        /// <summary>The OUTSIDE region's access level, in the same units as
+        /// AccessState.AccessValue — the third demotion of a citywide read to a
+        /// property of the outside world, after the outside wage
+        /// (OutsideWageMult) and OutsideEmploymentOdds. The outside option is
+        /// ONE MORE DOOR priced by the same premium rule every city door uses
+        /// (AccessState.OutsidePremium), so a uniformly better city raises
+        /// MeanAccess, the outside door's relative premium falls, and the
+        /// come/stay margin responds — while within-city allocation is
+        /// untouched (the MeanAccess normalizer is shared by all city doors and
+        /// cancels across them).
+        ///
+        /// Value: settled fixtures measure MeanAccess in a narrow band —
+        /// 18.4–20.6 across the boombust (14×14/6000, t=300), canary
+        /// (10×10/3000, seeds 0/1/9/13/25, t=160) and 8×8/2000 fixtures
+        /// (item-#42 probe run, seed 20260806) — so 20 puts the outside region
+        /// at the access level of a settled reference city (relative premium
+        /// ≈ 1 on the reference fixtures, the middle of the clamp's responsive
+        /// band). Swept over the boombust fixture at {14, 17, 20, 23, 26}
+        /// (item-#42 sweep run; inflow-margin response by value recorded in
+        /// KNOWN-RED's boombust row); outside that fixture the value is
+        /// unswept.</summary>
+        public double OutsideAccessValue = 20.0;
+        /// <summary>MUTANT SWITCH, harness-only (see the uniform-pulse verify
+        /// check): restores the defect item #42 removed — the outside door's
+        /// access anchored on the city's OWN MeanAccess, so its relative
+        /// premium is a constant and a spatially uniform improvement is
+        /// structurally invisible to the come/stay margin. Exists so that
+        /// check stays falsifiable; never a shipping mode.</summary>
+        public bool MutantRelativeOutsideAccess = false;
         /// <summary>How long a household that would rather be elsewhere waits
         /// before actually going. Its own patience, scaled by its own moving
         /// cost at the use site.</summary>

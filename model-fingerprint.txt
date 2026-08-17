@@ -173,3 +173,34 @@ delta: labor.price =
 delta: labor.money =
 delta: labor.labor =
 sig: 6BB002DC536512CA
+
+=== stanza 7
+recorded: 2026-08-17T14:43:31Z
+reason: Item #42: the outside option becomes one more door priced at the OUTSIDE region's access (EconParams.OutsideAccessValue through AccessState.OutsidePremium, the same clamp/exponent/scale rule as city doors) at both come/stay margins - prospect reservations and resident outside options scale by ~1.27-1.49x on settled fixtures, so a uniform city improvement now moves the margin. Baseline shifts to a churn equilibrium (decline exits live at baseline), admissions/prices/money re-equilibrate on the default (auction) arm; labor lanes move because the labor fixture's housing world carries the same outside anchor. Posted lanes untouched (the posted path does not read the anchor).
+lane default.demography hash=C9D07CF6FBF72AA0 pop=1560 housed=1212 sheltered=0
+lane default.built hash=CDA6DA888115D5BF built=423 meanLevel=1.964539007 units=2332
+lane default.price hash=A4A7E7E4A203471A sumLR=19111.89944 sumLR.high=447.4728796 sumLR.low=597.7906368 meanRent=1.822211325
+lane default.money hash=35B2733ABB66C0BA treasury=90559.16407 hhMoney=533221.0646 firmMoney=141399.7032 escrow=139426.4518 phantoms=-828722.1099 drift=1.28580723E-07
+lane posted.demography hash=1B4B114FF4C821BB pop=1026 housed=807 sheltered=2
+lane posted.built hash=05352836E05C3F47 built=322 meanLevel=1.639751553 units=1930
+lane posted.price hash=56863008365C67D7 sumLR=17770.10645 sumLR.high=1670.55774 sumLR.low=1537.155564 meanRent=4.241551433
+lane posted.money hash=509F93700C936F81 treasury=233363.4208 hhMoney=310074.5584 firmMoney=77341.63689 escrow=151591.9786 phantoms=-696487.321 drift=2.252636477E-08
+lane labor.demography hash=3C87632FBB0BDDDA pop=1603 housed=1274 sheltered=0
+lane labor.built hash=20D6EA461A11F86F built=424 meanLevel=2.061320755 units=2412
+lane labor.price hash=BC1F130ABBA089A6 sumLR=26420.83597 sumLR.high=824.2888163 sumLR.low=1013.660638 meanRent=2.350863028
+lane labor.money hash=EC6317E864990647 treasury=374505.9204 hhMoney=344805.9753 firmMoney=363056.224 escrow=432380.1413 phantoms=-1438863.987 drift=2.677552402E-09
+lane labor.labor hash=4665AFC28C36773A empRate=1 outsideShare=0.571589628 unempShare=0 meanT.basic=6.523058484 meanT.skilled=10.49748278 meanT.educated=17.62394423 meanToverCap=0.3505284767 divCompRatio=0.3798685692
+delta: default.demography hash moved; pop 1592 -> 1560 (-2.01%); housed 1254 -> 1212 (-3.35%); sheltered =
+delta: default.built hash moved; built 431 -> 423 (-1.86%); meanLevel 1.9907193 -> 1.964539 (-1.32%); units =
+delta: default.price hash moved; sumLR 18401.322 -> 19111.899 (+3.86%); sumLR.high 560.48279 -> 447.47288 (-20.16%); sumLR.low 645.25974 -> 597.79064 (-7.36%); meanRent 1.960222 -> 1.8222113 (-7.04%)
+delta: default.money hash moved; treasury 99570.344 -> 90559.164 (-9.05%); hhMoney 507788.92 -> 533221.06 (+5.01%); firmMoney 119940.66 -> 141399.7 (+17.89%); escrow 132544.94 -> 139426.45 (+5.19%); phantoms -783960.58 -> -828722.11 (-5.71%); drift 6.5047061E-07 -> 1.2858072E-07 (-80.23%)
+delta: posted.demography =
+delta: posted.built =
+delta: posted.price =
+delta: posted.money =
+delta: labor.demography hash moved; pop 1624 -> 1603 (-1.29%); housed 1248 -> 1274 (+2.08%); sheltered 1 -> 0 (-100.00%)
+delta: labor.built hash moved; built =; meanLevel 2.0731132 -> 2.0613208 (-0.57%); units 2434 -> 2412 (-0.90%)
+delta: labor.price hash moved; sumLR 26706.751 -> 26420.836 (-1.07%); sumLR.high 1186.9387 -> 824.28882 (-30.55%); sumLR.low 1271.532 -> 1013.6606 (-20.28%); meanRent 2.753506 -> 2.350863 (-14.62%)
+delta: labor.money hash moved; treasury 438787.99 -> 374505.92 (-14.65%); hhMoney 357008.38 -> 344805.98 (-3.42%); firmMoney 352572.64 -> 363056.22 (+2.97%); escrow 468945.58 -> 432380.14 (-7.80%); phantoms -1541430.3 -> -1438864 (+6.65%); drift 5.3434633E-08 -> 2.6775524E-09 (-94.99%)
+delta: labor.labor hash moved; empRate =; outsideShare 0.53226728 -> 0.57158963 (+7.39%); unempShare =; meanT.basic 6.5648257 -> 6.5230585 (-0.64%); meanT.skilled 10.543394 -> 10.497483 (-0.44%); meanT.educated 17.715186 -> 17.623944 (-0.52%); meanToverCap 0.3620168 -> 0.35052848 (-3.17%); divCompRatio 0.31719291 -> 0.37986857 (+19.76%)
+sig: 94F7D006C3763090

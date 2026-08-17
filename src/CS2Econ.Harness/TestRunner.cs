@@ -457,6 +457,28 @@ namespace CS2Econ.Harness
             return Math.Min(failed.Count, 100);
         }
 
+        /// <summary>The uniform-pulse check alone across seeds — same
+        /// rationale as <see cref="Canary"/> (cheap fixture, many seeds), and
+        /// the instrument its bars were measured with: both arms' rises print
+        /// per seed, so re-measuring the bands after a change to the prospect
+        /// path or the outside anchor is one command.</summary>
+        public static int PulseSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"uniform-pulse sweep: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                UniformPulseMonotonicity(seed);
+                bool ok = Results.Count > before && Results[Results.Count - 1].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"pulse sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
         /// <summary>The assessment-tracks-price fixture alone (both its
         /// checks: the L1–L3 relation and the shadow-queue leg) — ~7 s
         /// against ~120 s for the full suite (measured, seed 1, check-debt
@@ -487,6 +509,7 @@ namespace CS2Econ.Harness
             Timed("occupancy-channel", () => OccupancyChannel(seed));
             Timed("auction-equilibrium", () => AuctionEquilibrium(seed));
             Timed("prospect-local-odds", () => ProspectLocalOddsCheck(seed));
+            Timed("uniform-pulse", () => UniformPulseMonotonicity(seed));
             Timed("exhaustive-shortlist", () => ExhaustiveShortlist(seed));
             Timed("assignment-oracle", () => {
                 var (lpOk, lpDetail) = AssignmentOracle.Run(seed);
@@ -1737,6 +1760,88 @@ namespace CS2Econ.Harness
                   $"{n} admits with signal (of {tel.Count}): mean priced/bench {meanRatio:F3} vs ≥{RatioBar:F2} bar, " +
                   $"selection tilt {meanTilt:+0.0000;-0.0000} vs ≥+{TiltBar:F4} bar " +
                   $"(cross-cluster w-wtd rate sd ≤{maxSd:F3} bounds what tilt could show on this fixture)");
+        }
+
+        /// <summary>A UNIFORMLY BETTER CITY MUST ADMIT MORE PROSPECTS. The
+        /// come/stay margin compares a specific city door against the outside
+        /// region's door, and the outside door is priced by the same premium
+        /// rule at the OUTSIDE region's access level (AccessState.
+        /// OutsidePremium). A spatially uniform improvement cancels out of
+        /// every within-city comparison — all city doors share the MeanAccess
+        /// normalizer — so the ONLY place it can land is the outside door's
+        /// relative premium, which is exactly the term that was structurally
+        /// missing when the boombust flip inventory measured inflow-margin
+        /// response +0 against decline-exit response +440.
+        ///
+        /// THE TWO BATCHES ARE PAIRED ON ONE WORLD. Run a fixture, offer one
+        /// prospect batch, then apply a uniform amenity delta and refresh the
+        /// access field WITHOUT re-solving the auction: every posted price,
+        /// entry price and within-city premium the second batch reads is
+        /// bit-identical to what the first batch read (the solve is untouched),
+        /// employment odds are the same realized rates re-served, and the
+        /// batch keys are functions of (tick, q) with the tick unchanged — so
+        /// the second batch is the same people quoting the same doors, and the
+        /// only live difference is the outside door's premium at the new
+        /// MeanAccess. Admitted-SHARE is compared rather than the count
+        /// because the first batch's admissions nudge prominence and hence the
+        /// second batch's offer count by a few heads.
+        ///
+        /// The declined floor keeps the check from passing vacuously: a
+        /// fixture where nobody declines has no live margin for the pulse to
+        /// move (that saturation was precisely the pre-#42 state, when the
+        /// Declined outcome was structurally dead).
+        ///
+        /// MUTANT ARM, wired in like the Ward check's: the same fixture with
+        /// p.MutantRelativeOutsideAccess restoring the removed defect (outside
+        /// door anchored on the city's own MeanAccess, relative premium ≡ 1).
+        /// The pulse must then FAIL to move the admitted share past the bar,
+        /// or the check is vacuous.</summary>
+        private static void UniformPulseMonotonicity(ulong seed)
+        {
+            (Prospects.Result r1, Prospects.Result r2, double prem0, double prem1) Arm(bool mutantArm)
+            {
+                var p = new EconParams { MutantRelativeOutsideAccess = mutantArm };
+                var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+                var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+                sim.Run(160);
+                var acc = sim.Engine.Access;
+                var a = sim.Engine.Auction!;
+                // Big probe batches, harness-side only: offer size is a
+                // region-side parameter, and inflating it AFTER the warmup
+                // changes nothing about the world being quoted — it just gives
+                // the paired comparison a sample the share bars can see.
+                p.RegionOfferRate = 250;
+                double prem0 = acc.OutsidePremium(p);
+                var r1 = Prospects.Step(sim.W, acc, a, p);
+                foreach (var c in sim.W.Clusters) c.Amenity += 1.5;
+                acc.Refresh(sim.W, sim.Engine.Costs, p, sim.Flags);
+                double prem1 = acc.OutsidePremium(p);
+                var r2 = Prospects.Step(sim.W, acc, a, p);
+                return (r1, r2, prem0, prem1);
+            }
+
+            var clean = Arm(false);
+            var mut = Arm(true);
+            double Share(Prospects.Result r) => r.Offered > 0 ? (double)r.Admitted / r.Offered : 0;
+            double riseClean = Share(clean.r2) - Share(clean.r1);
+            double riseMut = Share(mut.r2) - Share(mut.r1);
+
+            // Bars measured at the item-#42 bring-up sweep (`pulsesweep`,
+            // seeds 0-15, which includes the verify-pinned 9 and 13): clean
+            // rise +0.037 (seed 9) .. +0.070 (seed 5) of offered; mutant arm
+            // -0.006..+0.005 — batch-composition noise around zero, its
+            // outside premium pinned at clamp(1)×BidAccessScale exactly
+            // (prem1 == prem0 to the last bit). The bar sits 4x above the
+            // worst mutant reading and 1.8x under the worst clean one.
+            const double RiseBar = 0.02;
+            const int MinDeclined = 10;
+            Check("uniform pulse admits more: the outside door prices the pulse the city doors cancel — and the relative-outside mutant flips it red",
+                  clean.r1.Declined >= MinDeclined
+                  && riseClean >= RiseBar && riseMut < RiseBar,
+                  $"clean: admitted share {Share(clean.r1):F3} → {Share(clean.r2):F3} (+{riseClean:F3} vs ≥{RiseBar:F3} bar) "
+                  + $"on {clean.r1.Offered}/{clean.r2.Offered} offered, {clean.r1.Declined} declined at base (floor {MinDeclined}), "
+                  + $"outside premium {clean.prem0:F3} → {clean.prem1:F3}; "
+                  + $"mutant: {riseMut:+0.000;-0.000;0.000} at premium {mut.prem0:F3} → {mut.prem1:F3} (must stay under the bar)");
         }
 
         /// <summary>The housing assignment market has to actually BE a

@@ -240,8 +240,11 @@ namespace CS2Econ.Core
         private double[] _cap = Array.Empty<double>();   // ability to pay
         /// <summary>Each household's OWN outside option in money per tick — what
         /// it could get by living elsewhere in the region, drawn at birth as a
-        /// share of its own budget. This used to be one shared constant, so the
-        /// entire city's willingness to walk away moved as a block.</summary>
+        /// share of its own budget and scaled by the outside region's door
+        /// premium (AccessState.OutsidePremium — the outside region's access,
+        /// priced by the same rule as every city door). This used to be one
+        /// shared constant, so the entire city's willingness to walk away moved
+        /// as a block.</summary>
         private double[] _outside = Array.Empty<double>();
         private double[][] _premium = Array.Empty<double[]>(); // [segment][cluster]
         private readonly List<int> _queue = new List<int>();
@@ -460,6 +463,14 @@ namespace CS2Econ.Core
                 }
             }
 
+            // The outside region's door, priced by the same premium rule as
+            // every city door but at the OUTSIDE region's access level. This
+            // is what lets a resident's stay/leave margin see that the whole
+            // city got better or worse: uniform access moves cancel out of
+            // every within-city comparison (all _premium rows share the
+            // MeanAccess normalizer) and land entirely here.
+            double outsidePrem = acc.OutsidePremium(p);
+
             // Stride carries slack for the repair rounds, so a column added
             // later APPENDS rather than displacing something — and in
             // particular never displaces the household's own assignment, which
@@ -529,7 +540,7 @@ namespace CS2Econ.Core
                 // whatever a place is worth to you, you bid at most what your
                 // income can carry.
                 _cap[i] = p.MaxRentOfIncome * income;
-                _outside[i] = h.Reservation(budget);
+                _outside[i] = h.Reservation(budget) * outsidePrem;
                 _homeKC[i] = h.HomeParcel >= 0 && (uint)w.Parcels[h.HomeParcel].Cluster < (uint)C
                     ? Key(w.Parcels[h.HomeParcel].Use == ZoneKind.ResidentialHigh ? 1 : 0,
                           w.Parcels[h.HomeParcel].Cluster, C)
@@ -1039,12 +1050,27 @@ namespace CS2Econ.Core
                         // entry price. The old explicit filter is implied by that,
                         // exactly as in the resident path.
                         double sur = val - EntryPrice(sub);
-                        if (sur <= reservation) continue;
+                        // Attainability is surplus > 0 — a door this individual
+                        // could profitably hold at all — NOT surplus > its
+                        // reservation. Splitting at the reservation collapsed
+                        // "I could have had something and the outside beat it"
+                        // (a DECLINE) into "nothing was ever mine" (priced
+                        // out): the Declined branch in Prospects.Step was
+                        // structurally dead, and with it the whole inflow
+                        // margin the boombust scenario measures — every looker
+                        // counted as wanting the city whatever its reservation
+                        // said (measured at the flip commit: margin response
+                        // +0 under a uniform pulse).
+                        if (sur <= 0) continue;
                         anyAttainable = true;
                         if (sur > bestSurplus) { bestSurplus = sur; best = sub; }
                     }
                 }
             }
+            // The outside door wins: something here was attainable, none of it
+            // beat staying outside. Returning −1 with anyAttainable true is
+            // exactly the "declining a city" case the summary promises.
+            if (best >= 0 && bestSurplus <= reservation) best = -1;
             return best;
         }
 
