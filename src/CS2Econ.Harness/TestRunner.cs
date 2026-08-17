@@ -471,7 +471,10 @@ namespace CS2Econ.Harness
                 int before = Results.Count;
                 Console.WriteLine($"--- seed {seed}");
                 UniformPulseMonotonicity(seed);
-                bool ok = Results.Count > before && Results[Results.Count - 1].pass;
+                // The fixture emits one result per leg (prospect margin,
+                // resident margin); a seed passes only if every leg does.
+                bool ok = Results.Count > before;
+                for (int k = before; k < Results.Count; k++) ok &= Results[k].pass;
                 if (!ok) failed.Add(seed);
             }
             Console.WriteLine($"pulse sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass"
@@ -1795,12 +1798,37 @@ namespace CS2Econ.Harness
         /// p.MutantRelativeOutsideAccess restoring the removed defect (outside
         /// door anchored on the city's own MeanAccess, relative premium ≡ 1).
         /// The pulse must then FAIL to move the admitted share past the bar,
-        /// or the check is vacuous.</summary>
+        /// or the check is vacuous. The clean arm takes the switch at its
+        /// EconParams default rather than pinning it false, so a shipped flip
+        /// of that default runs the clean arm as the mutant and goes red here
+        /// — the switch default is itself under the check, not only under the
+        /// fingerprint gate.
+        ///
+        /// THE RESIDENT MARGIN gets its own leg on the same paired world
+        /// (item-#42 fix round: the prospect legs alone left `_outside[i] *=
+        /// outsidePrem` with no semantic check that could fail — severing it
+        /// flipped nothing but the fingerprint drift alarm, because every
+        /// equilibrium/IR check reads the same `_outside` the solve used and
+        /// is self-consistent under ANY scaling of it). The standing solve ran
+        /// on the pre-pulse field, so each live resident's `_outside` is its
+        /// walk-away value at the old outside premium; re-solving on the
+        /// refreshed field re-derives it through the production path
+        /// (BuildHouseholds) with every per-household input bit-identical —
+        /// no tick advances, and Reservation(budget) reads only birth draws
+        /// and job state (JobLevel, Earners, UnemployedTicks) that nothing
+        /// between the two solves touches — so the per-resident ratio
+        /// after/before isolates exactly the outside door's premium factor.
+        /// The leg asserts the geometric-mean ratio FALLS with the premium;
+        /// a severed resident leg pins it at 1. Ordered after both prospect
+        /// batches so those still read the un-resolved prices the prospect
+        /// pairing requires.</summary>
         private static void UniformPulseMonotonicity(ulong seed)
         {
-            (Prospects.Result r1, Prospects.Result r2, double prem0, double prem1) Arm(bool mutantArm)
+            (Prospects.Result r1, Prospects.Result r2, double prem0, double prem1,
+             double residRatio, int residN) Arm(bool mutantArm)
             {
-                var p = new EconParams { MutantRelativeOutsideAccess = mutantArm };
+                var p = new EconParams();
+                if (mutantArm) p.MutantRelativeOutsideAccess = true;
                 var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
                 var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
                 sim.Run(160);
@@ -1817,7 +1845,25 @@ namespace CS2Econ.Harness
                 acc.Refresh(sim.W, sim.Engine.Costs, p, sim.Flags);
                 double prem1 = acc.OutsidePremium(p);
                 var r2 = Prospects.Step(sim.W, acc, a, p);
-                return (r1, r2, prem0, prem1);
+                // Resident leg: pair each live resident's standing outside
+                // option against its re-derivation on the pulsed field.
+                // Households the batches admitted are beyond the standing
+                // solve's arrays (OutsideOf reads 0) and drop out of the pair.
+                int nh = sim.W.Households.Count;
+                var before = new double[nh];
+                for (int i = 0; i < nh; i++)
+                    before[i] = sim.W.Households[i].ExitedTick < 0 ? a.OutsideOf(i) : 0;
+                a.Solve(sim.W, acc, p);
+                double sumLog = 0; int residN = 0;
+                for (int i = 0; i < nh; i++)
+                {
+                    if (before[i] <= 0) continue;
+                    double after = a.OutsideOf(i);
+                    if (after <= 0) continue;
+                    sumLog += Math.Log(after / before[i]); residN++;
+                }
+                double residRatio = residN > 0 ? Math.Exp(sumLog / residN) : 1.0;
+                return (r1, r2, prem0, prem1, residRatio, residN);
             }
 
             var clean = Arm(false);
@@ -1831,8 +1877,13 @@ namespace CS2Econ.Harness
             // rise +0.037 (seed 9) .. +0.070 (seed 5) of offered; mutant arm
             // -0.006..+0.005 — batch-composition noise around zero, its
             // outside premium pinned at clamp(1)×BidAccessScale exactly
-            // (prem1 == prem0 to the last bit). The bar sits 4x above the
-            // worst mutant reading and 1.8x under the worst clean one.
+            // (prem1 == prem0 to the last bit). The refuter's wider sweep and
+            // the fix-round re-measurement (`pulsesweep --seeds 24`, seeds
+            // 0-23) put the mutant arm at -0.011..+0.009 and the clean rise at
+            // +0.037..+0.071 — so the bar's real margin is ~1.8x over the
+            // worst mutant reading and ~1.8x under the worst clean one, not
+            // the 4x the 16-seed band suggested. Do not tighten the bar
+            // without re-running the 24-seed sweep.
             const double RiseBar = 0.02;
             const int MinDeclined = 10;
             Check("uniform pulse admits more: the outside door prices the pulse the city doors cancel — and the relative-outside mutant flips it red",
@@ -1842,6 +1893,26 @@ namespace CS2Econ.Harness
                   + $"on {clean.r1.Offered}/{clean.r2.Offered} offered, {clean.r1.Declined} declined at base (floor {MinDeclined}), "
                   + $"outside premium {clean.prem0:F3} → {clean.prem1:F3}; "
                   + $"mutant: {riseMut:+0.000;-0.000;0.000} at premium {mut.prem0:F3} → {mut.prem1:F3} (must stay under the bar)");
+
+            // Resident-leg bars, measured at the item-#42 fix round
+            // (`pulsesweep --seeds 24`, seeds 0-23): clean geometric-mean
+            // fall 0.161..0.176, tracking the premium ratio (1 − prem1/prem0)
+            // to three digits on every seed; the mutant arm's premium is
+            // pinned so its fall reads 0.000 exactly on all 24 — no
+            // per-household input moves between the standing solve and the
+            // re-derivation. The bar sits ~4x under the worst clean fall. A
+            // severed resident leg (`_outside[i]` without the premium factor)
+            // reads the mutant's number on the clean arm and goes red.
+            const double ResidFallBar = 0.04;
+            const int MinResidents = 500;
+            double fallClean = 1 - clean.residRatio;
+            double fallMut = 1 - mut.residRatio;
+            Check("resident outside option re-prices with the outside door: re-deriving the solve's own _outside on the pulsed field moves every resident's walk-away value by the premium — and the relative-outside mutant pins it",
+                  clean.residN >= MinResidents
+                  && fallClean >= ResidFallBar && fallMut < ResidFallBar,
+                  $"clean: resident outside options fell {fallClean:F3} geo-mean over {clean.residN} residents "
+                  + $"(≥{ResidFallBar:F3} bar, floor {MinResidents}; premium ratio {clean.prem1 / clean.prem0:F3}); "
+                  + $"mutant: {fallMut:+0.000;-0.000;0.000} over {mut.residN} (must stay under the bar)");
         }
 
         /// <summary>The housing assignment market has to actually BE a
