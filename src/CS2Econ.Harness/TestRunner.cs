@@ -457,6 +457,31 @@ namespace CS2Econ.Harness
             return Math.Min(failed.Count, 100);
         }
 
+        /// <summary>The Weber check alone across seeds — same rationale as
+        /// <see cref="Canary"/> (auction-world Weber fragility moves seeds:
+        /// the red was on seed 0 at c0c584d and on seed 13 at the flip
+        /// commit). Two 300-tick sims per seed; this is the instrument for
+        /// any change to recipe choice, retooling, or the trade prices they
+        /// read.</summary>
+        public static int WeberSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"weber sweep: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                WeberRecipeChoice(seed);
+                bool ok = Results.Count > before && Results[Results.Count - 1].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"weber sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass "
+                + $"({sw.Elapsed.TotalSeconds:F0}s)"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
         /// <summary>The assessment-tracks-price fixture alone (both its
         /// checks: the L1–L3 relation and the shadow-queue leg) — ~7 s
         /// against ~120 s for the full suite (measured, seed 1, check-debt
