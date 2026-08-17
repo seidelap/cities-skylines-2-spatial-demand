@@ -7,9 +7,18 @@ namespace CS2Econ.Core
     /// internals (and the harness can stub it for unit tests).</summary>
     public interface IPriceContext
     {
-        double LocalPrice(Res r);
-        /// <summary>Delivered cost of one unit of r at cluster c (local price + haul,
-        /// or import parity — whichever is lower). Design §4.2 freight-in term.</summary>
+        /// <summary>Statistic of what buyers AT cluster c actually paid per
+        /// delivered unit of r (realized transactions, haul included), shrunk
+        /// toward the citywide realized prior where evidence is thin. There is
+        /// deliberately NO citywide price read on this interface: the price a
+        /// firm experiences is a property of its place (task #30).</summary>
+        double DeliveredStat(Res r, int cluster);
+        /// <summary>Statistic of what sellers AT cluster c actually netted per
+        /// unit of r, same shrinkage.</summary>
+        double OriginStat(Res r, int cluster);
+        /// <summary>Delivered cost of one unit of r at cluster c (a producing
+        /// cluster's realized price + haul, or import parity — whichever is
+        /// lower). Design §4.2 freight-in term.</summary>
         double DeliveredCost(Res r, int cluster);
         /// <summary>Best net price for exporting one marginal unit of r from cluster c
         /// (exit marginal minus routed haul). Design §4.2 exit-parity term.</summary>
@@ -380,7 +389,11 @@ namespace CS2Econ.Core
                     profitPerFilledSlot = double.NegativeInfinity;
                     foreach (var recipe in ResourceCatalog.Recipes)
                     {
-                        double outNet = Math.Max(prices.LocalPrice(recipe.Output),
+                        // A hypothetical entrant prices its output at realized
+                        // comparables AT THE PLACE (what sellers here actually
+                        // netted) or the exit alternative — the assessment-
+                        // comparables pattern on the goods side.
+                        double outNet = Math.Max(prices.OriginStat(recipe.Output, cluster),
                                                  prices.BestExportNet(recipe.Output, cluster));
                         double inputCost = 0;
                         foreach (var (res, qty) in recipe.Inputs)
@@ -410,7 +423,8 @@ namespace CS2Econ.Core
                         double s2 = suit != null ? suit[rr] : 0.5;
                         if (s2 <= 0.05) continue;
                         var res = (Res)rr;
-                        double outNet = Math.Max(prices.LocalPrice(res), prices.BestExportNet(res, cluster));
+                        double outNet = Math.Max(prices.OriginStat(res, cluster),
+                                                 prices.BestExportNet(res, cluster));
                         double perSlot = p.ExtractorOutputPerSlot * quality * s2 * outNet - p.WageBasic;
                         if (perSlot > profitPerFilledSlot)
                         { profitPerFilledSlot = perSlot; chosenOutput = res; }
