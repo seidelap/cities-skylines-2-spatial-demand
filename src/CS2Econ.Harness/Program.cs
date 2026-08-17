@@ -45,6 +45,19 @@ namespace CS2Econ.Harness
                         if (!set.Contains(s)) set.Add(s);
                     return TestRunner.Canary(set);
                 }
+                case "laborcanary":
+                {
+                    // The labor-equilibrium check alone, across the same seed
+                    // list as the housing canary.
+                    int n = 32;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    var set = new List<ulong>();
+                    for (ulong s = 0; s < (ulong)n; s++) set.Add(s);
+                    foreach (ulong s in new ulong[] { 138, 208, 271, 327, 549, 910, 6550 })
+                        if (!set.Contains(s)) set.Add(s);
+                    return TestRunner.LaborCanary(set);
+                }
                 case "prospectsweep":
                 {
                     int n = 9;

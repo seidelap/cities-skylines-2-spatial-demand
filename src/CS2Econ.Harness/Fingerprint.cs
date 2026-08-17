@@ -140,6 +140,13 @@ namespace CS2Econ.Harness
             var lanes = new List<Lane>();
             lanes.AddRange(Arm("default", new FeatureFlags(), gating: true));
             lanes.AddRange(Arm("auction", new FeatureFlags { HousingAuction = true }, gating: false));
+            // REPORT-ONLY like the auction arm, same promotion rule: the labor
+            // market is under active development and gating it now would train
+            // people to bump the baseline without reading it. The default arm
+            // still gates, so a labor change that leaks into the flag-off path
+            // reds a gate.
+            lanes.AddRange(Arm("labor", new FeatureFlags { HousingAuction = true, LaborAuction = true },
+                               gating: false));
             return lanes;
         }
 
@@ -275,6 +282,66 @@ namespace CS2Econ.Harness
                     ("phantoms", phantoms), ("drift", w.Ledger.Drift()),
                 },
             };
+
+            // --- labor market: the cleared assignment and its comps --------
+            // Only on the labor arm. Wage share of marginal product
+            // (meanToverCap) and the dividend/comp ratio are the split the
+            // total-comp design lets EMERGE, so they are the scalars a
+            // reviewer should read on a labor diff.
+            if (flags.LaborAuction)
+            {
+                var a = sim.Engine.Labor;
+                var lh = Fnv.New();
+                double demanded = 0, employed = 0, outsideE = 0, unempE = 0;
+                foreach (var h in w.Households)
+                {
+                    if (h.ExitedTick >= 0 || !a.ActiveWorker(h.Id)) continue;
+                    int e = a.EarnersOf(h.Id);
+                    // One bidder per EARNER: hash and count each earner's own
+                    // outcome (a household's earners can differ).
+                    for (int s = 0; s < e; s++)
+                    {
+                        int wk = a.WorkerOf(h.Id, s);
+                        lh.Mix((ulong)(a.Assignment[wk] + 2));
+                        lh.Mix((ulong)a.Why[wk] + 5);
+                        demanded += 1;
+                        if (a.Assignment[wk] >= 0) employed += 1;
+                        else if (a.Why[wk] == LaborAuction.Outcome.Outside) { employed += 1; outsideE += 1; }
+                        else unempE += 1;
+                    }
+                    lh.MixD(h.BaseComp);
+                }
+                var tSum = new double[3]; var tN = new double[3];
+                double usedT = 0, usedCap = 0, divPart = 0, compSum = 0;
+                for (int d = 0; d < a.D; d++)
+                {
+                    lh.MixD(a.Price[d]); lh.MixD(a.Cap[d]); lh.Mix((ulong)a.Used[d] + 1);
+                    double t = a.CompMember(d);
+                    int cls = a.DoorClass[d];
+                    tSum[cls] += t * a.Used[d]; tN[cls] += a.Used[d];
+                    usedT += t * a.Used[d]; usedCap += a.Cap[d] * a.Used[d];
+                    double divEma = w.Firms[a.DoorFirm[d]].DividendPerEarnerEma;
+                    divPart += Math.Min(Math.Max(0, t), divEma) * a.Used[d];
+                    compSum += Math.Max(0, t) * a.Used[d];
+                }
+                yield return new Lane
+                {
+                    Name = arm + ".labor",
+                    Hash = lh.Value,
+                    Gating = false,
+                    Scalars =
+                    {
+                        ("empRate", demanded > 0 ? employed / demanded : 0),
+                        ("outsideShare", demanded > 0 ? outsideE / demanded : 0),
+                        ("unempShare", demanded > 0 ? unempE / demanded : 0),
+                        ("meanT.basic", tN[0] > 0 ? tSum[0] / tN[0] : 0),
+                        ("meanT.skilled", tN[1] > 0 ? tSum[1] / tN[1] : 0),
+                        ("meanT.educated", tN[2] > 0 ? tSum[2] / tN[2] : 0),
+                        ("meanToverCap", usedCap > 0 ? usedT / usedCap : 0),
+                        ("divCompRatio", compSum > 0 ? divPart / compSum : 0),
+                    },
+                };
+            }
         }
 
         // ---- the baseline file -------------------------------------------
@@ -521,7 +588,7 @@ namespace CS2Econ.Harness
             }
             Console.WriteLine($"fingerprint: baseline {v.Path}, recorded {v.Recorded}, reason \"{v.Reason}\"");
             if (v.GatingMismatch.Count == 0 && v.ReportMismatch.Count == 0 && v.Missing.Count == 0)
-            { Console.WriteLine("fingerprint: all eight lanes match."); return 0; }
+            { Console.WriteLine("fingerprint: all lanes match."); return 0; }
             foreach (var m in v.GatingMismatch) Console.WriteLine($"  MISMATCH [gating] {m}");
             foreach (var m in v.ReportMismatch) Console.WriteLine($"  MISMATCH [report] {m}");
             foreach (var m in v.Missing) Console.WriteLine($"  MISSING  {m} (not in the baseline stanza)");

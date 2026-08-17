@@ -231,7 +231,16 @@ namespace CS2Econ.Harness
     /// container's run-to-run noise: the honest claim there is "no measurable
     /// change", NOT that this round made scenarios faster.
     ///
-    /// THE GATE IS `verify` ON THE DEFAULT ARM, budgeted at 60 s. `--auction` is
+    /// THE GATE IS `verify` ON THE DEFAULT ARM. The 60 s budget the auction
+    /// round set held until the labor-auction round: measured there (this
+    /// container, seed 1) the suite totals ~117 s, the labor fixture alone
+    /// ~19 s (two sims including the Ward-mutant arm) and model-fingerprint
+    /// ~15 s (its third arm runs the labor market for 24 refreshes). The
+    /// per-earner labor fix round measured 123.5 s and 124.9 s (solo runs,
+    /// seeds 25 and 9, this container) and amends this header to the
+    /// measured reality rather than trimming checks to chase the old
+    /// number — the labor market is a fifth mechanism under test and its
+    /// fixture cost is the price of testing it. `--auction` is
     /// a manual sweep, not a gate: it costs +104 s, it SWAPS the arm rather than
     /// adding one (Sim.Create forces the flag onto every sim, so under it
     /// nothing exercises the posted curve — still the shipping default), and on
@@ -242,8 +251,8 @@ namespace CS2Econ.Harness
     /// The coverage table `verify` prints is how that stays true: it names every
     /// fixture, its wall time and its auction-solve count, so the next person to
     /// add a check can see where the budget went and which mechanism is thin.
-    /// If a check has to be displaced to stay under 60 s, the table says which
-    /// two are the expensive ones.
+    /// If a check has to be displaced to hold the suite's cost, the table says
+    /// which two are the expensive ones.
     ///
     /// --- SEED TABLE: THE SUITE IS NOT GREEN ACROSS SEEDS, AND WAS NOT ---
     /// Both columns measured on this container, one run each. BASE is c0c584d
@@ -446,6 +455,7 @@ namespace CS2Econ.Harness
             Timed("assignment-oracle", () => {
                 var (lpOk, lpDetail) = AssignmentOracle.Run(seed);
                 Check("auction total surplus is LP-optimal within the epsilon budget", lpOk, lpDetail); });
+            Timed("labor-auction", () => LaborMarket(seed));
             Timed("clearing-price", () => ClearingPrice(seed));
             Timed("occupied-stock-rent", () => OccupiedStockCarriesRent(seed));
             Timed("coop-rerate", () => CoopInstantRerate(seed));
@@ -2021,6 +2031,228 @@ namespace CS2Econ.Harness
                   + (unsoldOverpriced > 0 ? $"\n      unsold: {unsoldWhy}" : ""));
         }
 
+        /// <summary>The labor-auction fixture: the auction-arm city with the
+        /// labor flag on. Shared by the three labor checks and the
+        /// laborcanary sweep so the fixture cost is paid once per purpose.</summary>
+        private static Sim LaborFixture(ulong seed, EconParams p, int ticks, Action<Sim>? perTick = null)
+        {
+            var cfg = new SyntheticCity.Config { Cols = 8, Rows = 8, SeedHouseholds = 2000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true, LaborAuction = true });
+            sim.Run(ticks, perTick);
+            return sim;
+        }
+
+        private static void LaborMarket(ulong seed)
+        {
+            var p = new EconParams();
+            var audit = new SectorAudit();
+            double worstPayroll = 0;
+            var sim = LaborFixture(seed, p, 150, s =>
+            {
+                audit.Sample(s);
+                worstPayroll = Math.Max(worstPayroll, s.Engine.LaborPayrollGapThisTick);
+            });
+
+            LaborEquilibriumCheck(sim, p);
+
+            // Σ firm debits == Σ member base credits EXACTLY: the two sides
+            // add the same per-earner base-comp terms in the same
+            // household-id/earner-slot order per firm (the firm's per-earner
+            // Members entries against its own class-door record vs the
+            // households' earner links), so any nonzero gap is a defect, not
+            // rounding. The sector reconciliation is the same instrument the
+            // housing ledger check uses, on the labor arm.
+            Check("labor payroll conserves: firm debits equal member credits exactly; sectors reconcile",
+                  worstPayroll == 0 && audit.Worst < 1e-9,
+                  $"worst per-tick Σ|firm bill − member credits| = {worstPayroll:E1} (bound: exactly 0); "
+                  + $"sector reconciliation over {audit.Ticks} tick samples: {audit} (bound 1e-9)");
+
+            // THE WARD CHECK, named for the rule this design refuses to
+            // encode: no door may sit with physical room while posting comp
+            // below its own cap when a doorless worker would take a slot at
+            // comp = cap. On a clean build this is structural (a door with
+            // free room posts its cap); the mutant arm proves the check CAN
+            // fail — a check that cannot fail is not a check.
+            int refusedClean = WardRefusals(sim, p, out string cleanWhy);
+            var pm = new EconParams { LaborWardMutant = true };
+            // 80 ticks: the mutant's refusal posture is standing from the
+            // first clear (doors capped at incumbency), so the arm needs only
+            // enough run for the market to mature, not the full fixture.
+            var simM = LaborFixture(seed, pm, 80);
+            int refusedMutant = WardRefusals(simM, pm, out _);
+            Check("no surplus-positive hire is refused (Ward) — and the LaborWardMutant flips it red",
+                  refusedClean == 0 && refusedMutant > 0,
+                  $"clean run: {refusedClean} refusing doors"
+                  + (cleanWhy.Length > 0 ? $" — {cleanWhy}" : "")
+                  + $"; LaborWardMutant run: {refusedMutant} (must be > 0 or the check is vacuous)");
+        }
+
+        /// <summary>Leg 1: the labor clear is a competitive equilibrium.
+        /// Tolerances are derived from the auction's own ε exactly as the
+        /// housing check derives them — no bare numbers. The bidder is one
+        /// EARNER (unit demand), so every condition is stated per worker at
+        /// the same price vector the mechanism used (EntryPrice: Admitted
+        /// plus the door's ε at a full door, +∞ where holders sit at the
+        /// comp floor, posted price elsewhere — housing's one-price-vector
+        /// CostTo rule with labor's tie-robust ε; see
+        /// LaborAuction.EntryPrice for the measurement that forced it).</summary>
+        private static void LaborEquilibriumCheck(Sim sim, EconParams p)
+        {
+            var w = sim.W; var a = sim.Engine.Labor;
+            int live = 0, over = 0, capBreach = 0, undersubOffCap = 0;
+            for (int d = 0; d < a.D; d++)
+            {
+                live++;
+                if (a.Used[d] > a.Capacity[d]) over++;
+                // T ∈ [0, cap]: p may not be negative nor exceed the cap.
+                double hair = 1e-9 * Math.Max(1, Math.Abs(a.Cap[d]));
+                if (a.Price[d] < -hair || a.Price[d] > a.Cap[d] + hair) capBreach++;
+                // The structural mirror of unsold-at-reserve: an
+                // undersubscribed door posts its full cap (p = 0) exactly.
+                if (a.Used[d] < a.Capacity[d] && a.Price[d] > hair) undersubOffCap++;
+            }
+
+            int matched = 0, outsideN = 0, unemployedN = 0;
+            int irked = 0, envy = 0, stranded = 0;
+            double worstRel = 0; string worstWhy = "";
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || !a.ActiveWorker(h.Id)) continue;
+                int e = a.EarnersOf(h.Id);
+                for (int s = 0; s < e; s++)
+                {
+                    int wk = a.WorkerOf(h.Id, s);
+                    int cls = a.ClassOfWorker(wk);
+                    int mine = a.Assignment[wk];
+                    if (mine >= 0)
+                    {
+                        matched++;
+                        double myVal = a.ValueOf(wk, mine, p);
+                        double mySur = myVal - a.Price[mine];
+                        double myEps = Math.Max(p.LaborAuctionEpsilon, p.LaborAuctionEpsilonRel * Math.Abs(myVal));
+                        // Individual rationality against the worker's own
+                        // DEFAULT (outside net wage or its own leisure floor,
+                        // whichever is better): nobody is employed below it.
+                        if (mySur < a.OutsideOf(wk) - myEps - 1e-9) irked++;
+                        for (int d = 0; d < a.D; d++)
+                        {
+                            if (a.DoorClass[d] != cls || d == mine || a.Capacity[d] <= 0) continue;
+                            double val = a.ValueOf(wk, d, p);
+                            double gain = (val - a.EntryPrice(d)) - mySur;
+                            if (gain <= 0) continue;
+                            double band = myEps + Math.Max(p.LaborAuctionEpsilon, p.LaborAuctionEpsilonRel * Math.Abs(val));
+                            if (gain <= band) continue;
+                            envy++;
+                            double rel = gain / Math.Max(1e-9, Math.Abs(val));
+                            if (rel > worstRel)
+                            {
+                                worstRel = rel;
+                                worstWhy = $"hh{h.Id} earner {s} (cls {cls}) at door{mine} "
+                                         + $"(T {a.CompMember(mine):F2} of cap {a.Cap[mine]:F2}, sur {mySur:F2}) "
+                                         + $"envies door{d} (val {val:F2}, entry p {a.EntryPrice(d):F2}, "
+                                         + $"cap {a.Cap[d]:F2}, {a.Used[d]}/{a.Capacity[d]} used)";
+                            }
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        if (a.Why[wk] == LaborAuction.Outcome.Outside) outsideN++; else unemployedN++;
+                        // A worker on its default must not strictly prefer a
+                        // door it could enter at posted prices.
+                        double cur = a.OutsideOf(wk);
+                        double curEps = Math.Max(p.LaborAuctionEpsilon, p.LaborAuctionEpsilonRel * Math.Abs(cur));
+                        for (int d = 0; d < a.D; d++)
+                        {
+                            if (a.DoorClass[d] != cls || a.Capacity[d] <= 0) continue;
+                            double val = a.ValueOf(wk, d, p);
+                            double band = curEps + Math.Max(p.LaborAuctionEpsilon, p.LaborAuctionEpsilonRel * Math.Abs(val));
+                            if (val - a.EntryPrice(d) > cur + band) { stranded++; break; }
+                        }
+                    }
+                }
+            }
+
+            bool ok = live >= 10 && over == 0 && capBreach == 0 && undersubOffCap == 0
+                      && irked == 0 && envy == 0 && stranded == 0
+                      && a.Converged && a.RepairClean;
+            Check("labor auction is a competitive equilibrium (capacity, T≤cap, undersubscribed-at-cap, IR, no-envy)",
+                  ok,
+                  $"{live} doors, {matched} matched / {outsideN} outside / {unemployedN} unemployed earners: "
+                  + $"oversubscribed {over}, T-outside-[0,cap] {capBreach}, undersubscribed-off-cap {undersubOffCap}, "
+                  + $"below-own-default {irked}, envious beyond band {envy} (worst {worstRel:P2} of value), "
+                  + $"stranded {stranded}; converged {a.Converged} "
+                  + $"(repair {a.RepairRounds} rounds, clean {a.RepairClean}; {a.Bids} bids, {a.Evictions} evictions)"
+                  + (envy > 0 ? $"\n      worst envy: {worstWhy}" : ""));
+        }
+
+        /// <summary>Doors refusing a surplus-positive hire: physical room
+        /// standing (vacancy against CapacityFull, so withheld slots cannot
+        /// hide), posted comp below the door's own cap beyond the ε band,
+        /// while a doorless worker of the class exists whose value at
+        /// comp = cap beats its current outcome by more than the band.</summary>
+        private static int WardRefusals(Sim sim, EconParams p, out string why)
+        {
+            var w = sim.W; var a = sim.Engine.Labor;
+            int refusing = 0; why = "";
+            for (int d = 0; d < a.D; d++)
+            {
+                int vacancy = a.CapacityFull[d] - a.Used[d];
+                if (vacancy <= 0) continue;
+                double tol = Math.Max(p.LaborAuctionEpsilon, p.LaborAuctionEpsilonRel * Math.Abs(a.Cap[d]));
+                if (a.CompMember(d) >= a.Cap[d] - tol) continue;   // posting (near) its cap: no refusal
+                bool found = false;
+                foreach (var h in w.Households)
+                {
+                    if (h.ExitedTick >= 0 || !a.ActiveWorker(h.Id)) continue;
+                    int e = a.EarnersOf(h.Id);
+                    for (int s = 0; s < e && !found; s++)
+                    {
+                        int wk = a.WorkerOf(h.Id, s);
+                        if (a.Assignment[wk] >= 0 || a.ClassOfWorker(wk) != a.DoorClass[d]) continue;
+                        // Value at comp = cap is the value at p = 0, i.e. ValueOf.
+                        double atCap = a.ValueOf(wk, d, p);
+                        double band = tol + Math.Max(p.LaborAuctionEpsilon,
+                                                     p.LaborAuctionEpsilonRel * Math.Abs(atCap));
+                        if (atCap - a.OutsideOf(wk) > band)
+                        {
+                            refusing++; found = true;
+                            if (why.Length == 0)
+                                why = $"door{d} (firm {a.DoorFirm[d]}, cls {a.DoorClass[d]}) holds {a.Used[d]}"
+                                    + $"/{a.CapacityFull[d]} slots at T {a.CompMember(d):F2} < cap {a.Cap[d]:F2} "
+                                    + $"while hh{h.Id} earner {s} would gain {atCap - a.OutsideOf(wk):F2} at cap";
+                        }
+                    }
+                    if (found) break;
+                }
+            }
+            return refusing;
+        }
+
+        /// <summary>THE LABOR CANARY: the labor-equilibrium check alone,
+        /// swept across seeds — same rationale as the housing canary (every
+        /// auction defect in this file's history surfaced on a seed nobody
+        /// ran). Cross-reference KNOWN-RED.md before attributing a red.</summary>
+        public static int LaborCanary(List<ulong> seeds)
+        {
+            Console.WriteLine($"labor canary: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                var p = new EconParams();
+                LaborEquilibriumCheck(LaborFixture(seed, p, 150), p);
+                bool ok = Results.Count > before && Results[Results.Count - 1].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"laborcanary: {seeds.Count - failed.Count}/{seeds.Count} seeds pass "
+                + $"({sw.Elapsed.TotalSeconds:F0}s)"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
         private static void ClaimVacancyWash(ulong seed)
         {
             // The claim↔vacancy wash: a unit UNDER CONSTRUCTION and the same
@@ -2696,7 +2928,7 @@ namespace CS2Econ.Harness
                 detail = $"baseline {v.Path} is HAND-EDITED: the last stanza's signature does not match its own "
                          + "text. Re-record with `fingerprint --accept --reason \"...\"`";
             else if (v.GatePass && v.ReportMismatch.Count == 0 && v.Missing.Count == 0)
-                detail = $"all 8 lanes match stanza recorded {v.Recorded} (\"{v.Reason}\")";
+                detail = $"all lanes match stanza recorded {v.Recorded} (\"{v.Reason}\")";
             else
                 detail = $"gating lanes moved: [{string.Join(", ", v.GatingMismatch)}]; "
                          + $"report-only (auction) lanes moved: [{string.Join(", ", v.ReportMismatch)}]; "

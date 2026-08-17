@@ -111,6 +111,16 @@ namespace CS2Econ.Core
             // failed ARRIVALS (see churnprobe), not spell-bankrupted tenants.
             // The i.i.d. epoch draw tracks the current rate immediately, which
             // is what a young or recovering labor market needs.
+            if (Flags.LaborAuction)
+            {
+                // Labor-auction path: the participation decision stays exactly
+                // as drawn (who is in the labor force this epoch); employment
+                // AMONG participants comes from the auction.
+                MaterializeParticipation();
+                SolveLaborMarket();
+            }
+            else
+            {
             Span<double> lw = stackalloc double[5];
             Span<double> lwage = stackalloc double[5];
             foreach (var h in W.Households)
@@ -153,6 +163,7 @@ namespace CS2Econ.Core
             }
 
             AssignWorkplaces();
+            }
             if (Flags.StoreLevelSpending) ChooseShops();
             if (Flags.HousingAuction) SolveHousingMarket();
 
@@ -222,6 +233,225 @@ namespace CS2Econ.Core
         /// game in-mod (Game.Citizens.Worker.m_Workplace), which the adapter
         /// was already reading and throwing away.</summary>
         public readonly HousingAuction Auction = new HousingAuction();
+
+        /// <summary>The labor assignment market (Flags.LaborAuction). See
+        /// LaborAuction for the mechanism; this class only feeds it the
+        /// participation draw and applies its outcome.</summary>
+        public readonly LaborAuction Labor = new LaborAuction();
+        /// <summary>Per household: participating adults this refresh (labor-
+        /// auction path). 0 both for a drawn-out participant and for a
+        /// household the participation guard excluded; _inMarket separates
+        /// them because only the former accrues an unemployment spell.</summary>
+        private byte[] _participants = Array.Empty<byte>();
+        private bool[] _inMarket = Array.Empty<bool>();
+        /// <summary>Adult slots per household the per-earner state is sized
+        /// for — the segment table's maximum, derived, never assumed.</summary>
+        private readonly int _maxAdults = LaborAuction.MaxAdults();
+        /// <summary>Per EARNER [hid × _maxAdults + slot]: the firm employing
+        /// that earner this window, −1 for outside/none — a household's
+        /// earners may work at different firms. Written only by the labor
+        /// clear; the income pass credits by THIS link while firms bill by
+        /// their Members list, so a firm that entered a dead firm's parcel
+        /// mid-window cannot be credited for members it never admitted.
+        /// Also the auction's prior-employer state: the stay bonus attaches
+        /// to the EARNER's own current firm.</summary>
+        private int[] _earnerFirm = Array.Empty<int>();
+        /// <summary>Per EARNER: base pay per tick (members: the door's base
+        /// comp; outside workers: the own outside net wage; else 0).</summary>
+        private double[] _earnerBase = Array.Empty<double>();
+        /// <summary>Per (firm × 3 + class): the base comp the labor clear set
+        /// at that firm's class door this window — what the firm side of the
+        /// payroll pass bills per member ENTRY, independently of the
+        /// households' earner links.</summary>
+        private double[] _firmClassBase = Array.Empty<double>();
+        /// <summary>Per tick on the labor path: Σ per-firm |own-members bill −
+        /// the credits its members booked| — two independently maintained
+        /// records (the firm's Members list vs the households' workplace
+        /// links) that must agree exactly. Read by the payroll check.</summary>
+        public double LaborPayrollGapThisTick;
+        public double LaborFirmDebitsThisTick, LaborOutsideCreditsThisTick;
+
+        /// <summary>The participation half of the flag-off employment draw,
+        /// alone: the same per-adult epoch hash compared against the
+        /// segment's participation instead of participation × employment
+        /// rate, so an adult employed under the flag-off draw is always a
+        /// participant here — the labor-force decision is unchanged, only
+        /// employment among participants moves to the market. The career
+        /// (JobLevel) draw is identical to the flag-off path.</summary>
+        private void MaterializeParticipation()
+        {
+            int nh = W.Households.Count;
+            if (_participants.Length < nh)
+            {
+                int oldLen = _earnerFirm.Length;
+                Array.Resize(ref _participants, nh);
+                Array.Resize(ref _inMarket, nh);
+                Array.Resize(ref _earnerFirm, nh * _maxAdults);
+                Array.Resize(ref _earnerBase, nh * _maxAdults);
+                // −1 = no employer; a zero default would read as firm 0.
+                for (int i = oldLen; i < _earnerFirm.Length; i++) _earnerFirm[i] = -1;
+            }
+            Span<double> lw = stackalloc double[5];
+            Span<double> lwage = stackalloc double[5];
+            foreach (var h in W.Households)
+            {
+                if (h.ExitedTick >= 0) continue;
+                var seg = Segment.All[h.Segment];
+                if (h.HomeParcel < 0 || seg.Participation <= 0 || seg.Adults <= 0)
+                {
+                    h.Employed = false; h.Earners = 0; h.WorkplaceParcel = -1;
+                    h.OutsideWorker = false; h.BaseComp = 0;
+                    _participants[h.Id] = 0; _inMarket[h.Id] = false;
+                    for (int s = 0; s < _maxAdults; s++)
+                    { _earnerFirm[h.Id * _maxAdults + s] = -1; _earnerBase[h.Id * _maxAdults + s] = 0; }
+                    continue;
+                }
+                long offset = (long)(SplitMix64.Hash((ulong)h.Id * 13UL) % 60UL);
+                ulong epoch = (ulong)((W.Tick + offset) / 60);
+                int part = 0;
+                for (int a = 0; a < seg.Adults; a++)
+                    if (SplitMix64.Hash01((ulong)h.Id * 7919UL + epoch * 104729UL + (ulong)a * 31UL + 3) < seg.Participation)
+                        part++;
+                _participants[h.Id] = (byte)part; _inMarket[h.Id] = true;
+                int levels = Income.JobLevels(seg, P, lw, lwage);
+                double u = SplitMix64.Hash01((ulong)h.Id * 6151UL + 17UL);
+                int lvl = levels - 1;
+                double cumL = 0;
+                for (int l = levels - 1; l >= 0; l--)
+                {
+                    cumL += lw[l];
+                    if (u <= cumL) { lvl = l; break; }
+                }
+                h.JobLevel = (byte)lvl;
+            }
+        }
+
+        /// <summary>Clear the labor market and make the outcome true on the
+        /// ground: membership, workplace links, earner counts, base comp —
+        /// and store the realized rates Access serves next refresh in place
+        /// of the Sinkhorn model (an observation, not a model; one-refresh
+        /// lag).</summary>
+        private void SolveLaborMarket()
+        {
+            Labor.Solve(W, Access, Costs, Trade, P, _participants, _earnerFirm, _maxAdults);
+            foreach (var f in W.Firms) f.Members.Clear();
+
+            // The base comp each firm's class door cleared at, snapshotted
+            // per (firm, class): the firm side of the payroll pass bills per
+            // member ENTRY from this record while households credit by their
+            // earner links — two records that must agree exactly.
+            if (_firmClassBase.Length < W.Firms.Count * 3)
+                Array.Resize(ref _firmClassBase, W.Firms.Count * 3);
+            Array.Clear(_firmClassBase, 0, _firmClassBase.Length);
+            for (int d = 0; d < Labor.D; d++)
+            {
+                var f = W.Firms[Labor.DoorFirm[d]];
+                _firmClassBase[f.Id * 3 + Labor.DoorClass[d]]
+                    = Math.Max(0, Labor.CompMember(d) - f.DividendPerEarnerEma);
+            }
+
+            int C = Access.C;
+            var supply = new double[3][]; var employed = new double[3][];
+            for (int cl = 0; cl < 3; cl++) { supply[cl] = new double[C]; employed[cl] = new double[C]; }
+
+            foreach (var h in W.Households)
+            {
+                if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)_inMarket.Length || !_inMarket[h.Id]) continue;
+                int e = _participants[h.Id];
+                int at = h.Id * _maxAdults;
+                if (e == 0)
+                {
+                    // Out of the labor force this epoch: the same outcome the
+                    // flag-off draw gives an adult whose hash misses, spell
+                    // clock included.
+                    h.Earners = 0; h.Employed = false; h.WorkplaceParcel = -1;
+                    h.OutsideWorker = false; h.BaseComp = 0;
+                    for (int s = 0; s < _maxAdults; s++) { _earnerFirm[at + s] = -1; _earnerBase[at + s] = 0; }
+                    h.UnemployedTicks += P.RefreshInterval;
+                    continue;
+                }
+                int cls = (int)Segment.All[h.Segment].Labor;
+                int home = W.Parcels[h.HomeParcel].Cluster;
+                supply[cls][home] += e;
+
+                // PER EARNER: each participating adult carries its own
+                // outcome; a household's earners may work at different firms.
+                // The auction's own earner count guards the worker lookup —
+                // a household the solve excluded (defensive guards) has no
+                // workers to read and lands on the unemployed path below.
+                int ae = Labor.EarnersOf(h.Id);
+                int matchedE = 0, outsideE = 0, primaryFirm = -1;
+                double baseSum = 0;
+                for (int s = 0; s < _maxAdults; s++)
+                {
+                    _earnerFirm[at + s] = -1; _earnerBase[at + s] = 0;
+                    if (s >= e || s >= ae) continue;
+                    int wk = Labor.WorkerOf(h.Id, s);
+                    int d = Labor.Assignment[wk];
+                    if (d >= 0)
+                    {
+                        var f = W.Firms[Labor.DoorFirm[d]];
+                        _earnerFirm[at + s] = f.Id;
+                        // Total comp T is what the market cleared; the base/
+                        // dividend split is bookkeeping against the firm's
+                        // own dividend forecast.
+                        _earnerBase[at + s] = _firmClassBase[f.Id * 3 + cls];
+                        f.Members.Add(h.Id);        // one entry PER EARNER
+                        matchedE++;
+                        if (primaryFirm < 0) primaryFirm = f.Id;
+                    }
+                    else if (Labor.Why[wk] == LaborAuction.Outcome.Outside)
+                    {
+                        _earnerBase[at + s] = Math.Max(0, Labor.OutsideNetOf(wk));
+                        outsideE++;
+                    }
+                    // else: voluntarily unemployed earner — its own
+                    // reservation beat every door and the border.
+                    baseSum += _earnerBase[at + s];
+                }
+
+                int working = matchedE + outsideE;
+                h.Earners = (byte)working;
+                h.Employed = working > 0;
+                // The household flag means "works outside ONLY": a household
+                // with any in-region member has a real workplace.
+                h.OutsideWorker = matchedE == 0 && outsideE > 0;
+                // PRIMARY workplace = the first matched earner's firm — an
+                // approximation kept only for the shopping-origin and commute
+                // consumers of WorkplaceParcel; payroll runs per earner.
+                h.WorkplaceParcel = primaryFirm >= 0 ? W.Firms[primaryFirm].Parcel : -1;
+                h.BaseComp = baseSum;
+                if (working > 0) { h.UnemployedTicks = 0; employed[cls][home] += working; }
+                else h.UnemployedTicks += P.RefreshInterval;
+            }
+
+            // Realized rates, per class: employment at the home cluster
+            // (outside work counts — those earners are employed), fill at the
+            // job cluster against PHYSICAL slots, so a mechanism that
+            // withheld slots would read as low fill rather than hiding them.
+            var empRate = new double[3][]; var fillRate = new double[3][]; var resid = new double[3][];
+            var fillNum = new double[3][]; var fillDen = new double[3][];
+            for (int cl = 0; cl < 3; cl++)
+            {
+                empRate[cl] = new double[C]; fillRate[cl] = new double[C]; resid[cl] = new double[C];
+                fillNum[cl] = new double[C]; fillDen[cl] = new double[C];
+            }
+            for (int d = 0; d < Labor.D; d++)
+            {
+                fillNum[Labor.DoorClass[d]][Labor.DoorCluster[d]] += Labor.Used[d];
+                fillDen[Labor.DoorClass[d]][Labor.DoorCluster[d]] += Labor.CapacityFull[d];
+            }
+            for (int cl = 0; cl < 3; cl++)
+                for (int c = 0; c < C; c++)
+                {
+                    empRate[cl][c] = supply[cl][c] > 1e-9
+                        ? MathUtil.Clamp(employed[cl][c] / supply[cl][c], 0, 1) : 0;
+                    fillRate[cl][c] = fillDen[cl][c] > 1e-9
+                        ? MathUtil.Clamp(fillNum[cl][c] / fillDen[cl][c], 0, 1) : 0;
+                    resid[cl][c] = Math.Max(0, fillDen[cl][c] - fillNum[cl][c]);
+                }
+            Access.ObserveLaborOutcome(empRate, fillRate, resid);
+        }
 
         /// <summary>Clear the housing market as one assignment problem, then
         /// make the assignment true on the ground.
@@ -504,6 +734,7 @@ namespace CS2Econ.Core
 
         private void IncomeAndTaxes()
         {
+            if (Flags.LaborAuction) { LaborIncomeAndTaxes(); return; }
             // Households receive wages/transfers; firms are charged their wage
             // bill pro-rata to filled slots (exact conservation on the household side).
             var wageByClass = new double[3];
@@ -570,6 +801,98 @@ namespace CS2Econ.Core
             }
         }
 
+        /// <summary>The labor-auction income pass, PER EARNER: each earner is
+        /// credited its own door's base comp (outside earners: the own
+        /// outside net wage, paid by Account.OutsideWorld — the ledger leg
+        /// the stale-rates fallback already used). Each firm is debited
+        /// EXACTLY its own members' base comp, one Members entry per earner:
+        /// the citywide pro-rata pooling — the illegitimate global standing
+        /// in for firm-local payroll — dies on this path. Income tax applies
+        /// to comp as to wages. Benefits and transfers are the flag-off
+        /// formulas verbatim.
+        ///
+        /// Two independently maintained records meet here on purpose: the
+        /// household side credits by its earner links (_earnerFirm), the
+        /// firm side bills by its membership list against _firmClassBase,
+        /// and LaborPayrollGapThisTick carries their disagreement. Both
+        /// sides route by the SAME liveness predicate (!Dead && Parcel ≥ 0)
+        /// and add the same terms in the same household-id order per firm,
+        /// so a correct build reads exactly zero — a split predicate would
+        /// let an alive parcel-less firm be credited but never billed, with
+        /// the gap instrument blind to it because the gap is summed inside
+        /// the firm loop.</summary>
+        private void LaborIncomeAndTaxes()
+        {
+            int nf = W.Firms.Count;
+            var creditByFirm = new double[nf];
+            double outsideCredits = 0;
+            foreach (var h in W.Households)
+            {
+                if (h.ExitedTick >= 0) continue;
+                var seg = Segment.All[h.Segment];
+                double wage = 0;
+                if (h.Earners > 0)
+                {
+                    int at = h.Id * _maxAdults;
+                    for (int s = 0; s < _maxAdults; s++)
+                    {
+                        double b = _earnerBase[at + s];
+                        if (b <= 0) continue;
+                        wage += b;
+                        int of = _earnerFirm[at + s];
+                        if (of >= 0 && of < nf && !W.Firms[of].Dead && W.Firms[of].Parcel >= 0)
+                            creditByFirm[of] += b;
+                        // Outside earners, and members whose firm died (or
+                        // lost its parcel) between refreshes, are paid across
+                        // the border.
+                        else outsideCredits += b;
+                    }
+                }
+                double transfer = seg.Transfer
+                    + (h.UnemployedTicks <= P.UnemploymentAllowanceTicks
+                        ? Math.Max(0, seg.Adults - h.Earners) * P.UnemploymentBenefit
+                          * MathUtil.Clamp(seg.Participation, 0, 1) : 0);
+                if (wage > 0)
+                {
+                    double tax = wage * P.IncomeTax(seg.Labor);
+                    h.Money += wage - tax;
+                    IncomeTaxThisTick += tax;
+                }
+                if (transfer > 0)
+                {
+                    h.Money += transfer;
+                    W.Ledger.Transfer(Account.NationalCounterparty, Account.Households, transfer);
+                }
+            }
+            W.Ledger.Transfer(Account.Households, Account.Treasury, IncomeTaxThisTick);
+
+            double firmDebits = 0, firmCredits = 0, gap = 0;
+            foreach (var f in W.Firms)
+            {
+                if (f.Dead || f.Parcel < 0) continue;   // the SAME predicate the credit routing used
+                FillFirm(f);
+                double bill = 0;
+                foreach (int hid in f.Members)
+                {
+                    var hh = W.Households[hid];
+                    if (hh.ExitedTick >= 0 || hh.Earners == 0) continue;
+                    // One entry per earner; every earner at this firm is at
+                    // its (firm, class) door, so the entry's base comp is the
+                    // door's — the firm's own record, not the household's.
+                    bill += _firmClassBase[f.Id * 3 + (int)Segment.All[hh.Segment].Labor];
+                }
+                f.Money -= bill;
+                firmDebits += bill;
+                firmCredits += creditByFirm[f.Id];
+                gap += Math.Abs(bill - creditByFirm[f.Id]);
+            }
+            LaborPayrollGapThisTick = gap;
+            LaborFirmDebitsThisTick = firmDebits;
+            LaborOutsideCreditsThisTick = outsideCredits;
+            if (firmCredits > 0) W.Ledger.Transfer(Account.Firms, Account.Households, firmCredits);
+            if (outsideCredits > 0) W.Ledger.Transfer(Account.OutsideWorld, Account.Households, outsideCredits);
+        }
+
         private void FillFirm(Firm f)
         {
             int c = W.Parcels[f.Parcel].Cluster;
@@ -587,6 +910,10 @@ namespace CS2Econ.Core
             // the same aggregate was independently disaggregated onto
             // households by a second unlinked draw. Members is the assignment
             // (EconomyEngine.AssignWorkplaces), so the two sides now agree.
+            // On the labor-auction path Members carries one entry PER EARNER
+            // (the household id repeated when two of its earners work here —
+            // they may also work at different firms), so an entry counts 1;
+            // flag-off entries are whole households counting their Earners.
             Array.Clear(f.FilledByClass, 0, 3);
             f.WorkersFilled = 0;
             foreach (int hid in f.Members)
@@ -594,8 +921,9 @@ namespace CS2Econ.Core
                 var hh = W.Households[hid];
                 if (hh.ExitedTick >= 0 || hh.Earners == 0) continue;
                 int cl = (int)Segment.All[hh.Segment].Labor;
-                f.FilledByClass[cl] += hh.Earners;
-                f.WorkersFilled += hh.Earners;
+                int n = Flags.LaborAuction ? 1 : hh.Earners;
+                f.FilledByClass[cl] += n;
+                f.WorkersFilled += n;
             }
             // Never claim more staff than the structure holds.
             if (f.WorkersFilled > f.JobSlots && f.WorkersFilled > 0)
@@ -924,23 +1252,37 @@ namespace CS2Econ.Core
                     for (int cl = 0; cl < 3; cl++) wageBill += f.FilledByClass[cl] * P.Wage((LaborClass)cl);
                     double reserve = Math.Max(P.FirmSeedCapital, wageBill * P.FirmWorkingCapitalTicks);
                     double surplus = f.Money - reserve;
+                    // A Members entry is one EARNER on the labor-auction path
+                    // (household ids repeat) and one household of Earners
+                    // adults flag-off — either way the pro-rata weights are
+                    // earner counts.
+                    double totalEarners = 0;
+                    foreach (int hid in f.Members)
+                        totalEarners += Flags.LaborAuction ? 1 : Math.Max(1, (int)W.Households[hid].Earners);
+                    double paidPerEarner = 0;
                     if (surplus > 0)
                     {
                         double payout = surplus * MathUtil.Clamp(P.FirmDividendRate, 0, 1);
-                        double totalEarners = 0;
-                        foreach (int hid in f.Members) totalEarners += Math.Max(1, (int)W.Households[hid].Earners);
                         if (totalEarners > 0 && payout > 0)
                         {
                             foreach (int hid in f.Members)
                             {
-                                double sharePaid = payout * Math.Max(1, (int)W.Households[hid].Earners) / totalEarners;
+                                double sharePaid = payout
+                                    * (Flags.LaborAuction ? 1 : Math.Max(1, (int)W.Households[hid].Earners))
+                                    / totalEarners;
                                 W.Households[hid].Money += sharePaid;
                             }
                             f.Money -= payout;
                             f.DividendsPaid += payout;
                             W.Ledger.Transfer(Account.Firms, Account.Households, payout);
+                            paidPerEarner = payout / totalEarners;
                         }
                     }
+                    // The firm's own dividend forecast, from its own payouts —
+                    // what the labor path subtracts from cleared total comp to
+                    // get base pay. Zero-payout ticks are observations too.
+                    if (totalEarners > 0)
+                        f.DividendPerEarnerEma = MathUtil.Ema(f.DividendPerEarnerEma, paidPerEarner, 0.05);
                 }
 
                 if (f.Money < P.CompanyBankruptcyLimit)

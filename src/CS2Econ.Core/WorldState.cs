@@ -147,6 +147,13 @@ namespace CS2Econ.Core
             // household in the city walked away at exactly the same moment.
             double r = SplitMix64.Hash01((ulong)Id * 2654435761UL + 47UL);
             ReservationShare = 0.5 * r * r;      // skewed low: most people are movable
+            // Work reservation: the comp per earner per tick below which this
+            // household would rather not work, as a share of its class wage.
+            // Same skewed-low shape as ReservationShare: most people work at
+            // going rates; a few price themselves above every door AND the
+            // border, and are voluntarily unemployed.
+            double q = SplitMix64.Hash01((ulong)Id * 2654435761UL + 53UL);
+            WorkReservationShare = 0.5 * q * q;
         }
 
         /// <summary>Outside option as a fraction of this household's own housing
@@ -154,6 +161,29 @@ namespace CS2Econ.Core
         /// tracks the household's own income without ever being re-rolled — the
         /// preference is fixed, what it is worth is not.</summary>
         public double ReservationShare;
+
+        /// <summary>Leisure floor for the labor auction: comp per earner per
+        /// tick below which this household prefers no work at all, as a share
+        /// of its class mean wage. Drawn at birth (see DrawAtBirth), skewed
+        /// low — a personal attribute, never a citywide constant.</summary>
+        public double WorkReservationShare;
+        /// <summary>Labor-auction outcome: every working earner is OUTSIDE
+        /// the region — employed (Earners > 0) with WorkplaceParcel −1, paid
+        /// the outside net wage by Account.OutsideWorld. Bidding is per
+        /// EARNER, so a household can mix in-region and outside earners; the
+        /// flag is false then (it has a real workplace). Only the
+        /// labor-auction path writes or reads this.</summary>
+        public bool OutsideWorker;
+        /// <summary>The household's TOTAL base pay per tick under the labor
+        /// auction, summed over its working earners: each in-region earner's
+        /// max(0, door comp T − firm.DividendPerEarnerEma), each outside
+        /// earner's own outside net wage. The market prices only T; this
+        /// split is accounting. Earners bid individually and may sit at
+        /// different doors, so the engine keeps the per-earner records
+        /// (EconomyEngine._earnerFirm/_earnerBase) — this field is their sum
+        /// for telemetry and the income pass. The flag-off wage path never
+        /// reads it.</summary>
+        public double BaseComp;
 
         /// <summary>This household's outside option in money per tick.</summary>
         public double Reservation(double budget) => ReservationShare * budget;
@@ -209,6 +239,14 @@ namespace CS2Econ.Core
         /// <summary>Cumulative surplus this firm has distributed to its own
         /// members — telemetry for the circular flow.</summary>
         public double DividendsPaid;
+        /// <summary>EMA of realized dividend per member-earner per tick — the
+        /// firm's own forecast of the dividend component of total comp, built
+        /// from its own payouts. The labor auction clears TOTAL comp T with
+        /// cap = the firm's marginal-product forecast; the firm then pays
+        /// base = max(0, T − this) and the dividend pass tops the rest up.
+        /// Updated in the dividend pass on both flag paths; only the
+        /// labor-auction path reads it.</summary>
+        public double DividendPerEarnerEma;
 
         // Per-tick scratch (settlement + telemetry)
         public double RevenueThisTick;

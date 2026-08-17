@@ -284,6 +284,23 @@ namespace CS2Econ.Core
         public double[][] JobFillRate = Array.Empty<double[]>();     // [class][job cluster]
         public double[][] ResidualJobs = Array.Empty<double[]>();    // unfilled positions after balancing
 
+        // ---- realized labor rates (Flags.LaborAuction) ----------------------
+        // On the labor-auction path the Sinkhorn MODEL retires: after each
+        // labor clear the engine stores what actually happened — employed
+        // earners / supply per class × home cluster, filled / slots per class
+        // × job cluster — and Refresh serves THOSE as EmploymentRate /
+        // JobFillRate at the NEXT refresh. One-refresh lag: an observation of
+        // the market, not a model of it. Everything downstream (prospective
+        // income, land accounting's staffing expectation) then forecasts from
+        // observed market outcomes. Null until the first clear, when the
+        // Sinkhorn cold start covers the one refresh with nothing to observe.
+        public double[][]? RealizedEmployment;
+        public double[][]? RealizedFill;
+        public double[][]? RealizedResidualJobs;
+
+        public void ObserveLaborOutcome(double[][] employment, double[][] fill, double[][] residual)
+        { RealizedEmployment = employment; RealizedFill = fill; RealizedResidualJobs = residual; }
+
         // Composite consumer access value per segment per cluster
         public double[][] AccessValue = Array.Empty<double[]>();
         public double MeanAccess = 1;
@@ -481,21 +498,39 @@ namespace CS2Econ.Core
             EmploymentRate = NewJagged(3, C);
             JobFillRate = NewJagged(3, C);
             ResidualJobs = NewJagged(3, C);
-            double slackW = Math.Exp(-p.ThetaCommute * p.LaborSlackMinutes);
-            for (int cl = 0; cl < 3; cl++)
+            if (flags != null && flags.LaborAuction && RealizedEmployment != null
+                && RealizedEmployment.Length == 3 && RealizedEmployment[0].Length == C)
             {
-                Balancing.Match(WorkersByClass[cl], JobsByClass[cl], WCommute, slackW,
-                                p.IpfIterations, out var rowMatched, out var colMatched);
-                for (int i = 0; i < C; i++)
+                // Labor-auction path: serve what the last clear OBSERVED (see
+                // the field comment). The Sinkhorn model below runs only on
+                // the flag-off path and on the cold-start refresh before any
+                // clear has happened.
+                for (int cl = 0; cl < 3; cl++)
+                    for (int c = 0; c < C; c++)
+                    {
+                        EmploymentRate[cl][c] = RealizedEmployment[cl][c];
+                        JobFillRate[cl][c] = RealizedFill![cl][c];
+                        ResidualJobs[cl][c] = RealizedResidualJobs![cl][c];
+                    }
+            }
+            else
+            {
+                double slackW = Math.Exp(-p.ThetaCommute * p.LaborSlackMinutes);
+                for (int cl = 0; cl < 3; cl++)
                 {
-                    double sup = WorkersByClass[cl][i];
-                    EmploymentRate[cl][i] = sup > 1e-9 ? MathUtil.Clamp(rowMatched[i] / sup, 0, 1) : 0;
-                }
-                for (int j = 0; j < C; j++)
-                {
-                    double dem = JobsByClass[cl][j];
-                    JobFillRate[cl][j] = dem > 1e-9 ? MathUtil.Clamp(colMatched[j] / dem, 0, 1) : 0;
-                    ResidualJobs[cl][j] = Math.Max(0, dem - colMatched[j]);
+                    Balancing.Match(WorkersByClass[cl], JobsByClass[cl], WCommute, slackW,
+                                    p.IpfIterations, out var rowMatched, out var colMatched);
+                    for (int i = 0; i < C; i++)
+                    {
+                        double sup = WorkersByClass[cl][i];
+                        EmploymentRate[cl][i] = sup > 1e-9 ? MathUtil.Clamp(rowMatched[i] / sup, 0, 1) : 0;
+                    }
+                    for (int j = 0; j < C; j++)
+                    {
+                        double dem = JobsByClass[cl][j];
+                        JobFillRate[cl][j] = dem > 1e-9 ? MathUtil.Clamp(colMatched[j] / dem, 0, 1) : 0;
+                        ResidualJobs[cl][j] = Math.Max(0, dem - colMatched[j]);
+                    }
                 }
             }
 

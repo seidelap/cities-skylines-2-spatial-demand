@@ -502,6 +502,77 @@ namespace CS2Econ.Core
         /// headroom beyond that is claimed; Converged is the arbiter and the
         /// canary sweeps it.</summary>
         public int AuctionRepairRounds = 16;
+        // ---- labor assignment market (LaborAuction; Flags.LaborAuction) ------
+        /// <summary>Money per generalized commute minute per earner per tick —
+        /// what a worker's own commute from its own home subtracts from a
+        /// door's total comp when it values the door. At 0.05, a 20-minute
+        /// commute costs 1.0/tick against a basic-class mean wage of 10.
+        /// Default unswept.</summary>
+        public double CommuteCostPerMinute = 0.05;
+        /// <summary>The cross-border wage as a fraction of the class mean. On
+        /// the labor-auction path the global class wage DEMOTES to what it
+        /// truly is: the world price of labor outside the region — a genuine
+        /// property of the outside world, legitimate as a global. Working
+        /// outside is the always-available default the auction must beat per
+        /// individual. Default unswept; chosen so both inside employment and
+        /// outside work occur on the verify fixture (measured at the labor
+        /// bring-up run, seeds 0-3).</summary>
+        public double OutsideWageMult = 0.7;
+        /// <summary>Worker-side lump for changing employer, scaling the
+        /// household's own MovingCostDraw. Folded worker-side together with
+        /// OnboardingCostMean: the auction decides only the ALLOCATION, and
+        /// under quasilinearity the incidence of a match-specific friction
+        /// does not change it — so both sides of the friction are priced on
+        /// one side. Default unswept.</summary>
+        public double JobSwitchCostMult = 1.0;
+        /// <summary>Firm-side cost of onboarding a new member, folded into the
+        /// worker's stay bonus (see JobSwitchCostMult for why one side
+        /// carries both). Default unswept.</summary>
+        public double OnboardingCostMean = 25.0;
+        /// <summary>Doors a worker household carries into the labor auction,
+        /// ranked price-free, floored by its own outside option, its current
+        /// employer always included. Seeded from AuctionShortlist; unswept
+        /// for labor.</summary>
+        public int LaborShortlist = 12;
+        /// <summary>Column-generation cap for the labor auction — same
+        /// contract as AuctionRepairRounds (a backstop; RepairClean is the
+        /// arbiter). Heavy excess labor makes the column-generation chains
+        /// far longer than housing's (each losing worker must be shown
+        /// enough doors to price its default honestly). Measured at the
+        /// per-earner fix round's 39-seed laborcanary sweep (39/39): clean
+        /// scans in 30-41 rounds (seed 25 the longest at 41; the bring-up
+        /// cap of 40 bound on seed 4, clean False there). 64 is the
+        /// backstop, not a target; the canary is the cheap watch for a
+        /// seed that binds it.</summary>
+        public int LaborAuctionRepairRounds = 64;
+        /// <summary>Bid increment for the labor auction's ascent (run in
+        /// p = cap − T space). Same role as AuctionEpsilon. Seeded from the
+        /// housing value; unswept for labor.</summary>
+        public double LaborAuctionEpsilon = 0.002;
+        /// <summary>ε as a fraction of the value being bid for — the binding
+        /// one in practice, as in housing. Seeded; unswept for labor.</summary>
+        public double LaborAuctionEpsilonRel = 0.005;
+        /// <summary>Bids per worker (per re-clear) before the labor solve
+        /// gives up and reports Converged = false. The exact-set bring-up
+        /// regime needed 400 (its displacement re-bid the whole excess pool
+        /// as each door's comp descended); per-earner unit demand with the
+        /// ε-entry price does not — measured at the per-earner fix round's
+        /// 39-seed laborcanary sweep, converged re-clears spend 13-17
+        /// bids/worker. 64 is the backstop, not a target, and small enough
+        /// that a future livelock reports Converged = false in seconds
+        /// rather than minutes.</summary>
+        public int LaborBidBudget = 64;
+        /// <summary>HARNESS-ONLY MUTANT of the Ward rule this design refuses
+        /// to encode: the firm caps admissions at the point where forecast
+        /// per-member income falls. With a fixed working-capital pool, any
+        /// admission beyond the incumbent membership dilutes the members'
+        /// claim on it, so the member-income-maximizing cap IS the incumbent
+        /// membership (floored at one slot so an empty firm can hire a first
+        /// member). Under this mutant the refusal check
+        /// ("no surplus-positive hire is refused") MUST go red — a check that
+        /// cannot fail is not a check. Never set outside the harness.</summary>
+        public bool LaborWardMutant = false;
+
         /// <summary>How much a household favours the shop it already uses, in
         /// the units of its shop taste shock (Gumbel, σ ≈ 1.28). Switching
         /// friction: people go back to their usual shop unless another is
@@ -671,5 +742,15 @@ namespace CS2Econ.Core
         /// why the two-mechanism version could let the highest bidder lose a
         /// unit to whoever had a lower household id.</summary>
         public bool HousingAuction = false;
+        /// <summary>Clear the labor market as ONE assignment auction
+        /// (LaborAuction): who works where, at what TOTAL comp, comes out of
+        /// the same ascending machinery as the housing market, run in
+        /// p = cap − T space. Replaces, on this path only: the i.i.d.
+        /// employment draw against the Sinkhorn-balanced rate, the
+        /// commute-weighted reservoir placement, and the citywide pro-rata
+        /// wage pooling (each firm is debited exactly its own members' base
+        /// comp). The Sinkhorn model keeps running on the flag-off path,
+        /// which must stay byte-identical.</summary>
+        public bool LaborAuction = false;
     }
 }

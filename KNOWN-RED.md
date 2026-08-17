@@ -11,9 +11,14 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (29 checks — 28 plus prospect-local-odds, added with the
-## per-cluster prospect-odds work; seeds 0–7 AND 25 measured 29/29 at that
-## commit, canary 39/39)
+## verify (32 checks)
+
+29 at the per-cluster prospect-odds commit (28 plus prospect-local-odds;
+seeds 0–7 and 25 measured 29/29 there, canary 39/39) plus the three
+labor-auction checks (equilibrium, Ward refusal + mutant, payroll). At the
+per-earner labor fix commit: verify 32/32 on seeds 0, 1, 2, 3, 13, 25
+(seed 9 stays 31/32 on the pre-existing occupancy red — all three labor
+checks green there), `laborcanary` 39/39, housing `canary` 39/39.
 
 | Seed | Check | Status | Attribution |
 |---|---|---|---|
@@ -58,6 +63,38 @@ structurally zero, and an LP-optimality gap of 0.01–0.03% of LP* where the
 resumed regime measured 0.81–1.61%.
 
 Seeds 0–7 and 13 are 27/27 at the fix commit; seed 25 is the one canary red.
+
+### Labor: household-atomic multi-earner demand with exact-set displacement
+
+The first labor-auction build (`02a976f`) bid whole HOUSEHOLDS — one bidder
+demanding 1 or 2 slots — and invented an exact-set displacement ({one
+1-earner}, {one 2-earner}, {two 1-earners}, priced at the dearest member of
+the cheapest set) to keep doors full. Do not retry blind: multi-unit demand
+is outside the assignment-LP theorem the housing machinery rests on, and the
+exact-set entry price is NOT MONOTONE — a door's cheapest exact set can get
+CHEAPER as its membership recomposes, so a settled worker that passed on a
+door is never re-triggered when it becomes attainable, and the deterministic
+full re-clear reproduces that state forever (added == 0 with standing envy is
+a fixed point the repair loop terminates on, reporting Converged &&
+RepairClean). Measured with the shipped `laborcanary` at `02a976f`: red on
+**8 of 39** default-list seeds (8, 9, 13, 15, 16, 20, 22, 29), 83–109
+households beyond the ε band (worst envy 28.9% of value against the ~1%
+band on the dissected seed 13), 160–205 workers stranded on their defaults,
+BlockedListed 263 on seed 13's terminating "clean" scan.
+
+**RESOLVED** — the bidding unit became the EARNER (unit demand, one slot
+each; a household's earners may work at different firms), which deletes the
+exact-set machinery outright and restores housing-style single-evictee
+displacement. One labor-specific deviation from the housing form survived
+measurement: labor values carry no idiosyncratic taste term, so identical
+workers tie exactly, and the bare-Admitted entry price livelocks on the tie
+(measured at this fix round's bring-up: seed 0 burned its whole bid budget,
+796,000 bids against 48,955 evictions, converged False). A full door's
+entry price is therefore Admitted + the door's ε (+∞ at or above the cap —
+comp cannot go below zero), which makes a just-failed door read a full ε
+below its alternatives and every attempted eviction succeed. Entry prices
+are monotone within a re-clear round again; laborcanary 39/39 at the fix
+commit (clean scans in 30-41 repair rounds, 13-17 bids/worker).
 
 ## scenarios (seed 1)
 
