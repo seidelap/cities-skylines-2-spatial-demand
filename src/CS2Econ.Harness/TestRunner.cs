@@ -435,6 +435,42 @@ namespace CS2Econ.Harness
             return Math.Min(failed.Count, 100);
         }
 
+        /// <summary>The occupancy-channel check alone across seeds — same
+        /// rationale as <see cref="Canary"/> (cheap fixture, many seeds; ~1.5 s
+        /// per seed measured at the check-debt commit). This is the instrument
+        /// that established the old fallback arm was dead (0/57 seeds reached
+        /// it) and that the rewrite changed no verdict; re-run it before
+        /// changing that check's selection rule or bounds.</summary>
+        public static int OccupancySweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"occupancy sweep: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                OccupancyChannel(seed);
+                bool ok = Results.Count > before && Results[Results.Count - 1].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"occupancy sweep: {seeds.Count - failed.Count}/{seeds.Count} pass"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
+        /// <summary>The assessment-tracks-price fixture alone (both its
+        /// checks: the L1–L3 relation and the shadow-queue leg) — ~7 s
+        /// against ~120 s for the full suite (measured, seed 1, check-debt
+        /// commit). This is the instrument the shadow-queue mutants were
+        /// demonstrated with; re-run it per seed before touching Assess,
+        /// BuildShadow/ShadowAt, or the not-standing branch of
+        /// ResidentialBidPerUnit.</summary>
+        public static int AssessCheck(ulong seed)
+        {
+            int before = Results.Count;
+            AssessmentTracksPrice(seed);
+            return Results.Skip(before).All(r => r.pass) ? 0 : 1;
+        }
+
         public static int RunAll(ulong seed, out string report)
         {
             Results.Clear();
@@ -1534,68 +1570,84 @@ namespace CS2Econ.Harness
             }
 
             // (b) the same cluster, priced at full vs collapsed occupancy —
-            // population, stock, access and geometry all held identical.
-            // Prefer a CLEARED submarket (fill ratio 1 at full occupancy):
-            // there the channel must move the PRICE, which is the substantive
-            // claim. In an excess submarket the flat-tail price is
-            // mass-invariant and the response moves to expected fill — real,
-            // but fill ∝ mass by construction there, so a check that only
-            // ever lands on excess submarkets would be measuring its own
-            // plumbing. Fall back to the largest-stock cluster (vacancy leg)
-            // only if no cleared submarket exists.
-            int c0 = -1, cBig = 0;
+            // population, stock, access and geometry all held identical. The
+            // probed cluster must be CLEARED (fill ratio 1 at current
+            // occupancy): there the channel must move the PRICE, which is the
+            // substantive claim. In an excess submarket the flat-tail price is
+            // mass-invariant and the fill response is mass-proportional by
+            // construction — a probe landing there would be measuring the
+            // check's own plumbing, so finding NO cleared submarket is a
+            // FAILURE of this check, not a cue to measure something weaker.
+            //
+            // THE FALLBACK ARM THIS REPLACES WAS DEAD, twice over (measured,
+            // 57-seed occsweep at the check-debt commit: seeds 0–49, 138, 208,
+            // 271, 327, 549, 910, 6550). The old form fell back to the
+            // largest-stock cluster when no cleared submarket existed and
+            // accepted a vacancy leg there (flat price + fill drop ≥ 20 %):
+            //   - the fallback was reached on 0/57 seeds — 46–68 of the
+            //     stock≥4 candidate submarkets clear on every seed, so the
+            //     first-cleared selection always succeeds;
+            //   - force-evaluated on the fallback cluster anyway, the vacancy
+            //     disjunct held on 0/57 seeds (that cluster also clears:
+            //     fill stayed 1.000 on 52/57, never below 0.901 against the
+            //     0.8 conjunct), while the price disjunct duplicated in that
+            //     arm fired 57/57 — the ternary was `priceLeg` in both arms,
+            //     one leg written twice, plus a vacancy disjunct that never
+            //     fired.
+            // Deleting the arm changed no verdict: the rewritten check agrees
+            // with the old one on all 57 sweep seeds (54 pass; 9, 41, 910
+            // fail with an unresponsive first-cleared cluster, the standing
+            // red KNOWN-RED.md owns for seed 9).
+            int c0 = -1, candidates = 0, cleared = 0;
             for (int c = 0; c < acc.C; c++)
             {
-                if (acc.HousingStock[0][c] > acc.HousingStock[0][cBig]) cBig = c;
-                if (c0 < 0 && acc.HousingStock[0][c] >= 4)
-                {
-                    LandAccounting.ResidentialBidPerUnit(acc, c, ZoneKind.ResidentialLow, 2, pres, p, out double f0);
-                    if (f0 >= 1.0 - 1e-9) c0 = c;
-                }
+                if (acc.HousingStock[0][c] < 4) continue;
+                candidates++;
+                LandAccounting.ResidentialBidPerUnit(acc, c, ZoneKind.ResidentialLow, 2, pres, p, out double f0);
+                if (f0 >= 1.0 - 1e-9) { cleared++; if (c0 < 0) c0 = c; }
             }
             bool clearedSelected = c0 >= 0;
-            if (c0 < 0) c0 = cBig;
-            double stock = acc.HousingStock[0][c0];
-            double[] saved = { acc.FillEma[0][c0], acc.FillEma[1][c0] };
 
-            void Reprice(double fill)
+            double bidFull = 0, bidEmpty = 0, fillFull = 0, fillEmpty = 0;
+            if (clearedSelected)
             {
-                acc.FillEma[0][c0] = fill; acc.FillEma[1][c0] = fill;
-                acc.RebuildDemandShares(sim.W, p);   // same recompute the refresh does
+                double[] saved = { acc.FillEma[0][c0], acc.FillEma[1][c0] };
+                void Reprice(double fill)
+                {
+                    acc.FillEma[0][c0] = fill; acc.FillEma[1][c0] = fill;
+                    acc.RebuildDemandShares(sim.W, p);   // same recompute the refresh does
+                }
+                Reprice(1.0);
+                bidFull = LandAccounting.ResidentialBidPerUnit(
+                    acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out fillFull);
+                Reprice(0.2);
+                bidEmpty = LandAccounting.ResidentialBidPerUnit(
+                    acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out fillEmpty);
+                acc.FillEma[0][c0] = saved[0]; acc.FillEma[1][c0] = saved[1];
+                acc.RebuildDemandShares(sim.W, p);
             }
-            Reprice(1.0);
-            double bidFull = LandAccounting.ResidentialBidPerUnit(
-                acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out double fillFull);
-            Reprice(0.2);
-            double bidEmpty = LandAccounting.ResidentialBidPerUnit(
-                acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out double fillEmpty);
-            acc.FillEma[0][c0] = saved[0]; acc.FillEma[1][c0] = saved[1];
-            acc.RebuildDemandShares(sim.W, p);
 
-            // Two-regime economics: while the submarket CLEARS, the thinner
-            // demand share reads deeper down the curve and the PRICE falls.
-            // Once demand exhausts, the price floors flat at the deepest
-            // positive bidder (cutting below them buys no tenant that
-            // exists) and the channel's response moves to expected FILL —
-            // the vacancy deepens instead. On a CLEARED-selected cluster the
-            // price leg is REQUIRED: the vacancy leg's fill response is
-            // mass-proportional by construction, so letting it rescue a
-            // failed price leg there let a constant-price mutant through
-            // (adversarial review, measured). The vacancy leg is only a
-            // valid outcome on the fallback cluster, where no cleared
-            // submarket existed to probe.
-            bool priceLeg = bidEmpty < bidFull * 0.95;
-            bool vacancyLeg = bidEmpty <= bidFull * 1.001 && fillEmpty < fillFull * 0.8;
-            bool channelResponds = clearedSelected ? priceLeg : (priceLeg || vacancyLeg);
+            // While the submarket CLEARS, the thinner demand share reads
+            // deeper down the WTP ladder and the PRICE falls — that is the
+            // channel, and the price leg is REQUIRED (a vacancy rescue here
+            // let a constant-price mutant through; adversarial review,
+            // measured). The 0.95 band and the FillEma-tracking bounds are
+            // inherited from the pre-rewrite form; the 57-seed sweep above
+            // measured mean err ≤ 0.020 (bound 0.06) and worst err up to 0.50
+            // at seed 22 — the worst-err bound has NO measured headroom, so
+            // treat a new red there as the bound binding, not as noise.
+            bool priceLeg = clearedSelected && bidEmpty < bidFull * 0.95;
 
             double meanErr = compared > 0 ? sumErr / compared : 1;
-            Check("occupancy channel: realized vacancy softens rent (price while cleared, deeper vacancy once floored)",
-                  compared >= 10 && meanErr < 0.06 && worstErr < 0.5 && channelResponds,
+            Check("occupancy channel: realized vacancy softens rent (price responds on a cleared submarket)",
+                  compared >= 10 && meanErr < 0.06 && worstErr < 0.5 && clearedSelected && priceLeg,
                   $"FillEma tracks measured occupancy on {compared} submarkets " +
-                  $"(mean err {meanErr:F3}, worst {worstErr:F2}); " +
-                  $"cluster {c0} ({(clearedSelected ? "cleared" : "fallback")}) bid {bidFull:F3} (fill {fillFull:F2}) " +
-                  $"at full occupancy → {bidEmpty:F3} (fill {fillEmpty:F2}) at 20 % " +
-                  $"({(priceLeg ? "price leg" : vacancyLeg ? "vacancy leg" : "NO response")})");
+                  $"(mean err {meanErr:F3}, worst {worstErr:F3}); " +
+                  (clearedSelected
+                      ? $"cluster {c0} ({cleared}/{candidates} candidates cleared) bid {bidFull:F3} (fill {fillFull:F2}) " +
+                        $"at full occupancy → {bidEmpty:F3} (fill {fillEmpty:F2}) at 20 % " +
+                        $"({(priceLeg ? "price leg" : "NO response")})"
+                      : $"NO cleared submarket among {candidates} candidates (stock ≥ 4) — nothing valid to probe, failing"));
         }
 
         /// <summary>PROSPECTS PRICE THE PLACE, NOT THE MAP. Every admitted
@@ -2528,6 +2580,126 @@ namespace CS2Econ.Harness
                 if (rb > 1e-9) badBase++;
             }
 
+            // ---- (S) THE SHADOW-QUEUE LEG OF ASSESSMENT -------------------
+            // Everything L1 scopes OUT — greenfield, scrape targets,
+            // renovation to a level with no lettable capacity — is priced by
+            // Assess through HousingAuction's shadow queue: the want-th best
+            // REAL waiting bid behind the door (LandAccounting's not-standing
+            // branch; the queue moved there when construction residuals did).
+            // Until this check that leg was asserted nowhere (task #32 audit,
+            // follow-up F1). Emitted as its own Check so the counterfactual
+            // path gates separately from the standing-stock identity; runs on
+            // L1's state (engine's last solve, full reassessment) so it costs
+            // no extra solve — fixture delta measured below in the check's
+            // comment on cost.
+            //
+            // (S1) the queue is ALIVE. A mutant that stops building the queue
+            // (BuildShadow cleared) makes every read structurally 0, which
+            // both identities below would then "verify" — so liveness is a
+            // required leg, not telemetry.
+            int liveQueues = 0; double topBid = 0;
+            for (int s = 0; s < a.ShadowCount.Length; s++)
+                if (a.ShadowCount[s] > 0)
+                { liveQueues++; topBid = Math.Max(topBid, a.Shadow[s * HousingAuction.ShadowDepth]); }
+
+            // (S2) WANT-RANK IDENTITY, both entry routes. The contract: added
+            // units let at the queue, the marginal (want-th) waiting bid
+            // prices the addition, and expected fill is queue/want. Expected
+            // values are read STRAIGHT OFF Shadow/ShadowCount (never through
+            // ShadowAt or BidPerUnit — the L1 anti-circularity rule), at the
+            // exact rank assessment consumes: want = UnitsFor(kind), the
+            // addUnits of a greenfield/scrape candidate and the minSupply of
+            // a renovation candidate alike. Both sides read the same array
+            // with no arithmetic between them, so the identity is EXACT —
+            // any nonzero difference is a defect, not rounding. The probe
+            // body lives in ShadowQueueProbe, pinned to unoptimized codegen
+            // — see the measurement recorded on that method before touching
+            // either.
+            int probes = 0, probesNonzero = 0, probeBad = 0;
+            double worstProbe = 0; string probeWhy = "";
+            for (int c = 0; c < acc.C; c++)
+                for (int k = 0; k < 2; k++)
+                {
+                    var kind = k == 1 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
+                    int want = LandAccounting.UnitsFor(kind);
+                    for (int lvl = 1; lvl <= p.MaxLevel; lvl++)
+                    {
+                        int sub = a.SubOf(c, kind, lvl);
+                        if (sub < 0) continue;
+                        double expect = want <= a.ShadowCount[sub]
+                            ? a.Shadow[sub * HousingAuction.ShadowDepth + want - 1] : 0;
+                        double expectFill = Math.Min(1.0, a.ShadowCount[sub] / (double)want);
+                        if (expect > 0) probesNonzero++;
+
+                        double d = ShadowQueueProbe(acc, a, c, kind, lvl, presence, p,
+                                                    sub, want, expect, expectFill,
+                                                    out int ran, out double got);
+                        probes += ran;
+                        worstProbe = Math.Max(worstProbe, d);
+                        if (d != 0)
+                        {
+                            // First offender in full, so a red is
+                            // self-diagnosing rather than a count.
+                            if (probeBad == 0)
+                                probeWhy = $"first: cluster {c} {kind} L{lvl} (cap {a.Capacity[sub]}, "
+                                         + $"queue {a.ShadowCount[sub]}, want {want}) expected {expect:F6} got {got:F6}";
+                            probeBad++;
+                        }
+                    }
+                }
+
+            // (S3) ASSESSMENT CONSUMES IT: for every non-Built residential-
+            // zoned parcel, AssessedLR must equal the best candidate priced
+            // from raw queue reads — the same candidate arithmetic Assess
+            // does (flow > 0 gate, annuitized cost net of escrow), with the
+            // price term read straight off the array. This is the end-to-end
+            // leg: it fails if Assess stops consulting the queue (e.g. quietly
+            // reverts to the modeled forecast) even while S2's helper-level
+            // identity still holds.
+            int gfScope = 0, gfBad = 0, gfConsumed = 0;
+            double worstGf = 0; string gfWhy = "";
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State == ParcelState.Built) continue;
+                if (pl.Zoned != ZoneKind.ResidentialLow && pl.Zoned != ZoneKind.ResidentialHigh) continue;
+                int units = LandAccounting.UnitsFor(pl.Zoned);
+                gfScope++;
+                double expectLR = 0;
+                for (int lvl = 1; lvl <= p.MaxLevel; lvl++)
+                {
+                    int sub = a.SubOf(pl.Cluster, pl.Zoned, lvl);
+                    double bid = sub >= 0 && units <= a.ShadowCount[sub]
+                        ? a.Shadow[sub * HousingAuction.ShadowDepth + units - 1] : 0;
+                    double flow = (bid - LandAccounting.SPerUnit(lvl, 1.0, p)) * units;
+                    if (flow <= 0) continue;
+                    double lr = flow - Annuity.FlowOf(Math.Max(0, p.RC(lvl, units) - pl.Escrow),
+                                                      p.HurdleRate, p.AnnuityHorizon);
+                    if (lr > expectLR) expectLR = lr;
+                }
+                double r = Rel(pl.AssessedLR, expectLR);
+                worstGf = Math.Max(worstGf, r);
+                if (r > 1e-9)
+                {
+                    if (gfBad == 0)
+                        gfWhy = $"first: parcel {pl.Id} cluster {pl.Cluster} {pl.Zoned} "
+                              + $"AssessedLR {pl.AssessedLR:F4} vs oracle {expectLR:F4}";
+                    gfBad++;
+                }
+                if (expectLR > 0) gfConsumed++;
+            }
+
+            Check("assessment's counterfactual leg reads the shadow queue (live, want-rank identity, consumed end-to-end)",
+                  liveQueues > 0 && topBid > 0
+                  && probes > 0 && probesNonzero > 0 && probeBad == 0
+                  && gfScope > 0 && gfBad == 0,
+                  $"(S1) {liveQueues} submarkets hold waiting bids (top {topBid:F2}); "
+                  + $"(S2) {probes - probeBad}/{probes} probes match the raw queue exactly "
+                  + $"({probesNonzero} with a live queue at the read rank, worst |Δ| {worstProbe:E1}); "
+                  + $"(S3) {gfScope - gfBad}/{gfScope} non-built residential parcels' AssessedLR "
+                  + $"equal the raw-read oracle ({gfConsumed} capitalize a queued bid, worst rel {worstGf:E1})"
+                  + (probeWhy.Length > 0 ? $"\n      S2 {probeWhy}" : "")
+                  + (gfWhy.Length > 0 ? $"\n      S3 {gfWhy}" : ""));
+
             // ---- (L2) CO-MOVEMENT under a shock ---------------------------
             // Double every living household's own rent share, re-solve, reassess.
             // NOTHING TICKS, so levels, conditions and unit counts are identical
@@ -2637,6 +2809,53 @@ namespace CS2Econ.Harness
                   + $"{moved:P1} (>1 % required, else vacuous) and ΔΣLR {dLr:F1} vs ΔΣP·cond·units {dPrice:F1} "
                   + $"(rel {Rel(dLr, dPrice):E1}); (L3) posted-curve arm {scopeP - badP}/{scopeP} "
                   + $"(worst {worstP:E1}, circular on price by construction)");
+        }
+
+        /// <summary>One S2 probe of the shadow-queue check: price (and fill)
+        /// of `want` units at (cluster, kind, level) through BOTH not-standing
+        /// entry routes of ResidentialBidPerUnit — addUnits (greenfield/
+        /// scrape candidate) always, minSupply (renovation candidate) where
+        /// the standing gate really fails — against the caller's raw-array
+        /// expectations. Returns the worst |Δ|; `ran` is how many routes
+        /// executed; `got` is route 1's price for the failure detail.
+        ///
+        /// WHY NoInlining|NoOptimization, measured (check-debt commit,
+        /// .NET SDK 8.0.129, seed 1): with this body written inline in the
+        /// check's loop, the OPTIMIZED jit of that loop returned nonzero Δ on
+        /// 458 of 1777 probes (worst 1.0, a fill read) while the semantics
+        /// demand 0 — the disassembled IL of the failing build is correct
+        /// (args, gates and comparisons verified instruction by instruction),
+        /// Assess/L1/S3 called the same callee correctly in the same process,
+        /// and the divergence tracked CODEGEN, not code: same DLL fails with
+        /// DOTNET_TieredPGO=0 and DOTNET_TieredCompilation=0 (solo and
+        /// in-suite) yet passes at tier 0, and a byte-neutral reshape of the
+        /// loop (hoisted locals + a Console write on the miss path) compiles
+        /// correctly at full opts. Pinning the probe to minopts codegen makes
+        /// the check's verdict independent of jit tier, suite position and
+        /// incidental code shape. Do not fold this body back into the loop
+        /// without re-running that sweep matrix.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(
+            System.Runtime.CompilerServices.MethodImplOptions.NoInlining
+            | System.Runtime.CompilerServices.MethodImplOptions.NoOptimization)]
+        private static double ShadowQueueProbe(
+            AccessState acc, HousingAuction a, int c, ZoneKind kind, int lvl,
+            double[] presence, EconParams p, int sub, int want,
+            double expect, double expectFill, out int ran, out double got)
+        {
+            ran = 1;
+            got = LandAccounting.ResidentialBidPerUnit(
+                acc, c, kind, lvl, presence, p, out double gotFill,
+                addUnits: want, realized: true);
+            double d = Math.Max(Math.Abs(got - expect), Math.Abs(gotFill - expectFill));
+            if (!(a.Capacity[sub] > 0 && want <= a.Capacity[sub]))
+            {
+                ran = 2;
+                double got2 = LandAccounting.ResidentialBidPerUnit(
+                    acc, c, kind, lvl, presence, p, out double gotFill2,
+                    minSupply: want, realized: true);
+                d = Math.Max(d, Math.Max(Math.Abs(got2 - expect), Math.Abs(gotFill2 - expectFill)));
+            }
+            return d;
         }
 
         /// <summary>Worst relative gap, over one run, between what a sector's

@@ -69,6 +69,19 @@ namespace CS2Econ.Harness
                     for (ulong s = 26; set.Count < n; s++) set.Add(s);
                     return TestRunner.ProspectSweep(set);
                 }
+                case "occsweep":    // occupancy-channel check alone across seeds
+                {
+                    int n = 32;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    var set = new List<ulong>();
+                    for (ulong s = 0; s < (ulong)n; s++) set.Add(s);
+                    foreach (ulong s in new ulong[] { 138, 208, 271, 327, 549, 910, 6550 })
+                        if (!set.Contains(s)) set.Add(s);
+                    return TestRunner.OccupancySweep(set);
+                }
+                case "assesscheck": // assessment-tracks-price fixture alone (see TestRunner.AssessCheck)
+                    return TestRunner.AssessCheck(seed);
                 case "scenarios":
                     return Scenarios.RunAll(seed, out _, only);
                 case "fingerprint":

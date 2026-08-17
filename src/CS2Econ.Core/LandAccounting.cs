@@ -158,9 +158,13 @@ namespace CS2Econ.Core
             //                     questions about a world that does not exist,
             //                     and no realized market can answer them.
             //
-            // Overlays.cs compares the two on purpose — that is the honesty
-            // check on the forecast, and it only means anything while they stay
-            // separate.
+            // Construction.ObserveCompletions compares the two on purpose —
+            // realized rent × occupancy of a completed build against the
+            // forecast at its decision time, folded back through the
+            // calibration factor. That is the honesty check on the forecast
+            // (Overlays.cs only DISPLAYS the forecast; an earlier version of
+            // this comment claimed the comparison lived there), and it only
+            // means anything while the two stay separate.
             var auction = realized ? acc.Auction : null;
             if (auction != null && auction.C == acc.C)
             {

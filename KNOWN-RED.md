@@ -11,7 +11,7 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (32 checks)
+## verify (33 checks)
 
 29 at the per-cluster prospect-odds commit (28 plus prospect-local-odds;
 seeds 0–7 and 25 measured 29/29 there, canary 39/39) plus the three
@@ -20,9 +20,17 @@ per-earner labor fix commit: verify 32/32 on seeds 0, 1, 2, 3, 13, 25
 (seed 9 stays 31/32 on the pre-existing occupancy red — all three labor
 checks green there), `laborcanary` 39/39, housing `canary` 39/39.
 
+The 33rd is the shadow-queue assessment check (the counterfactual leg of
+`Assess` priced from `HousingAuction.Shadow`, previously asserted nowhere —
+task #32 audit follow-up F1), added at the check-debt commit inside the
+assessment-tracks-price fixture. Measured green there on seeds 0, 1, 2, 3
+and 9; mutants that zero the queue build, zero the not-standing read, or
+corrupt the read rank by one all flip it red (same commit's measurement
+runs, seeds 0–1).
+
 | Seed | Check | Status | Attribution |
 |---|---|---|---|
-| 9 | occupancy channel: realized vacancy softens rent | red | Predates `2eeefc3`; fails identically at `2eeefc3`, `7dcaf08`, `ffd9a03`, `6104275`, `694fbd3`, HEAD. Not an auction-era regression. Unowned. |
+| 9 | occupancy channel: realized vacancy softens rent (price responds on a cleared submarket) | red | Predates `2eeefc3`; fails identically at `2eeefc3`, `7dcaf08`, `ffd9a03`, `6104275`, `694fbd3`, HEAD. Not an auction-era regression. Unowned. THE CHECK WAS REWRITTEN at the check-debt commit — dead fallback arm and never-firing vacancy disjunct deleted, cleared-submarket selection made a required leg — and the rewrite changed no verdict: per-seed verdicts identical on all 57 occsweep seeds (0–49, 138, 208, 271, 327, 549, 910, 6550), 54 pass, with 9, 910 red as before and 41 red under both forms (newly observed by that sweep, not newly caused; failure mode on all three: the first-cleared cluster's bid does not move ≥ 5 % when its FillEma is dropped 1.0 → 0.2, while later clusters on the same seeds respond strongly — a selection-composition question, not a channel-severed one). |
 
 ## Measured dead ends — do not retry blind
 
