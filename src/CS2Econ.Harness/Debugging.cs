@@ -863,30 +863,26 @@ namespace CS2Econ.Harness
                 $"drift={w.Ledger.Drift():E1}");
         }
 
-        /// <summary>`harness jobspread` — measurement aid for the prospect
-        /// local-odds work (task #31): on the auction reference fixture
-        /// (10×10 clusters, 3000 seed households — the auction-equilibrium /
-        /// canary fixture), print the per-cluster worker-count distribution and
-        /// the per-cluster employment-rate spread for each labor class, at a few
-        /// ticks. This is what calibrates the shrinkage prior weight n0 in
-        /// AccessState.ProspectLocalOdds and decides whether the
-        /// prospect-localization check can bite. Prints, asserts nothing.</summary>
         /// <summary>`harness goodsprobe` — measurement aid for the local
         /// goods-price work (task #30): on the reference fixture (10×10
         /// clusters, 3000 seed households, default flags, seeds start..start+3),
         /// print (a) the per-(resource, cluster) transacted-volume EMA
         /// distribution over t=40..300 — what calibrates the shrinkage prior
-        /// weight EconParams.TradePricePriorVolume — (b) the worst phase-2
-        /// regret and lot band violation over the run (the two per-lot bounds
-        /// the clearing comments state), and (c) the end-state per-resource
-        /// spread of the delivered/origin statistics against the citywide
-        /// prior. Prints, asserts nothing.</summary>
+        /// weight EconParams.TradePricePriorVolume — (b) the per-lot bounds the
+        /// clearing comments state: worst phase-2 seller regret, worst band
+        /// floor violation, and the buyer-side band ceiling in its three
+        /// references (marginal unit, marginal lot, tick-opening parity —
+        /// TradeSystem.MeasureBand), and (c) the end-state per-resource spread
+        /// of the delivered/origin statistics against the citywide prior.
+        /// Prints, asserts nothing.</summary>
         public static int GoodsProbe(ulong startSeed, int ticks)
         {
             var dEv = new List<double>();   // positive delivered-volume EMA samples
             var oEv = new List<double>();
             long dZero = 0, oZero = 0, cells = 0;
-            double worstRegret = double.NegativeInfinity, worstBand = double.NegativeInfinity;
+            double worstRegret = double.NegativeInfinity, worstFloor = double.NegativeInfinity;
+            double worstUnit = double.NegativeInfinity, worstLot = double.NegativeInfinity;
+            double worstOpen = double.NegativeInfinity;
             for (ulong seed = startSeed; seed < startSeed + 4; seed++)
             {
                 var p = new EconParams();
@@ -918,7 +914,10 @@ namespace CS2Econ.Harness
                 foreach (var rec in tel)
                 {
                     worstRegret = Math.Max(worstRegret, rec.WorstPhase2Regret);
-                    worstBand = Math.Max(worstBand, rec.WorstBandViolation);
+                    worstFloor = Math.Max(worstFloor, rec.WorstFloorViolation);
+                    worstUnit = Math.Max(worstUnit, rec.WorstMarginExcess);
+                    worstLot = Math.Max(worstLot, rec.WorstMarginExcessLot);
+                    worstOpen = Math.Max(worstOpen, rec.WorstOpenParityExcess);
                 }
                 // End-state spread per resource on this seed.
                 Console.WriteLine($"--- seed {seed} end-state (t={Math.Max(300, ticks)}):");
@@ -954,10 +953,21 @@ namespace CS2Econ.Harness
             Console.WriteLine($"origin    EMA p10={P(oEv, 0.10):F2} p25={P(oEv, 0.25):F2} "
                 + $"p50={P(oEv, 0.50):F2} p90={P(oEv, 0.90):F2} max={P(oEv, 1.0):F2}");
             Console.WriteLine($"worst phase-2 regret (ask − realized net) = {worstRegret:F4}; "
-                + $"worst lot band violation = {worstBand:E2}");
+                + $"worst band floor violation (ask+haul − settled) = {worstFloor:E2}");
+            Console.WriteLine($"band ceiling — settled local price − cheapest alternative at the margin: "
+                + $"unit-granularity {worstUnit:F4}, lot-granularity {worstLot:E2}; "
+                + $"vs tick-opening import parity {worstOpen:F4}");
             return 0;
         }
 
+        /// <summary>`harness jobspread` — measurement aid for the prospect
+        /// local-odds work (task #31): on the auction reference fixture
+        /// (10×10 clusters, 3000 seed households — the auction-equilibrium /
+        /// canary fixture), print the per-cluster worker-count distribution and
+        /// the per-cluster employment-rate spread for each labor class, at a few
+        /// ticks. This is what calibrates the shrinkage prior weight n0 in
+        /// AccessState.ProspectLocalOdds and decides whether the
+        /// prospect-localization check can bite. Prints, asserts nothing.</summary>
         public static int JobSpread(ulong seed, int ticks)
         {
             var p = new EconParams();

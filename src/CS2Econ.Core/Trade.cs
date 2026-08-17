@@ -72,6 +72,12 @@ namespace CS2Econ.Core
         private double[] _demRemaining = Array.Empty<double>();
         private double[] _askOf = Array.Empty<double>();
         private double[] _pj = Array.Empty<double>();
+        // Telemetry-only scratch (written only when SettleTelemetry is on):
+        // the import half of each destination's delivered flow, so the LOCAL
+        // half — the price the band legs judge — can be recovered from the
+        // very array the engine debits buyers with.
+        private double[] _impPaid = Array.Empty<double>();
+        private double[] _impQty = Array.Empty<double>();
         private readonly List<int> _srcClusters = new List<int>();
         private readonly List<(int dst, int src, double q, double cost)> _localLots
             = new List<(int, int, double, double)>();
@@ -102,12 +108,48 @@ namespace CS2Econ.Core
             public double OriginRevSum, DeliveredPaidSum;
             public double ExportRevenue, ImportCost, LocalFreight;
             public double FirmCredit, FirmDebit;
-            /// <summary>Worst per-lot band violation: max over local lots of
-            /// (lot cost − live import alternative at its destination when one
-            /// existed) and (lot cost − P_j). Both ≤ 0 when the clearing is
-            /// correct: a lot is only taken when it is the cheapest available
-            /// source, and P_j is the max lot cost at its destination.</summary>
-            public double WorstBandViolation = double.NegativeInfinity;
+            /// <summary>BAND FLOOR — the seller-side leg. Max over used local
+            /// routes of (ask_i + haul_ij − the price buyers at the destination
+            /// actually paid per local unit, taken from the buyer debit the
+            /// engine settles). ≤ 0 says no seller was pushed below its
+            /// checkable alternative (the defaults rule) on any route it
+            /// served. Falsified by any mutant that lowers the settled price:
+            /// settling local lots at P_j×½ reads 5.8e+0 against the 1e-9
+            /// bound (`goodssweep --seeds 1` at the fix commit).</summary>
+            public double WorstFloorViolation = double.NegativeInfinity;
+            /// <summary>BAND CEILING — the buyer-side leg, and the one the
+            /// design's §7 band condition is actually about. Max over
+            /// destinations that settled local lots of (price buyers there
+            /// actually paid per local unit − the cheapest alternative that
+            /// destination really had at the clearing margin). The alternative
+            /// is recomputed from the exit laws at their end-of-phase-1
+            /// positions and from the asks of sources with supply left,
+            /// admitting every exit with ANY headroom — never read off _pj, so
+            /// a corrupted settled price has nothing to hide behind. Positive
+            /// residue is lot granularity: the clearing transacts in lots, so
+            /// an exit holding less than a full lot of headroom is a live
+            /// alternative for the marginal UNIT but not for the marginal LOT
+            /// (WorstMarginExcessLot is the same quantity with the mechanism's
+            /// own full-lot admission rule, and is the decomposition that says
+            /// which of the two produced the residue: on the sweep the lot
+            /// reference reads ≤1.6e-12 everywhere, so all of the residue —
+            /// worst 0.4573 — is lot quantization on capacity-capped exits).
+            /// Settling local lots at P_j×2 reads 15.6202 on the unit
+            /// reference and 1.6e+1 on the lot reference (`goodssweep
+            /// --seeds 1` at the fix commit), while the identity leg and the
+            /// localization check stay green — this is the only leg in the
+            /// suite that constrains the settled price LEVEL.</summary>
+            public double WorstMarginExcess = double.NegativeInfinity;
+            public double WorstMarginExcessLot = double.NegativeInfinity;
+            /// <summary>Reported, not gated: the same excess measured against
+            /// import parity at the destination read at the TICK-OPENING
+            /// position (ImportMarginal at q=0 + haul — what ParityBand
+            /// publishes). The gap between this and WorstMarginExcess is the
+            /// within-tick depth the tick's own import draws opened up: under
+            /// uniform-price clearing every unit settles at the marginal
+            /// price, and the margin is deeper than the tick's first lot.
+            /// Measured, not assumed — see the check's doc comment.</summary>
+            public double WorstOpenParityExcess = double.NegativeInfinity;
             /// <summary>Max over phase-2 lots of ask_i − realized export net:
             /// how much a seller could regret having sold locally at a price
             /// held to the phase-1 ask instead of exporting, given phase-2
@@ -146,6 +188,7 @@ namespace CS2Econ.Core
             _cityOrigin = (double[])_seedPrice.Clone();
             _supRemaining = new double[C]; _demRemaining = new double[C];
             _askOf = new double[C]; _pj = new double[C];
+            _impPaid = new double[C]; _impQty = new double[C];
         }
 
         /// <summary>Refresh haul caches (rides the same dirty cadence as access;
@@ -388,7 +431,10 @@ namespace CS2Econ.Core
 
             SettleRecord? rec = null;
             if (SettleTelemetry != null)
-            { rec = new SettleRecord { Resource = r }; SettleTelemetry.Add(rec); CurrentRecord = rec; }
+            {
+                rec = new SettleRecord { Resource = r }; SettleTelemetry.Add(rec); CurrentRecord = rec;
+                Array.Clear(_impPaid, 0, C); Array.Clear(_impQty, 0, C);
+            }
 
             double wgt = ResourceCatalog.Weight[ri];
             _srcClusters.Clear();
@@ -431,20 +477,17 @@ namespace CS2Econ.Core
                                       + _costs.Cost(i, j, AccessPurpose.Freight) * FreightCostPerMinute * wgt;
                         if (cost < bestCost) { bestCost = cost; bestSrc = i; }
                     }
-                    int bestE = -1; double bestImport = double.PositiveInfinity;
+                    int bestE = -1;
                     for (int e = 0; e < _w.Exits.Count; e++)
                     {
                         var x = _w.Exits[e];
                         if (x.Resource != r) continue;
                         if (x.Capacity > 0 && x.DrawnThisTick + lot > x.Capacity) continue;
                         double cost = ImportMarginal(x, x.DrawnThisTick, p) + _haulToExit[e][j] * wgt;
-                        if (cost < bestImport) bestImport = cost;
                         if (cost < bestCost) { bestCost = cost; bestSrc = -1; bestE = e; }
                     }
                     if (bestSrc < 0 && bestE < 0)
                     { _demRemaining[j] = 0; continue; }   // no source at any price: shortage persists
-                    if (rec != null && !double.IsInfinity(bestImport))
-                        rec.WorstBandViolation = Math.Max(rec.WorstBandViolation, bestCost - bestImport);
                     if (bestSrc >= 0)
                     {
                         double q = Math.Min(lot, _supRemaining[bestSrc]);
@@ -465,6 +508,7 @@ namespace CS2Econ.Core
                         // at P_j would strand the difference.
                         _tickDeliveredPaid[ri][j] += lot * bestCost;
                         _tickDeliveredQty[ri][j] += lot;
+                        if (rec != null) { _impPaid[j] += lot * bestCost; _impQty[j] += lot; }
                     }
                     if (bestCost > _pj[j]) _pj[j] = bestCost;
                     progress = true;
@@ -523,9 +567,20 @@ namespace CS2Econ.Core
                 _tickOriginQty[ri][src] += q;
                 result.LocalFreight += q * haul;
                 result.LocalVolume += q;
-                if (rec != null)
-                    rec.WorstBandViolation = Math.Max(rec.WorstBandViolation, cost - pj);
             }
+            // BAND MEASUREMENT (telemetry only; positions here are still
+            // end-of-phase-1, which is the clearing margin). The settled price
+            // is recovered from the buyer debit the engine will actually
+            // charge — _tickDeliveredPaid minus the import lots' own delivered
+            // cost — so nothing in this measurement is read off _pj, and a
+            // settled price corrupted anywhere in the loop above shows up
+            // here. Legs: FLOOR against the used routes' asks (seller side),
+            // CEILING against the destination's independently recomputed
+            // cheapest alternative at the margin (buyer side, the design's §7
+            // band condition), with the mechanism's own full-lot admission
+            // rule carried alongside as the lot-granularity decomposition,
+            // and the tick-opening parity carried as the reported band.
+            if (rec != null) MeasureBand(rec, r, ri, p, wgt);
 
             // ---- phase 2: remaining supply exports on its own best route -----
             while (true)
@@ -570,6 +625,93 @@ namespace CS2Econ.Core
                 rec.LocalFreight = result.LocalFreight;
             }
             return result;
+        }
+
+        /// <summary>The band condition of design §7, measured against
+        /// quantities computed WITHOUT the settled price. Called from
+        /// ClearTick after phase 1 settles and before phase 2 moves any exit,
+        /// so every exit still stands at its END-OF-PHASE-1 position — which
+        /// is where the clearing margin is.
+        ///
+        /// What buyers at j actually paid per local unit is recovered from
+        /// _tickDeliveredPaid/_tickDeliveredQty (the arrays the engine debits
+        /// buyers from) net of the import lots' own delivered cost, NOT from
+        /// _pj: the old form of this leg compared _pj against quantities _pj
+        /// is built from and could not fail (adversarial review, item #30).
+        /// The alternative each destination really had is rebuilt here from
+        /// the posted exit laws and the asks of sources with supply left.
+        ///
+        /// Three references, because they answer different questions:
+        ///   altUnit — every exit with ANY headroom and every source with
+        ///     supply left: the cheapest way the marginal UNIT could have been
+        ///     sourced. This is the gated ceiling.
+        ///   altLot — the same with the mechanism's own full-lot admission
+        ///     rule: the cheapest way the marginal LOT could have been
+        ///     sourced. altUnit ≤ altLot, and the difference is exactly the
+        ///     lot granularity the design's band allows for.
+        ///   open — import parity read at the tick-OPENING position
+        ///     (ImportMarginal at q=0, what ParityBand publishes). Reported,
+        ///     not gated: uniform-price clearing settles every unit at the
+        ///     margin, and this tick's own import draws put the margin deeper
+        ///     than the tick's first lot.
+        ///
+        /// The lot reference shares the challenger's admission rule, and that
+        /// is deliberate rather than circular: P_j is max(dearest USED lot
+        /// cost, challenger), and nothing in the clearing bounds the dearest
+        /// used lot by the end-of-phase-1 challenger — a lot bought early
+        /// against a shallow law, or against an exit that later filled up,
+        /// could exceed it. That it never does (≤1.6e-12 on every seed of
+        /// both check arms) is a measured property of the laws only deepening
+        /// within a tick, not an identity. The leg's other job is the one the review's mutant
+        /// proved missing: it compares the money the engine actually debits,
+        /// so any corruption between the challenger read and the buyer's
+        /// debit shows up.</summary>
+        private void MeasureBand(SettleRecord rec, Res r, int ri, EconParams p, double wgt)
+        {
+            int C = _supRemaining.Length;
+            for (int j = 0; j < C; j++)
+            {
+                double q = _tickDeliveredQty[ri][j] - _impQty[j];
+                if (q <= 1e-9) continue;                    // no local lot settled here
+                double paid = (_tickDeliveredPaid[ri][j] - _impPaid[j]) / q;
+                double altUnit = double.PositiveInfinity;
+                double altLot = double.PositiveInfinity;
+                double open = double.PositiveInfinity;
+                foreach (int i in _srcClusters)
+                {
+                    if (_supRemaining[i] <= 1e-9) continue;
+                    double cost = _askOf[i]
+                                  + _costs.Cost(i, j, AccessPurpose.Freight) * FreightCostPerMinute * wgt;
+                    if (cost < altUnit) altUnit = cost;
+                    if (cost < altLot) altLot = cost;
+                }
+                for (int e = 0; e < _w.Exits.Count; e++)
+                {
+                    var x = _w.Exits[e];
+                    if (x.Resource != r) continue;
+                    double haul = _haulToExit[e][j] * wgt;
+                    double cost = ImportMarginal(x, x.DrawnThisTick, p) + haul;
+                    if ((x.Capacity <= 0 || x.DrawnThisTick + 1e-9 < x.Capacity) && cost < altUnit)
+                        altUnit = cost;
+                    if ((x.Capacity <= 0 || x.DrawnThisTick + p.LotSize <= x.Capacity) && cost < altLot)
+                        altLot = cost;
+                    double o = ImportMarginal(x, 0, p) + haul;
+                    if (o < open) open = o;
+                }
+                if (!double.IsInfinity(altUnit))
+                    rec.WorstMarginExcess = Math.Max(rec.WorstMarginExcess, paid - altUnit);
+                if (!double.IsInfinity(altLot))
+                    rec.WorstMarginExcessLot = Math.Max(rec.WorstMarginExcessLot, paid - altLot);
+                if (!double.IsInfinity(open))
+                    rec.WorstOpenParityExcess = Math.Max(rec.WorstOpenParityExcess, paid - open);
+            }
+            foreach (var (dst, _, _, cost) in _localLots)
+            {
+                double q = _tickDeliveredQty[ri][dst] - _impQty[dst];
+                if (q <= 1e-9) continue;
+                double paid = (_tickDeliveredPaid[ri][dst] - _impPaid[dst]) / q;
+                rec.WorstFloorViolation = Math.Max(rec.WorstFloorViolation, cost - paid);
+            }
         }
 
         /// <summary>Slow layer: sustained EMAs, transient decay, group coupling,
