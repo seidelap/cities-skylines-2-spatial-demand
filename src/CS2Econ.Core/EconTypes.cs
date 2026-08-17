@@ -361,6 +361,29 @@ namespace CS2Econ.Core
         public double TradeTransientDecay = 0.85; // per tick resilience decay
         public double TradeTransientBeta = 0.6;   // burst weight on effective position
         public double LotSize = 25.0;             // quantized offer size
+        /// <summary>Shrinkage prior weight (in VOLUME units) for the
+        /// per-(resource, cluster) realized-price statistics: a cluster's
+        /// DeliveredStat/OriginStat is its own transaction EMA weighted by its
+        /// sustained transacted-volume EMA against the citywide volume-weighted
+        /// prior at this weight. Calibrated against the measured per-(resource,
+        /// cluster) transacted-volume EMA distribution on the reference fixture
+        /// (`goodsprobe`, 10×10, 3000 households, seeds 0–3, t=40..300):
+        /// positive delivered-volume EMAs read p10 0.29, p25 0.85, p50 1.37,
+        /// p90 8.23, max 51.5 (origin thinner: p25 0.08, p50 0.36, p90 5.56).
+        /// 1.0 ≈ delivered p25–median: a fraction-of-a-lot cluster is mostly
+        /// prior, a median cluster an even split, an active market (p90+)
+        /// mostly itself; origin markets, being thinner, read prior-heavier,
+        /// which is honest for sparser evidence. Swept over {0.25, 1, 4, 16}
+        /// (goodssweep, task #30 commit; seeds 0–3 at each point, plus 9/13/25
+        /// at 1×): every point passes both goods checks; tilt corr reads
+        /// 0.983–0.989 at 0.25×, 0.979–0.989 at 1×, 0.959–0.974 at 4×,
+        /// 0.926–0.945 at 16×, with the localized-stat spread narrowing as the
+        /// prior swamps evidence (mean rel spread 4.7–5.6% → 3.6–4.3% →
+        /// 2.2–2.8% → 1.0–1.3%) — 1.0 keeps a median market's own price
+        /// expressed without letting one lot set a place's price (the n0→0
+        /// and n0→10⁶ endpoints are the goods-localization check's mutants,
+        /// measured red there).</summary>
+        public double TradePricePriorVolume = 1.0;
 
         // ---- construction (design §4.6) -------------------------------------
         public int ConstructionLag = 45;          // ticks to complete

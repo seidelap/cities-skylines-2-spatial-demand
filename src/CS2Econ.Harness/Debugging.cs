@@ -783,6 +783,22 @@ namespace CS2Econ.Harness
             return 0;
         }
 
+        /// <summary>Citywide realized prior plus the min/max per-cluster origin
+        /// statistic — the localized price's spread at a glance (§4.7 honesty:
+        /// the realized stat floats inside the parity band; a spread of zero
+        /// means no localization is expressing on this fixture).</summary>
+        private static string PriceSpread(TradeSystem trade, Res r, WorldState w)
+        {
+            double lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+            for (int c = 0; c < w.Clusters.Length; c++)
+            {
+                double v = trade.OriginStat(r, c);
+                if (v < lo) lo = v;
+                if (v > hi) hi = v;
+            }
+            return $"{trade.CityOrigin(r):F2}[{lo:F2}..{hi:F2}]";
+        }
+
         /// <summary>The per-100-ticks status block shared by `debug` and `map`.</summary>
         private static void PrintTickSummary(WorldState w, EconomyEngine engine, EconParams p)
         {
@@ -840,11 +856,108 @@ namespace CS2Econ.Harness
                 $"built={built} uc={uc} empty={empty} L={string.Join(",", levelHist.Skip(1))} | " +
                 $"starts={engine.Construction.StartedTotal} aband={engine.Construction.AbandonedTotal} | " +
                 $"raw sust={rawSust:F0} x={rawExp:F0}/i={rawImp:F0} goods sust={goodsSust:F0} x={goodsExp:F0}/i={goodsImp:F0} | " +
-                $"pOre={engine.Trade.LocalPrice(Res.Ore):F2} pMetals={engine.Trade.LocalPrice(Res.Metals):F2} | " +
+                $"pOre={PriceSpread(engine.Trade, Res.Ore, w)} pMetals={PriceSpread(engine.Trade, Res.Metals, w)} | " +
                 $"wedgeΣ={wedgeSum:F0} LRΣ={lrSum:F0} avgAssess={assessSum / Math.Max(1, occupiedRes):F2} | " +
                 $"displ={engine.DisplacementExits.Count} " +
                 $"arr={engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0} dep={engine.LastFlows.DeparturesBySegment?.Sum() ?? 0} " +
                 $"drift={w.Ledger.Drift():E1}");
+        }
+
+        /// <summary>`harness goodsprobe` — measurement aid for the local
+        /// goods-price work (task #30): on the reference fixture (10×10
+        /// clusters, 3000 seed households, default flags, seeds start..start+3),
+        /// print (a) the per-(resource, cluster) transacted-volume EMA
+        /// distribution over t=40..300 — what calibrates the shrinkage prior
+        /// weight EconParams.TradePricePriorVolume — (b) the per-lot bounds the
+        /// clearing comments state: worst phase-2 seller regret, worst band
+        /// floor violation, and the buyer-side band ceiling in its three
+        /// references (marginal unit, marginal lot, tick-opening parity —
+        /// TradeSystem.MeasureBand), and (c) the end-state per-resource spread
+        /// of the delivered/origin statistics against the citywide prior.
+        /// Prints, asserts nothing.</summary>
+        public static int GoodsProbe(ulong startSeed, int ticks)
+        {
+            var dEv = new List<double>();   // positive delivered-volume EMA samples
+            var oEv = new List<double>();
+            long dZero = 0, oZero = 0, cells = 0;
+            double worstRegret = double.NegativeInfinity, worstFloor = double.NegativeInfinity;
+            double worstUnit = double.NegativeInfinity, worstLot = double.NegativeInfinity;
+            double worstOpen = double.NegativeInfinity;
+            for (ulong seed = startSeed; seed < startSeed + 4; seed++)
+            {
+                var p = new EconParams();
+                var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+                var sim = Sim.Create(cfg, p, new FeatureFlags());
+                var tel = new List<TradeSystem.SettleRecord>();
+                TradeSystem.SettleTelemetry = tel;
+                try
+                {
+                    for (int t = 1; t <= Math.Max(300, ticks); t++)
+                    {
+                        sim.Engine.Step();
+                        if (t < 40 || t % 20 != 0) continue;
+                        for (int r = 0; r < ResourceCatalog.Count; r++)
+                        {
+                            if (!ResourceCatalog.IsTradable((Res)r)) continue;
+                            for (int c = 0; c < sim.Access.ClusterCount; c++)
+                            {
+                                cells++;
+                                double dv = sim.Engine.Trade.DeliveredEvidence((Res)r, c);
+                                double ov = sim.Engine.Trade.OriginEvidence((Res)r, c);
+                                if (dv > 0.01) dEv.Add(dv); else dZero++;
+                                if (ov > 0.01) oEv.Add(ov); else oZero++;
+                            }
+                        }
+                    }
+                }
+                finally { TradeSystem.SettleTelemetry = null; }
+                foreach (var rec in tel)
+                {
+                    worstRegret = Math.Max(worstRegret, rec.WorstPhase2Regret);
+                    worstFloor = Math.Max(worstFloor, rec.WorstFloorViolation);
+                    worstUnit = Math.Max(worstUnit, rec.WorstMarginExcess);
+                    worstLot = Math.Max(worstLot, rec.WorstMarginExcessLot);
+                    worstOpen = Math.Max(worstOpen, rec.WorstOpenParityExcess);
+                }
+                // End-state spread per resource on this seed.
+                Console.WriteLine($"--- seed {seed} end-state (t={Math.Max(300, ticks)}):");
+                for (int r = 0; r < ResourceCatalog.Count; r++)
+                {
+                    var res = (Res)r;
+                    if (!ResourceCatalog.IsTradable(res)) continue;
+                    double lo = double.PositiveInfinity, hi = double.NegativeInfinity, evTot = 0;
+                    int active = 0;
+                    for (int c = 0; c < sim.Access.ClusterCount; c++)
+                    {
+                        double v = sim.Engine.Trade.DeliveredStat(res, c);
+                        lo = Math.Min(lo, v); hi = Math.Max(hi, v);
+                        double ev = sim.Engine.Trade.DeliveredEvidence(res, c);
+                        evTot += ev;
+                        if (ev > 0.01) active++;
+                    }
+                    Console.WriteLine($"  {res,-9} city D={sim.Engine.Trade.CityDelivered(res):F3} "
+                        + $"O={sim.Engine.Trade.CityOrigin(res):F3} stat[{lo:F3}..{hi:F3}] "
+                        + $"activeClusters={active} ΣdeliveredEv={evTot:F1}");
+                }
+            }
+            double P(List<double> xs, double q)
+            {
+                if (xs.Count == 0) return 0;
+                xs.Sort();
+                return xs[Math.Min(xs.Count - 1, (int)(xs.Count * q))];
+            }
+            Console.WriteLine($"\nvolume-EMA samples (per res×cluster×20-tick, {cells} cells): "
+                + $"delivered {dEv.Count} positive / {dZero} ~zero; origin {oEv.Count} / {oZero}");
+            Console.WriteLine($"delivered EMA p10={P(dEv, 0.10):F2} p25={P(dEv, 0.25):F2} "
+                + $"p50={P(dEv, 0.50):F2} p90={P(dEv, 0.90):F2} max={P(dEv, 1.0):F2}");
+            Console.WriteLine($"origin    EMA p10={P(oEv, 0.10):F2} p25={P(oEv, 0.25):F2} "
+                + $"p50={P(oEv, 0.50):F2} p90={P(oEv, 0.90):F2} max={P(oEv, 1.0):F2}");
+            Console.WriteLine($"worst phase-2 regret (ask − realized net) = {worstRegret:F4}; "
+                + $"worst band floor violation (ask+haul − settled) = {worstFloor:E2}");
+            Console.WriteLine($"band ceiling — settled local price − cheapest alternative at the margin: "
+                + $"unit-granularity {worstUnit:F4}, lot-granularity {worstLot:E2}; "
+                + $"vs tick-opening import parity {worstOpen:F4}");
+            return 0;
         }
 
         /// <summary>`harness jobspread` — measurement aid for the prospect

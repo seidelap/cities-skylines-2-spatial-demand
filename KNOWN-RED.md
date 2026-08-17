@@ -11,7 +11,7 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (33 checks)
+## verify (35 checks)
 
 29 at the per-cluster prospect-odds commit (28 plus prospect-local-odds;
 seeds 0–7 and 25 measured 29/29 there, canary 39/39) plus the three
@@ -28,6 +28,18 @@ and 9; mutants that zero the queue build, zero the not-standing read, or
 corrupt the read rank by one all flip it red (same commit's measurement
 runs, seeds 0–1).
 
+The 34th and 35th are the task #30 goods checks (goods-price localization
+level/tilt/thin, and per-resource goods-settlement reconciliation), added
+at the local-goods-prices commit; `goodssweep` runs both alone across
+seeds. Measured verdicts and their mutant runs are recorded in the checks'
+own comments (TestRunner.cs) and in the rows below where they moved
+standing reds. The settlement check's band legs were REBUILT at the fix-30
+commit: the landed pair compared P_j against quantities P_j is built from
+and passed a mutant that settled every local lot at double the clearing
+price; the legs now compare the price buyers were actually debited against
+a destination alternative rebuilt from the posted exit laws, on a second
+capacity-capped arm as well, and P_j×2 / P_j×½ each turn one red.
+
 **THE DEFAULT FLIPPED at the flip commit**: `FeatureFlags.HousingAuction`
 ships TRUE — migration as prospects, housing as the assignment market. The
 decision was made on a full measured inventory of both arms (all raw runs in
@@ -42,10 +54,27 @@ unchanged (both canaries 39/39). At the flip commit: verify 33/33 on seed 1,
 unchanged numbers), 32/33 on seed 13 (Weber). The posted path stays
 reachable via `--posted` and covered by the pinned arms while it ships.
 
+At the LOCAL-GOODS-PRICES commit (task #30): verify 35/35 on seeds 1, 9
+and 13 — the seed-13 Weber red and the seed-9 occupancy red both healed,
+rows below — and 34/35 on seed 25 (occupancy channel, newly observed
+there; row below). Canary 39/39, laborcanary 39/39. Fingerprint default
+lanes accepted with the reason ("goods prices localized to realized
+per-cluster transactions; local freight now paid to OutsideWorld").
+
+At the FIX-30 commit (adversarial review F1/F2 on task #30): behavior
+unchanged from the local-goods-prices commit — the diff is the goods
+settlement check's band legs (the landed pair could not fail; rebuilt
+against an independently recomputed destination alternative, with a
+capacity-capped second arm), comment/doc corrections, and the registry
+rows below. Same verdicts: verify 35/35 on seeds 1, 9, 13 and 34/35 on
+seed 25, canary 39/39, laborcanary 39/39, fingerprint lanes unmoved (no
+new stanza). The occupancy row below now carries the 57-seed `occsweep`
+inventory the previous row said had not been run.
+
 | Seed | Check | Status | Attribution |
 |---|---|---|---|
-| 13 | Weber: extraction follows geology; recipes follow input sourcing | red | New with the DEFAULT FLIP: on the auction-default world, 6 of 13 single-input industrials sit on the cheapest-sourced recipe (46% vs the ≥55% bar; the margin is 2 firms) while the extraction leg is clean at 100% and the sector is bigger and more diverse than required (13 firms, 4 outputs). Seed-13-specific: the same check reads 100% on flip seeds 0-1 and passes 2, 3, 9, 25; posted-arm seed 13 was green. Precedent: Weber was the red on auction-arm seed 0 at `c0c584d` — auction-world Weber fragility moves seeds, it is not new. Wants its own investigation: which 7 firms, their delivered-cost gaps, and whether entry timing under prospect-driven population growth outruns trade-price settling. Unowned. |
-| 9 | occupancy channel: realized vacancy softens rent (price responds on a cleared submarket) | red | PINNED POSTED at the flip commit (the check tests the posted path's own transmission; its world and verdicts are unchanged by the flip). Predates `2eeefc3`; fails identically at `2eeefc3`, `7dcaf08`, `ffd9a03`, `6104275`, `694fbd3`, HEAD. Not an auction-era regression. Unowned. THE CHECK WAS REWRITTEN at the check-debt commit — dead fallback arm and never-firing vacancy disjunct deleted, cleared-submarket selection made a required leg — and the rewrite changed no verdict: per-seed verdicts identical on all 57 occsweep seeds (0–49, 138, 208, 271, 327, 549, 910, 6550), 54 pass, with 9, 910 red as before and 41 red under both forms (newly observed by that sweep, not newly caused; failure mode on all three: the first-cleared cluster's bid does not move ≥ 5 % when its FillEma is dropped 1.0 → 0.2, while later clusters on the same seeds respond strongly — a selection-composition question, not a channel-severed one). |
+| 0 | Weber: extraction follows geology; recipes follow input sourcing | red | NEW STATE AT THE LOCAL-GOODS-PRICES COMMIT (task #30), and a different leg than the seed-13 red it replaces: the DIVERSITY leg (1 distinct industrial output vs the >=2 bar) with the recipe leg PERFECT (6/6 single-input industrials on the cheapest-sourced recipe, extraction 100%). The localization delivered the check's premise — recipes now follow input sourcing because entrants price output at realized per-cluster comparables — and in doing so removed the citywide-EMA wobble that had been manufacturing output diversity as a freeze artifact (the seed-13 investigation row measured that diversity was entrants locking in different snapshots of one oscillating scalar). On this fixture Food stays the margin-dominant recipe while the city remains a food importer, so every entrant honestly picks it; diversity must now come from real price feedback (local Food surplus depressing realized origin prices), which this small fixture does not reach in 300 ticks. webersweep at this commit, seeds 0-6: 5/7 pass — 0 red (this row), 4 red on the EXTRACTION leg (75% = 6/8, recipe 82%, 3 outputs — same mode and number as the pre-existing row, base also red there), 6 HEALED (was extraction-red at base, now 100%/80%/2 outputs), 13 healed (verify 35/35, see Closed). Unowned. |
+| 25 | occupancy channel: realized vacancy softens rent (price responds on a cleared submarket) | red | PINNED POSTED check. **Row rewritten at the fix-30 commit against the family's own 57-seed instrument; the previous row's 4-seed claim and its leg attribution were both wrong.** `occsweep --seeds 50` (seeds 0–49 + 138, 208, 271, 327, 549, 910, 6550) run at base 554b56a and at the fix commit: **base 54/57, failing {9, 41, 910}; fix 48/57, failing {7, 22, 25, 27, 30, 31, 41, 44, 138}** — net −6, ten verdicts moved (8 red-ward, 2 heals: 9 and 910). WHICH LEG: seed 25 fails the FillEma worst-tracking-error leg (worst err 0.663 vs the `< 0.5` conjunct), NOT the price leg — its price leg passes (first-cleared cluster 0: bid 2.333 at full occupancy → 0.534 at 20 %). The previous row attributed it to the price leg; that was a misreading of the detail line, corrected here. Same for 7 (0.500), 22 (0.500), 31 (0.500), 44 (0.600); only 27, 30, 138 are price-leg "NO response". WHY THE WORLD MOVED: item #30 rewrites goods clearing and settlement for BOTH market paths (the trade tier is shared, TierD is on in the posted world) and adds the LocalFreight outflow, so the 120-tick posted world composition differs — **0 of 57 seeds produce a byte-identical detail line** at base vs fix. The posted TRANSMISSION is untouched by construction: `ResidentialBidPerUnit`, the function this check probes, takes no `IPriceContext`, so no goods price can reach it. WHAT MOVED, PER LEG: the substantive price leg is unharmed — "NO response" on 3/57 at base vs 4/57 at fix, and the median bidEmpty/bidFull DEEPENS 0.503 → 0.435; the tracking leg's tail rises — worst err max 0.4990 → 0.6630, mean 0.2453 → 0.2842, seeds at or above the 0.5 bound 0 → 5 (the bound had 0.001 of headroom at base, and this check's own comment says to treat a red there as the bound binding, not noise). ATTRIBUTION RUN: `occsweep --seeds 50 --mutant-citywide-goods` (consumers read the citywide prior again; the clearing/settlement/freight rewrite kept) reads 52/57 failing {12, 13, 14, 46, 208} with worst err mean 0.2349, max 0.5000, 1 seed at the bound — so the tracking-error tail comes from the CONSUMER-side price localization, not from the clearing rewrite, and the failing SET re-rolls completely under any world perturbation (base, mutant and fix share only seed 41). No bound moved, no leg re-armed. Unowned; the check family's zero-headroom worst-err bound is the standing debt. |
 
 ## Measured dead ends — do not retry blind
 
@@ -86,6 +115,47 @@ structurally zero, and an LP-optimality gap of 0.01–0.03% of LP* where the
 resumed regime measured 0.81–1.61%.
 
 Seeds 0–7 and 13 are 27/27 at the fix commit; seed 25 is the one canary red.
+
+### Industrial recipe re-evaluation (retooling) for the seed-13 Weber red
+
+Built and measured at the webersweep-commit round; REVERTED — this dead end
+is NOT resolved, it is parked behind task #30 (patch preserved in the
+session record; the sweep and verify numbers below are re-measured from it
+per seed at the registry-correction commit — the persistence-window and
+retool-count numbers are the build round's own probe measurements). The
+mechanism was charter-clean: each industrial firm re-ran its own Weber
+comparison from its own location at current prices each tick and switched
+recipe when another beat its own, net of an amortized retooling wedge (the
+household moving-cost form — a per-firm
+hash draw over an amortization horizon, no cash gate: worker-collective
+firms measured money 0 to −17 against a ~196 lump, so a paid lump can never
+clear), after a measured persistence window (transient dominance
+self-reverses ≤13 consecutive ticks; genuine dominance persists 26–86+; at
+persistence 20 one firm retooled every ~20 ticks — the near-flat
+cross-recipe margins let the argmax rotate — at 40 churn damped to
+18 retools/16 firms/300 ticks). Result: continuous re-evaluation walks
+firms toward the one profit argmax the citywide LocalPrice statistic plus
+one-sided basket demand pick (Food nearly everywhere — on the seed-13
+fixture at check time it is the re-run argmax of EVERY single-input
+industrial), and the check gets worse, not better. Measured: Weber check
+6/26 seeds pass with the mechanism (fails 0, 4–6, 8–15, 17–22, 24, 25) vs
+23/26 without (fails 4, 6, 13 — 4 and 6 are the extraction-leg reds in the
+row above, red on BOTH arms). The failure mode is MIXED, not the uniform
+"100%-aligned Food monoculture" first recorded here: 17 of the 20 failing
+seeds do read 1 distinct industrial output, but 3 fail with 2 outputs
+(0, 4, 9); alignment reads 100% on 13 failing seeds and 40–73% on the
+other 7 (40% on seed 5, 50% on 4 and 9, 57–73% on 0, 14, 17, 20); and 7
+failing seeds (0, 4, 6, 15, 21, 22, 24) read fewer than 5 single-input
+industrials at check time — under re-evaluation the single-input
+population itself thins (firms end on the multi-input Machinery recipe or
+dead; not decomposed which), failing the check's population floor. Seed-13
+verify 31/33 with the mechanism (diversity leg red AND the seed-13
+pairwise-stability knife-edge re-red: improving swaps 1, best 0.194) vs
+32/33 at base. The baseline's output diversity is partly a FREEZE
+ARTIFACT — entrants at different ticks locked in different argmaxes. Do
+not retry re-evaluation until local prices are per-cluster (task #30):
+with a citywide price there is one argmax, and any re-evaluation
+mechanism, whatever its damping, walks firms toward it.
 
 ### Labor: household-atomic multi-earner demand with exact-set displacement
 
@@ -135,16 +205,26 @@ Pre-flip history for these rows: vacancy/levels/perf failed byte-identically
 at `2eeefc3`, `6104275`, and the posted-default HEADs (seed-1 runs; true
 origins untested further back).
 
+Targeted re-measure at the LOCAL-GOODS-PRICES commit (full battery not
+re-run — the orchestrator runs it at track landings): tradebend GREEN
+(41% bend — Closed table), modes GREEN (progression and equalization
+unchanged, the single-source invariance held as predicted), stalled GREEN
+(29 abandoned mid-build at the bust), perf GREEN (ratio 1.61 vs <1.8),
+boombust still red on the same line (task #42's row below). levels not
+re-run.
+
 | Scenario | Failing line | Attribution |
 |---|---|---|
 | levels | `Spearman(realized level, ℓ*) spatial 0.27 vs vanilla 0.03` (bar ≥0.35 absolute; the ≥+0.15 relative leg is beaten at +0.24) | Auction-default measurement with the FORECAST ℓ* oracle — `realized:true` was built and measured WRONG at the flip round (0.27 → −0.21; the auction posts prices only for stock that exists, so the argmax mixed suppressed realized prices with forecasts — see the scenario's comment). The 0.35 bar and 2600-tick horizon were tuned on posted-path transients; wants a re-measured horizon before any bar move. Unowned. |
-| tradebend | `bend 30 %` vs the ≥30 % bar (marginal 1.83 vs flat 2.60) | Pre-existing near-bar red at this seed on BOTH arms (posted sustained 78/tick, auction 69) — not flip-caused. Unowned. |
-| boombust | `migration-margin response +0 vs departure response +440` (2667 arrivals realized) | REAL mechanism finding, isolated at the flip commit once the margin telemetry was honest (it now sums posted Desired + prospect Admitted + Priced — the decision before the absorption budget, both paths): the auction path's come/stay decision reads only RELATIVE within-city access (`HousingAuction._premium` normalizes `AccessValue` by citywide `MeanAccess`), so a spatially UNIFORM amenity pulse moves neither premiums nor the reservation and is structurally invisible to the inflow decision — while a uniformly better city should win each individual's city-vs-outside comparison. The outflow side responds (+440 decline exits) through slower channels. Wants: the OUTSIDE region's access level anchoring the come/stay margin (a genuine property of the outside world — the same demotion the outside wage and outside employment odds already got), not `MeanAccess`. Task #42. |
+| boombust | `migration-margin response +0 vs departure response +440` (2667 arrivals realized) | REAL mechanism finding, isolated at the flip commit once the margin telemetry was honest (it now sums posted Desired + prospect Admitted + Priced — the decision before the absorption budget, both paths): the auction path's come/stay decision reads only RELATIVE within-city access (`HousingAuction._premium` normalizes `AccessValue` by citywide `MeanAccess`), so a spatially UNIFORM amenity pulse moves neither premiums nor the reservation and is structurally invisible to the inflow decision — while a uniformly better city should win each individual's city-vs-outside comparison. The outflow side responds (+440 decline exits; re-measured +430 at the local-goods-prices commit — state unchanged) through slower channels. Wants: the OUTSIDE region's access level anchoring the come/stay margin (a genuine property of the outside world — the same demotion the outside wage and outside employment odds already got), not `MeanAccess`. Task #42. |
 
 ## Closed
 
 | What | Was | Resolution |
 |---|---|---|
+| seed 13, Weber recipe leg | red since the flip commit (6/13 on the cheapest-sourced recipe, 46% vs >=55%; investigation row concluded the citywide LocalPrice statistic was the binding cause and parked the fix behind task #30) | Green at the local-goods-prices commit — verify --seed 13 reads 35/35. Exactly the predicted mechanism: entrants and the check's oracle now price output at realized per-cluster origin statistics, so the recipe argmax and the cheapest-input oracle agree where the raw-cost structure does. Not a targeted fix — the Weber knife-edge MOVED (seed 0 now red on the DIVERSITY leg, row above): localized prices deliver alignment and remove the wobble that manufactured diversity. |
+| seed 9, occupancy channel (posted pinned) | red since before 2eeefc3 through the flip commit (price leg on the first-cleared cluster) | Green at the local-goods-prices commit (verify 35/35): the posted world's firm money and land bids moved with the per-cluster goods prices and the first-cleared-cluster composition changed. Not a targeted fix — the same knife-edge came up red on seed 25 and on six more seeds the gate does not run (row above, 57-seed `occsweep` at the fix-30 commit: 54/57 → 48/57, seeds 9 and 910 healing while 7, 22, 25, 27, 30, 31, 44, 138 go red). Confirmed green at the fix-30 commit's sweep: cluster 1 bid 0.597 → 0.131 (price leg responds; base read 1.172 → 1.172, no response). The check family's selection-composition question stands, and so does its zero-headroom worst-tracking-error bound. |
+| tradebend scenario | near-bar red at the flip commit (bend 30% vs the >=30% bar, marginal 1.83 vs flat 2.60) | Green at the local-goods-prices commit: bend 41% (sustained 81/tick, marginal 1.53 vs flat 2.60). Phase-2 exports now draw cheapest-haul-first per (source, exit) pair instead of at a volume-weighted mean haul, so the busiest exit carries a deeper sustained position. The bar did not move — it was measured against the exit law, which is untouched. |
 | seeds 20, 22, 23, 26, 28, 208, auction equilibrium | red (`unsold-above-reserve`, the CutVacancies indifference defect, bisected to `694fbd3`, resized 2→6 by the canary's first sweep) | Fixed by making every repair round a full re-clear from the reserve and deleting CutVacancies, the vacancy chains and the wait queues outright. The invariant "a non-full door posts its reserve" is now structural (SetPrices clamps the non-full branch; nobody mid-build holds a slot while bidding). Canary 33/39 → 38/39; LP-optimality gap 0.81–1.61% → 0.01–0.03% of LP*. Fiscal shift recorded in the fingerprint log: sumLR −0.95% (high −17.5%, low −13.2%), meanRent −7.7%, treasury −13.5%, household money +5.7% — phantom scarcity leaving the tax base. |
 | seed 25, housing auction is a competitive equilibrium | red at `70ef971` (knife-edge ε-residual: envy 2 households, worst 1.50% vs the ~1% band, converged True, clean True; the one residual of canary 38/39) | Green at the per-cluster prospect-odds commit — canary 39/39, verify 29/29 — but NOT a targeted fix: undiluted prospect budgets change the admission mix on that fixture and the ε-residual falls back inside the band. The knife-edge CLASS is untouched; if seed 25 (or a neighbor) re-reds on later auction work, attribute to that class, not to the prospect-odds change. |
 | boombust `--auction` printed "0 arrivals realized" | telemetry artifact at `70ef971`, not a fact | The scenario summed only `LastFlows` arrivals, which the auction path structurally zeroes; prospect admits live in `LastProspects`. Measured with admits counted: HEAD mechanism realizes 2507 arrivals on the same fixture (local-odds change: 2569). The scenario's ASSERTED margin still reads `DesiredBySegment` (+0 on the auction path) — that assertion dies with the posted path, not with prospect work. |

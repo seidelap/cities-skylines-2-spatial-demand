@@ -457,6 +457,57 @@ namespace CS2Econ.Harness
             return Math.Min(failed.Count, 100);
         }
 
+        /// <summary>The Weber check alone across seeds — same rationale as
+        /// <see cref="Canary"/> (auction-world Weber fragility moves seeds:
+        /// the red was on seed 0 at c0c584d and on seed 13 at the flip
+        /// commit). Two 300-tick sims per seed; this is the instrument for
+        /// any change to recipe choice, retooling, or the trade prices they
+        /// read.</summary>
+        public static int WeberSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"weber sweep: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                WeberRecipeChoice(seed);
+                bool ok = Results.Count > before && Results[Results.Count - 1].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"weber sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass "
+                + $"({sw.Elapsed.TotalSeconds:F0}s)"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
+        /// <summary>The two task #30 goods checks alone across seeds — same
+        /// rationale as <see cref="Canary"/> (cheap fixtures, many seeds), and
+        /// the harness for the n0 sweep and for demonstrating the
+        /// `--mutant-citywide-goods` mutant is caught on every seed.</summary>
+        public static int GoodsSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"goods sweep: {seeds.Count} seeds"
+                + (TradeSystem.MutantCitywideGoodsPrice ? " [MUTANT: citywide goods price]" : ""));
+            var failed = new List<ulong>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                GoodsPriceLocalization(seed);
+                GoodsSettlementReconciles(seed);
+                bool ok = Results.Count == before + 2
+                          && Results[Results.Count - 1].pass && Results[Results.Count - 2].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"goods sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass "
+                + $"({sw.Elapsed.TotalSeconds:F0}s)"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
         /// <summary>The assessment-tracks-price fixture alone (both its
         /// checks: the L1–L3 relation and the shadow-queue leg) — ~7 s
         /// against ~120 s for the full suite (measured, seed 1, check-debt
@@ -481,6 +532,8 @@ namespace CS2Econ.Harness
             Timed("annuity", AnnuityRoundTrip);
             Timed("interior-optimum", InteriorOptimum);
             Timed("trade-laws", () => TradeLaws(seed));
+            Timed("goods-local-price", () => GoodsPriceLocalization(seed));
+            Timed("goods-settlement", () => GoodsSettlementReconciles(seed));
             Timed("weber", () => WeberRecipeChoice(seed));
             Timed("vacancy-kernel", () => VacancyKernelConservation(seed));
             Timed("claim-vacancy-wash", () => ClaimVacancyWash(seed));
@@ -665,6 +718,281 @@ namespace CS2Econ.Harness
                   $"burst {b1:F1} -> {exit.TransientB:F1}");
         }
 
+        /// <summary>THE TASK #30 HEADLINE: the delivered goods price a firm
+        /// reads is a statistic of ITS PLACE — realized transactions at its
+        /// cluster, shrunk to the citywide realized prior where evidence is
+        /// thin — not one citywide scalar. Level/tilt/thin three-leg build on
+        /// the prospect-local-odds template.
+        ///
+        /// Fixture: the ExtractorHeavy region config (a producing corner and
+        /// remote consuming clusters — the same geography the Weber check
+        /// measures on).
+        ///
+        /// LEVEL — the localization redistributes, it does not re-level: per
+        /// resource with real flow, the volume-weighted mean of per-cluster
+        /// delivered stats stays within LevelBand of the citywide stat.
+        /// (Nearly structural — the stats are shrunk toward the same prior the
+        /// weights define — so this leg alone is NOT the falsifier; it pins
+        /// the aggregate while the tilt leg does the work.)
+        ///
+        /// TILT — remote clusters pay more: across clusters with delivered
+        /// evidence, the evidence-weighted correlation between (DeliveredStat −
+        /// city)/city and the cluster's haul-to-cheapest-source is positive.
+        /// Measured by `goodssweep --seeds 7` (seeds 0–3, 9, 13, 25) at the
+        /// fix-30 commit: corr 0.979–0.989, mean rel spread 3.63–4.33%, 4
+        /// qualifying resources each, level dev ≤ 0.04% — the same numbers
+        /// the task #30 commit's sweep read. Under
+        /// `--mutant-citywide-goods` (every consumer AND this check read the
+        /// prior — the restored defect verbatim) the deviations are exactly
+        /// zero: corr 0.000, spread 0.00% → 0/2 seeds pass
+        /// (`goodssweep --seeds 2 --mutant-citywide-goods` at the fix-30
+        /// commit; 0/7 at the task #30 commit). n0 → 10⁶ (prior swamps all
+        /// evidence) reads spread 0.00% with residual corr 0.558–0.592 from
+        /// sub-1e-4 deviations — the SpreadFloor leg is what fails it: 0/4 on
+        /// seeds 0–3 (the task #30 commit's n0 sweep; the shrinkage path is
+        /// untouched since).
+        ///
+        /// THIN — a place with no evidence holds the prior and nothing else:
+        /// clusters with delivered evidence below MinClusterEvidence sit
+        /// within ThinBand of the prior. n0 → 0 (raw per-cluster means, a
+        /// 1-lot market's one price becomes a place's "price") measured worst
+        /// thin deviation 4.29–10.30% vs the ≤2% band → 0/7 seeds (tilt
+        /// survives at 0.968–0.991 there; THIN is the leg that catches it —
+        /// the task #30 commit's n0 sweep). The band is generous to the
+        /// healthy case: worst 0.74% (seed 9; the rest ≤ 0.11%) over the
+        /// fix-30 commit's `goodssweep --seeds 7` — the shrinkage bound is
+        /// ev/(ev+n0)·|ema − prior| with ev < 0.25, n0 = 1.</summary>
+        private static void GoodsPriceLocalization(ulong seed)
+        {
+            var p = new EconParams();
+            var sim = Sim.Create(new SyntheticCity.Config
+                                 { Seed = seed, SeedHouseholds = 6000, ExtractorHeavy = true, ExtractorPrebuilt = 0.25 },
+                                 p, new FeatureFlags());
+            sim.Run(300);
+            var trade = sim.Engine.Trade;
+            var w = sim.W;
+            int C = sim.Access.ClusterCount;
+            double fpm = trade.FreightCostPerMinute;
+
+            // Every number on these lines is from `goodssweep --seeds 7`
+            // (seeds 0–3, 9, 13, 25) at the fix-30 commit unless it names
+            // another run; they agree with the doc comment above.
+            const double MinResEvidence = 5.0;   // sustained volume for a resource to qualify
+            const double MinClusterEvidence = 0.25; // tilt above this; THIN leg below it
+            const double LevelBand = 0.10;       // healthy level dev ≤ 0.04 %
+            const double TiltCorrBar = 0.30;     // healthy 0.979–0.989; citywide mutant reads 0.000
+            const double SpreadFloor = 0.005;    // healthy 3.63–4.33 %; n0→10⁶ reads 0.00 %
+            const double ThinBand = 0.02;        // healthy worst 0.74 % (seed 9); n0→0 reads 4.29–10.30 %
+
+            // Producing clusters per resource (from standing firms) + exit
+            // clusters: a destination's cheapest source is whichever is nearer.
+            var producerClusters = new List<int>[ResourceCatalog.Count];
+            for (int r = 0; r < ResourceCatalog.Count; r++) producerClusters[r] = new List<int>();
+            foreach (var f in w.Firms)
+                if (!f.Dead && f.Parcel >= 0
+                    && (f.Sector == ZoneKind.Extractor || f.Sector == ZoneKind.Industrial))
+                {
+                    int c = w.Parcels[f.Parcel].Cluster;
+                    if (!producerClusters[(int)f.Output].Contains(c)) producerClusters[(int)f.Output].Add(c);
+                }
+
+            int qualifying = 0;
+            double corrSum = 0, corrW = 0, worstLevel = 0, worstThin = 0, spreadSum = 0;
+            for (int r = 0; r < ResourceCatalog.Count; r++)
+            {
+                var res = (Res)r;
+                if (!ResourceCatalog.IsTradable(res)) continue;
+                double wgt = ResourceCatalog.Weight[r];
+                double city = trade.CityDelivered(res);
+                if (city <= 1e-9) continue;
+                var srcs = new List<int>(producerClusters[r]);
+                foreach (var x in w.Exits) if (x.Resource == res) srcs.Add(x.Cluster);
+                if (srcs.Count == 0) continue;
+
+                double evTot = 0, statVw = 0;
+                var dev = new List<double>(); var haul = new List<double>(); var wts = new List<double>();
+                double lo = double.PositiveInfinity, hi = double.NegativeInfinity;
+                for (int c = 0; c < C; c++)
+                {
+                    double ev = trade.DeliveredEvidence(res, c);
+                    double stat = trade.DeliveredStat(res, c);
+                    evTot += ev; statVw += ev * stat;
+                    if (ev >= MinClusterEvidence)
+                    {
+                        double h = double.PositiveInfinity;
+                        foreach (int s in srcs)
+                            h = Math.Min(h, sim.Access.Cost(s, c, AccessPurpose.Freight) * fpm * wgt);
+                        dev.Add((stat - city) / city); haul.Add(h); wts.Add(ev);
+                        lo = Math.Min(lo, stat); hi = Math.Max(hi, stat);
+                    }
+                    else
+                    {
+                        // Thin: mostly prior, whatever its one lot said.
+                        worstThin = Math.Max(worstThin, Math.Abs(stat - city) / city);
+                    }
+                }
+                if (evTot < MinResEvidence || dev.Count < 3) continue;
+                qualifying++;
+                worstLevel = Math.Max(worstLevel, Math.Abs(statVw / evTot / city - 1));
+                spreadSum += (hi - lo) / city;
+                // Evidence-weighted Pearson correlation of relative deviation
+                // against haul-to-cheapest-source.
+                double sw = 0, mx = 0, my = 0;
+                for (int i = 0; i < dev.Count; i++) { sw += wts[i]; mx += wts[i] * haul[i]; my += wts[i] * dev[i]; }
+                mx /= sw; my /= sw;
+                double sxx = 0, syy = 0, sxy = 0;
+                for (int i = 0; i < dev.Count; i++)
+                {
+                    sxx += wts[i] * (haul[i] - mx) * (haul[i] - mx);
+                    syy += wts[i] * (dev[i] - my) * (dev[i] - my);
+                    sxy += wts[i] * (haul[i] - mx) * (dev[i] - my);
+                }
+                double corr = sxx > 1e-12 && syy > 1e-12 ? sxy / Math.Sqrt(sxx * syy) : 0;
+                corrSum += corr * evTot; corrW += evTot;
+            }
+            double meanCorr = corrW > 0 ? corrSum / corrW : 0;
+            double meanSpread = qualifying > 0 ? spreadSum / qualifying : 0;
+            Check("delivered goods price is a statistic of the place (level holds, remote clusters pay the haul, thin markets hold the prior)",
+                  qualifying >= 2 && worstLevel <= LevelBand && meanCorr >= TiltCorrBar
+                  && meanSpread >= SpreadFloor && worstThin <= ThinBand,
+                  $"{qualifying} qualifying resources: level dev {worstLevel:P2} vs ≤{LevelBand:P0}; "
+                  + $"tilt corr {meanCorr:F3} vs ≥{TiltCorrBar:F2} (mean rel spread {meanSpread:P2} vs ≥{SpreadFloor:P1}); "
+                  + $"worst thin-cluster dev {worstThin:P2} vs ≤{ThinBand:P0}");
+        }
+
+        /// <summary>Goods settlement reconciles per resource, per tick, and
+        /// the price it settles at sits inside the band.
+        ///
+        /// IDENTITY leg: the money firms actually gained minus what they paid
+        /// equals ExportRevenue − ImportCost − LocalFreight (the OutsideWorld
+        /// net). It compares the engine's realized firm credits/debits
+        /// (counted at the settlement site) against the trade-side scalars —
+        /// two independently maintained records, the ledger-reconciliation
+        /// discipline applied to one resource at a time. Mutant lineage
+        /// MUT-L1b: a 0.1% skim on the seller credit flips this check AND the
+        /// global per-sector reconciliation — both demonstrated at the task
+        /// #30 commit (skim run: worst identity gap 1.0e-3 on seeds 0 and 1
+        /// vs the 1e-9 bound; ledger reconciliation firms-sector 1.1e-3
+        /// posted / 7.3e-4 auction on seed 1) — the global check catching it
+        /// is the point of having it.
+        ///
+        /// BAND legs (rebuilt at the fix commit; the landed form compared
+        /// P_j against quantities P_j is built from and could not fail —
+        /// adversarial review F1). Both read the price buyers were actually
+        /// debited, recovered from the engine's own delivered-paid array, and
+        /// compare it against a destination alternative rebuilt from the
+        /// posted exit laws at the clearing margin (TradeSystem.MeasureBand):
+        ///   FLOOR — no seller pushed below ask_i + haul_ij on a route it
+        ///     served: ≤ 1e-9, measured 8.9e-16 across the sweep. Settling
+        ///     local lots at P_j×½ turns it red (5.8e+0, seed 0) while both
+        ///     ceilings go negative — the floor is the leg that catches
+        ///     under-pricing.
+        ///   CEILING, marginal LOT — the settled price never exceeds the
+        ///     cheapest source the clearing could have transacted a lot from:
+        ///     ≤ 1e-9, measured ≤1.6e-12 across the sweep (the two references
+        ///     agree to floating-point residue). Settling local lots at P_j×2
+        ///     turns it red (1.6e+1, seed 0) while the identity leg (5.5e-16)
+        ///     and the localization check (corr 0.989) both stay green —
+        ///     conservation and the tilt are blind to the price LEVEL, which
+        ///     is why this leg has to exist.
+        ///   CEILING, marginal UNIT — the same against exits holding less than
+        ///     a lot of headroom, i.e. the lot-granularity residue the design's
+        ///     band allows for: bound 1.0, measured worst 0.4573 (seed 25) on
+        ///     the capacity-capped arm and ≤1.6e-12 on the uncapped one, where
+        ///     no exit ever runs short of headroom.
+        /// Reported, not gated: the excess over TICK-OPENING import parity,
+        /// 0.3265–1.6939 over the sweep. Uniform-price clearing settles every
+        /// unit at the margin and the tick's own import draws deepen the laws
+        /// as it proceeds, so a settled price above the parity the tick opened
+        /// at is the depth of the posted laws, not a pricing error — the
+        /// buyer-side twin of the phase-2 seller regret (1.4130). Design §7's
+        /// band condition is corrected to read at the margin.
+        ///
+        /// TWO ARMS: the plain 10×10 fixture, where no exit has a capacity,
+        /// and the same with the capacity-capped sea backstop the
+        /// modeprogression scenario exercises (`SeaExit`). Without the second
+        /// arm the capacity paths — phase-1's lot-headroom skip, the
+        /// challenger's full-lot admission, and the unit/lot distinction the
+        /// ε measures — are never exercised: the uncapped arm reads the unit
+        /// and lot references identical to 1e-12.
+        ///
+        /// All band numbers above: `goodssweep --seeds 7` (seeds 0–3, 9, 13,
+        /// 25) at the fix commit; the mutant numbers, `goodssweep --seeds 1`
+        /// with the named edit in the settle loop, reverted.</summary>
+        private sealed class SettleArm
+        {
+            public int Ticks, Active, LocalActive;
+            public double Gap, Floor = double.NegativeInfinity, Ceil = double.NegativeInfinity;
+            public double CeilLot = double.NegativeInfinity, Open = double.NegativeInfinity;
+        }
+
+        private static SettleArm SettleArmRun(ulong seed, bool capacityCapped)
+        {
+            var p = new EconParams();
+            var sim = Sim.Create(new SyntheticCity.Config
+                                 { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed,
+                                   SeaExit = capacityCapped },
+                                 p, new FeatureFlags());
+            var tel = new List<TradeSystem.SettleRecord>();
+            TradeSystem.SettleTelemetry = tel;
+            try { sim.Run(200); }
+            finally { TradeSystem.SettleTelemetry = null; }
+
+            var a = new SettleArm { Ticks = tel.Count };
+            foreach (var rec in tel)
+            {
+                double outside = rec.ExportRevenue - rec.ImportCost - rec.LocalFreight;
+                double scale = Math.Max(1.0, Math.Max(Math.Abs(rec.FirmCredit) + Math.Abs(rec.FirmDebit),
+                                                      Math.Abs(outside)));
+                a.Gap = Math.Max(a.Gap, Math.Abs(rec.FirmCredit - rec.FirmDebit - outside) / scale);
+                a.Floor = Math.Max(a.Floor, rec.WorstFloorViolation);
+                a.Ceil = Math.Max(a.Ceil, rec.WorstMarginExcess);
+                a.CeilLot = Math.Max(a.CeilLot, rec.WorstMarginExcessLot);
+                a.Open = Math.Max(a.Open, rec.WorstOpenParityExcess);
+                if (rec.FirmCredit > 0 || rec.FirmDebit > 0) a.Active++;
+                if (rec.LocalFreight > 0) a.LocalActive++;
+            }
+            return a;
+        }
+
+        private static void GoodsSettlementReconciles(ulong seed)
+        {
+            // The lot-granularity residue the design's band allows for. Bound
+            // 1.0 against a measured worst of 0.4573 (seed 25, capacity-capped
+            // arm, `goodssweep --seeds 7` at the fix commit; the uncapped arm
+            // reads ≤1.6e-12 because no exit there ever runs short of
+            // headroom). The margin is deliberate and is NOT slack for a
+            // pricing bug: the residue is a spread between two exits serving
+            // one destination and nothing structural caps it, while any
+            // corruption of the settled price shows up at the price level
+            // itself — the P_j×2 mutant reads 15.6202 here. The tight leg is
+            // the marginal-LOT one below, bounded at 1e-9 and measured
+            // ≤1.6e-12 across the same sweep.
+            const double BandEpsUnit = 1.0;
+            var plain = SettleArmRun(seed, capacityCapped: false);
+            var capped = SettleArmRun(seed, capacityCapped: true);
+            double gap = Math.Max(plain.Gap, capped.Gap);
+            double floor = Math.Max(plain.Floor, capped.Floor);
+            double ceilUnit = Math.Max(plain.Ceil, capped.Ceil);
+            double ceilLot = Math.Max(plain.CeilLot, capped.CeilLot);
+            // Floors keep a dead fixture from passing vacuously: each arm must
+            // actually settle transactions, including local (freight-paying)
+            // lots.
+            Check("goods settlement reconciles per resource (firm money vs outside flows; settled prices inside the band)",
+                  plain.Active >= 100 && plain.LocalActive >= 10
+                  && capped.Active >= 100 && capped.LocalActive >= 10
+                  && gap < 1e-9 && floor <= 1e-9 && ceilLot <= 1e-9 && ceilUnit <= BandEpsUnit,
+                  $"{plain.Ticks}+{capped.Ticks} resource-ticks "
+                  + $"({plain.Active}/{capped.Active} with settled flow, "
+                  + $"{plain.LocalActive}/{capped.LocalActive} with local lots): "
+                  + $"worst relative identity gap {gap:E1} (bound 1e-9); "
+                  + $"band floor {floor:E1} (bound ≤1e-9); "
+                  + $"band ceiling over the marginal lot {ceilLot:E1} (bound ≤1e-9), "
+                  + $"over the marginal unit {ceilUnit:F4} (bound ≤{BandEpsUnit:F2}) "
+                  + $"[uncapped {plain.Ceil:E1}, capped {capped.Ceil:F4}]; "
+                  + $"over tick-opening parity {Math.Max(plain.Open, capped.Open):F4} (reported)");
+        }
+
         private static void WeberRecipeChoice(ulong seed)
         {
             // Resource-level spatial economics: extraction follows geology, and
@@ -697,7 +1025,10 @@ namespace CS2Econ.Harness
                 {
                     double suit = simExt.W.Clusters[c].ResourceSuitability[rr];
                     if (suit > bs) { bs = suit; bestBySuit = rr; }
-                    double val = suit * Math.Max(simExt.Engine.Trade.LocalPrice((Res)rr),
+                    // The oracle prices the same market the entrant does: the
+                    // realized origin statistic AT THE CLUSTER (or the exit
+                    // alternative), matching FirmBidPerSlot's extractor leg.
+                    double val = suit * Math.Max(simExt.Engine.Trade.OriginStat((Res)rr, c),
                                                  simExt.Engine.Trade.BestExportNet((Res)rr, c));
                     if (val > bv) { bv = val; bestByValue = rr; }
                 }

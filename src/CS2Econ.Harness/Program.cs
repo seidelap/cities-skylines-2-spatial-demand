@@ -26,6 +26,11 @@ namespace CS2Econ.Harness
                 // prospect-local-odds check can be shown to fail. Never a
                 // shipping mode.
                 if (args[i] == "--mutant-citywide-odds") { AccessState.MutantCitywideProspectOdds = true; continue; }
+                // MUTANT SWITCH (see TradeSystem.MutantCitywideGoodsPrice):
+                // restores the one-scalar citywide goods price so the
+                // goods-price localization check can be shown to fail. Never a
+                // shipping mode.
+                if (args[i] == "--mutant-citywide-goods") { TradeSystem.MutantCitywideGoodsPrice = true; continue; }
                 if (i + 1 >= args.Length) continue;
                 if (args[i] == "--seed") seed = ulong.Parse(args[i + 1]);
                 if (args[i] == "--only") only = args[i + 1];
@@ -80,6 +85,27 @@ namespace CS2Econ.Harness
                     foreach (ulong s in new ulong[] { 138, 208, 271, 327, 549, 910, 6550 })
                         if (!set.Contains(s)) set.Add(s);
                     return TestRunner.OccupancySweep(set);
+                }
+                case "webersweep":  // Weber check alone across seeds (see TestRunner.WeberSweep)
+                {
+                    int n = 26;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    var set = new List<ulong>();
+                    for (ulong s = 0; s < (ulong)n; s++) set.Add(s);
+                    return TestRunner.WeberSweep(set);
+                }
+                case "goodssweep":  // both task #30 goods checks across seeds (see TestRunner.GoodsSweep)
+                {
+                    int n = 4;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    var set = new List<ulong>();
+                    for (ulong s = 0; s < (ulong)(n > 4 ? 4 : n); s++) set.Add(s);
+                    foreach (ulong s in new ulong[] { 9, 13, 25 })   // the verify-gate seeds ride along
+                        if (set.Count < n) set.Add(s);
+                    for (ulong s = 4; set.Count < n; s++) if (!set.Contains(s)) set.Add(s);
+                    return TestRunner.GoodsSweep(set);
                 }
                 case "assesscheck": // assessment-tracks-price fixture alone (see TestRunner.AssessCheck)
                     return TestRunner.AssessCheck(seed);
@@ -172,6 +198,21 @@ namespace CS2Econ.Harness
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     HousingAuction.ScanOracle = true;
                     return Debugging.AuctionProbe(seed, ticks);
+                }
+                case "goodsprobe":
+                {
+                    // Task #30 measurement aid (see Debugging.GoodsProbe):
+                    // volume-EMA distribution for the shrinkage prior, per-lot
+                    // bounds, end-state stat spreads. --seed is the START of a
+                    // four-seed sweep (default 0..3, the reference set).
+                    int ticks = 300;
+                    ulong start = 0;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                        if (args[i] == "--seed") start = ulong.Parse(args[i + 1]);
+                    }
+                    return Debugging.GoodsProbe(start, ticks);
                 }
                 case "jobspread":
                 {

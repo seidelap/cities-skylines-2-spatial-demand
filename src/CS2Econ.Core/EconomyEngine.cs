@@ -1140,10 +1140,13 @@ namespace CS2Econ.Core
                     }
                     case ZoneKind.Commercial:
                     {
-                        // Restocking: the consumption basket behind captured spending.
+                        // Restocking: the consumption basket behind captured
+                        // spending — units forecast at the price THIS store's
+                        // deliveries actually cost (its cluster's realized
+                        // delivered statistic; 0.5 floor kept).
                         foreach (var (res, share) in ResourceCatalog.Basket)
                         {
-                            double need = f.RevenueThisTick * share / Math.Max(0.5, Trade.LocalPrice(res));
+                            double need = f.RevenueThisTick * share / Math.Max(0.5, Trade.DeliveredStat(res, c));
                             f.InputNeedByRes[(int)res] = need;
                             _demandByCluster[(int)res][c] += need;
                             _demandTotal[(int)res] += need;
@@ -1167,11 +1170,17 @@ namespace CS2Econ.Core
                 var res = (Res)r;
                 if (!ResourceCatalog.IsTradable(res)) continue;
                 if (_supplyTotal[r] <= 1e-9 && _demandTotal[r] <= 1e-9) continue;
-                var clear = Flags.TierD_Trade
-                    ? Trade.ClearTick(res, _supplyTotal[r], _demandTotal[r],
-                                      _supplyByCluster[r], _demandByCluster[r], P)
-                    : FlatClear(res, _supplyTotal[r], _demandTotal[r]);
-                SettleResource(res, clear, _supplyTotal[r], _demandTotal[r]);
+                if (Flags.TierD_Trade)
+                {
+                    var clear = Trade.ClearTick(res, _supplyTotal[r], _demandTotal[r],
+                                                _supplyByCluster[r], _demandByCluster[r], P);
+                    SettleResourceClustered(res, clear);
+                }
+                else
+                {
+                    var clear = FlatClear(res, _supplyTotal[r], _demandTotal[r]);
+                    SettleResourceFlat(res, clear, _supplyTotal[r], _demandTotal[r]);
+                }
             }
         }
 
@@ -1180,20 +1189,66 @@ namespace CS2Econ.Core
         private ClearResult FlatClear(Res r, double supply, double demand)
         {
             double anchor = ResourceCatalog.Anchor[(int)r];
-            var res = new ClearResult { LocalPrice = anchor };
+            var res = new ClearResult();
             double surplus = supply - demand;
             if (surplus > 0) { res.Exported = surplus; res.ExportRevenue = surplus * anchor; }
             else { res.Imported = -surplus; res.ImportCost = -surplus * anchor; }
             return res;
         }
 
-        /// <summary>Money settlement for one resource: local trades net between
-        /// producing and consuming firms; exports arrive from OutsideWorld,
-        /// imports leave to it. Pro-rata across firms by their actual volumes;
-        /// conservation exact by construction.</summary>
-        private void SettleResource(Res r, ClearResult clear, double supply, double demand)
+        /// <summary>Money settlement for one resource on the cluster-identified
+        /// clearing (task #30): per-cluster pro-rata over REALIZED flows.
+        /// Buyers at cluster c are debited what buyers there actually paid
+        /// (DeliveredPaid[c]) by input-need share WITHIN c; sellers at c are
+        /// credited what sellers there actually netted (OriginRev[c]) by output
+        /// share within c. Local freight is a real cost paid to OutsideWorld
+        /// like every other haul flow (RouteStructureCharge precedent) — local
+        /// trades no longer ship for free. Conservation is per-lot by
+        /// construction: Σc OriginRev − Σc DeliveredPaid = ExportRevenue −
+        /// ImportCost − LocalFreight holds exactly.
+        ///
+        /// Two consequences, stated rather than hidden: (a) unsold pain
+        /// localizes — a remote producer's unsold output is ITS cluster's lost
+        /// revenue, not a citywide haircut; (b) WHICH firm within a cluster
+        /// sold the unsold lot is below the mechanism's resolution —
+        /// within-cluster pro-rata is the statistic's grain.</summary>
+        private void SettleResourceClustered(Res r, ClearResult clear)
         {
-            double price = clear.LocalPrice;
+            int ri = (int)r;
+            var deliveredPaid = Trade.TickDeliveredPaid(r);
+            var originRev = Trade.TickOriginRev(r);
+            var supBy = _supplyByCluster[ri];
+            var demBy = _demandByCluster[ri];
+            var rec = TradeSystem.SettleTelemetry != null ? Trade.CurrentRecord : null;
+            foreach (var f in W.Firms)
+            {
+                if (f.Dead || f.Parcel < 0) continue;
+                int c = W.Parcels[f.Parcel].Cluster;
+                if (f.Output == r && f.OutputThisTick > 0 && originRev[c] > 0 && supBy[c] > 1e-9)
+                {
+                    double credit = originRev[c] * (f.OutputThisTick / supBy[c]);
+                    f.Money += credit;
+                    f.RevenueThisTick += credit;
+                    if (rec != null) rec.FirmCredit += credit;
+                }
+                if (f.InputNeedByRes[ri] > 0 && deliveredPaid[c] > 0 && demBy[c] > 1e-9)
+                {
+                    double debit = deliveredPaid[c] * (f.InputNeedByRes[ri] / demBy[c]);
+                    f.Money -= debit;
+                    if (rec != null) rec.FirmDebit += debit;
+                }
+            }
+            W.Ledger.Transfer(Account.OutsideWorld, Account.Firms, clear.ExportRevenue);
+            W.Ledger.Transfer(Account.Firms, Account.OutsideWorld, clear.ImportCost);
+            W.Ledger.Transfer(Account.Firms, Account.OutsideWorld, clear.LocalFreight);
+        }
+
+        /// <summary>Flat-path settlement (TierD off): citywide pro-rata at the
+        /// anchor, exactly the pre-localization behavior — the vanilla fallback
+        /// world is unchanged by task #30.</summary>
+        private void SettleResourceFlat(Res r, ClearResult clear, double supply, double demand)
+        {
+            double price = ResourceCatalog.Anchor[(int)r];
             double localVolume = Math.Min(supply - clear.Exported - clear.Unsold, demand - clear.Imported);
             localVolume = Math.Max(0, localVolume);
 

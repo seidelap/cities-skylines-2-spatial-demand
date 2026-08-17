@@ -287,16 +287,22 @@ namespace CS2Econ.Core
                 switch (f.Sector)
                 {
                     case ZoneKind.Extractor:
+                        // Marginal revenue at what producers AT ITS CLUSTER
+                        // actually netted — the firm's forecast from its own
+                        // market's realized sales, not a citywide scalar.
                         mrp = p.ExtractorOutputPerSlot
                               * w.Clusters[pl.Cluster].ResourceSuitability[(int)f.Output]
-                              * cond * trade.LocalPrice(f.Output);
+                              * cond * trade.OriginStat(f.Output, pl.Cluster);
                         break;
                     case ZoneKind.Industrial:
                     {
                         var recipe = ResourceCatalog.RecipeFor(f.Output);
                         if (recipe.Inputs == null) { mrp = 0; break; }
-                        double margin = trade.LocalPrice(f.Output);
-                        foreach (var (res, qty) in recipe.Inputs) margin -= qty * trade.LocalPrice(res);
+                        // Its own cluster's realized sell and buy prices cap
+                        // what its doors can pay.
+                        double margin = trade.OriginStat(f.Output, pl.Cluster);
+                        foreach (var (res, qty) in recipe.Inputs)
+                            margin -= qty * trade.DeliveredStat(res, pl.Cluster);
                         mrp = recipe.OutputPerSlot * p.RecipeOutputScale * cond
                               * p.Quality(pl.Level) / p.Quality(1) * Math.Max(0, margin);
                         break;
@@ -312,8 +318,13 @@ namespace CS2Econ.Core
                         // EMA of RevenueThisTick net of restocking cost, per
                         // slot, floored at 0. Restock cost is rev × basket
                         // share at any local price (the price cancels; see
-                        // BasketShare). Firm-local and simple until #20 makes
-                        // commercial labor structurally productive.
+                        // BasketShare). With per-cluster realized prices
+                        // (task #30) that cancellation is no longer exact —
+                        // the restocking forecast and the realized delivered
+                        // price at this store's cluster can diverge — but
+                        // this margin is task #20's fight, untouched here.
+                        // Firm-local and simple until #20 makes commercial
+                        // labor structurally productive.
                         mrp = Math.Max(0, f.ProfitEma * (1 - BasketShare)) / Math.Max(1, f.JobSlots);
                         break;
                 }
