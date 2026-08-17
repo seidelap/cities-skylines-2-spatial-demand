@@ -20,6 +20,11 @@ namespace CS2Econ.Harness
             {
                 if (args[i] == "--store-level") { Sim.ForceStoreLevelSpending = true; continue; }
                 if (args[i] == "--auction") { Sim.ForceHousingAuction = true; continue; }
+                // MUTANT SWITCH (see AccessState.MutantCitywideProspectOdds):
+                // restores the zero-diluted citywide prospect odds so the
+                // prospect-local-odds check can be shown to fail. Never a
+                // shipping mode.
+                if (args[i] == "--mutant-citywide-odds") { AccessState.MutantCitywideProspectOdds = true; continue; }
                 if (i + 1 >= args.Length) continue;
                 if (args[i] == "--seed") seed = ulong.Parse(args[i + 1]);
                 if (args[i] == "--only") only = args[i + 1];
@@ -39,6 +44,17 @@ namespace CS2Econ.Harness
                     foreach (ulong s in new ulong[] { 138, 208, 271, 327, 549, 910, 6550 })
                         if (!set.Contains(s)) set.Add(s);
                     return TestRunner.Canary(set);
+                }
+                case "prospectsweep":
+                {
+                    int n = 9;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    var set = new List<ulong>();
+                    for (ulong s = 0; s < (ulong)(n > 8 ? 8 : n); s++) set.Add(s);
+                    if (n >= 9) set.Add(25);      // the knife-edge seed rides along
+                    for (ulong s = 26; set.Count < n; s++) set.Add(s);
+                    return TestRunner.ProspectSweep(set);
                 }
                 case "scenarios":
                     return Scenarios.RunAll(seed, out _, only);
@@ -129,6 +145,13 @@ namespace CS2Econ.Harness
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     HousingAuction.ScanOracle = true;
                     return Debugging.AuctionProbe(seed, ticks);
+                }
+                case "jobspread":
+                {
+                    int ticks = 240;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                    return Debugging.JobSpread(seed, ticks);
                 }
                 case "levelprobe":
                 {

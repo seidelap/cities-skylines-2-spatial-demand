@@ -59,3 +59,24 @@ delta: auction.built hash moved; built 400 -> 407 (+1.75%); meanLevel 1.91 -> 1.
 delta: auction.price hash moved; sumLR 18431.14 -> 18256.848 (-0.95%); sumLR.high 839.37256 -> 692.60702 (-17.49%); sumLR.low 812.29366 -> 705.47785 (-13.15%); meanRent 2.24022 -> 2.0684165 (-7.67%)
 delta: auction.money hash moved; treasury 120957.9 -> 104688.97 (-13.45%); hhMoney 474902.98 -> 502058.83 (+5.72%); firmMoney 111927.96 -> 119808.39 (+7.04%); escrow 122110.9 -> 131262.41 (+7.49%); phantoms -754015.47 -> -781934.33 (-3.70%); drift -3.3178367E-09 -> 4.3847831E-07 (+13315.79%)
 sig: 955B6A9A34BEE869
+
+=== stanza 3
+recorded: 2026-08-16T23:32:13Z
+reason: Prospects price per-cluster job odds: local rate shrunk (n0=4) toward the worker-weighted citywide bench, replacing the zero-diluted unweighted mean; reservation re-based on outside-region odds (0.92). Auction-path only - default lanes unchanged; auction lanes move via prospect budgets/admissions. Healthy priced/bench 1.018-1.028, mutant (zero-diluted, --mutant-citywide-odds) 0.726-0.774, seeds 0-7+25.
+lane default.demography hash=1B4B114FF4C821BB pop=1026 housed=807 sheltered=2
+lane default.built hash=05352836E05C3F47 built=322 meanLevel=1.639751553 units=1930
+lane default.price hash=56863008365C67D7 sumLR=17770.10645 sumLR.high=1670.55774 sumLR.low=1537.155564 meanRent=4.241551433
+lane default.money hash=509F93700C936F81 treasury=233363.4208 hhMoney=310074.5584 firmMoney=77341.63689 escrow=151591.9786 phantoms=-696487.321 drift=2.252636477E-08
+lane auction.demography hash=8C6CEB34FC0BDDDF pop=1592 housed=1254 sheltered=0
+lane auction.built hash=737063C695729379 built=431 meanLevel=1.990719258 units=2332
+lane auction.price hash=C0EB67CC7C6BC8BD sumLR=18401.32151 sumLR.high=560.4827868 sumLR.low=645.2597447 meanRent=1.960221991
+lane auction.money hash=73006DC4B537C62C treasury=99570.34362 hhMoney=507788.9185 firmMoney=119940.6566 escrow=132544.9359 phantoms=-783960.5808 drift=6.504706107E-07
+delta: default.demography =
+delta: default.built =
+delta: default.price =
+delta: default.money =
+delta: auction.demography hash moved; pop 1566 -> 1592 (+1.66%); housed 1206 -> 1254 (+3.98%); sheltered =
+delta: auction.built hash moved; built 407 -> 431 (+5.90%); meanLevel 1.9361179 -> 1.9907193 (+2.82%); units 2284 -> 2332 (+2.10%)
+delta: auction.price hash moved; sumLR 18256.848 -> 18401.322 (+0.79%); sumLR.high 692.60702 -> 560.48279 (-19.08%); sumLR.low 705.47785 -> 645.25974 (-8.54%); meanRent 2.0684165 -> 1.960222 (-5.23%)
+delta: auction.money hash moved; treasury 104688.97 -> 99570.344 (-4.89%); hhMoney 502058.83 -> 507788.92 (+1.14%); firmMoney 119808.39 -> 119940.66 (+0.11%); escrow 131262.41 -> 132544.94 (+0.98%); phantoms -781934.33 -> -783960.58 (-0.26%); drift 4.3847831E-07 -> 6.5047061E-07 (+48.35%)
+sig: BAC5263B359E595B

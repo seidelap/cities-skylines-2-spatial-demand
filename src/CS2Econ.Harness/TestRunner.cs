@@ -404,6 +404,28 @@ namespace CS2Econ.Harness
             return Math.Min(failed.Count, 100);
         }
 
+        /// <summary>Sweep the prospect-local-odds check alone across seeds —
+        /// same rationale as <see cref="Canary"/> (cheap fixture, many seeds),
+        /// and the harness for demonstrating the `--mutant-citywide-odds`
+        /// mutant is caught on every seed, not one.</summary>
+        public static int ProspectSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"prospect-local-odds sweep: {seeds.Count} seeds"
+                + (AccessState.MutantCitywideProspectOdds ? " [MUTANT: zero-diluted citywide odds]" : ""));
+            var failed = new List<ulong>();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                ProspectLocalOddsCheck(seed);
+                bool ok = Results.Count > before && Results[Results.Count - 1].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"prospect sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
         public static int RunAll(ulong seed, out string report)
         {
             Results.Clear();
@@ -419,6 +441,7 @@ namespace CS2Econ.Harness
             Timed("claim-vacancy-wash", () => ClaimVacancyWash(seed));
             Timed("occupancy-channel", () => OccupancyChannel(seed));
             Timed("auction-equilibrium", () => AuctionEquilibrium(seed));
+            Timed("prospect-local-odds", () => ProspectLocalOddsCheck(seed));
             Timed("exhaustive-shortlist", () => ExhaustiveShortlist(seed));
             Timed("assignment-oracle", () => {
                 var (lpOk, lpDetail) = AssignmentOracle.Run(seed);
@@ -1563,6 +1586,86 @@ namespace CS2Econ.Harness
                   $"cluster {c0} ({(clearedSelected ? "cleared" : "fallback")}) bid {bidFull:F3} (fill {fillFull:F2}) " +
                   $"at full occupancy → {bidEmpty:F3} (fill {fillEmpty:F2}) at 20 % " +
                   $"({(priceLeg ? "price leg" : vacancyLeg ? "vacancy leg" : "NO response")})");
+        }
+
+        /// <summary>PROSPECTS PRICE THE PLACE, NOT THE MAP. Every admitted
+        /// prospect chose a specific cluster, and the employment odds the
+        /// mechanism priced that cluster at (AccessState.ProspectLocalOdds:
+        /// local rate shrunk toward the worker-weighted citywide bench) must be
+        /// consistent with what workers there actually experience — on average
+        /// no worse than the citywide worker-weighted rate, never diluted by
+        /// the structural zeros of worker-less map squares.
+        ///
+        /// THE PROPERTY, stated carefully. The strong form — "prospects
+        /// systematically select clusters with strictly better-than-average
+        /// local odds" — is bounded by the fixture's cross-cluster employment
+        /// spread, and that spread is MEASURED SMALL here: the Sinkhorn commute
+        /// matching smooths per-cluster rates to a p90−p10 of ~0.01/0.05/0.11
+        /// by class (w-wtd sd 0.001–0.034, seeds 0–1, t=40–240), while
+        /// shrinkage (n0=4 vs median 4–8 workers/cluster) halves what a median
+        /// cluster can express. The selection tilt that survives is measured
+        /// THIN BUT REAL: +0.0049..+0.0065 on every one of seeds 0–7 and 25
+        /// (2254–2360 admits each, per-admit sd ~0.03 → standard error
+        /// ~0.0006, so the worst seed is ~8 se above zero). The tilt bar is
+        /// 0.002 — 2.4× under the worst measured seed — and it is what
+        /// catches the OTHER degeneracy the level bar cannot: n0→∞ (every
+        /// cluster priced at bench) gives tilt exactly 0 and ratio exactly 1.
+        ///
+        /// The level bar gates the dilution defect: mean pricedOdds/bench per
+        /// run. Healthy it reads 1.018–1.028 (seeds 0–7, 25); under the
+        /// restored zero-diluted-mean defect (`--mutant-citywide-odds`, the
+        /// exact code this work deleted) every prospect prices every door at
+        /// the diluted mean, which the zero-worker map squares drag to
+        /// 0.726–0.774× bench on the same seeds — measured, 0/9 pass. The
+        /// admit-count floor keeps a dead fixture (zero admissions) from
+        /// passing vacuously: no admits is a FAIL, not a skip (healthy
+        /// fixtures admit ~2.2–2.4k over 200 ticks; the floor is 40).</summary>
+        private static void ProspectLocalOddsCheck(ulong seed)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+            var tel = new List<(int labor, int cluster, double pricedOdds, double benchOdds)>();
+            Prospects.AdmitTelemetry = tel;
+            try { sim.Run(200); }
+            finally { Prospects.AdmitTelemetry = null; }
+
+            int n = 0; double ratioSum = 0, tiltSum = 0;
+            foreach (var r in tel)
+            {
+                if (r.benchOdds <= 1e-9) continue;   // pre-first-matching admits carry no signal
+                n++;
+                ratioSum += r.pricedOdds / r.benchOdds;
+                tiltSum += r.pricedOdds - r.benchOdds;
+            }
+            double meanRatio = n > 0 ? ratioSum / n : 0;
+            double meanTilt = n > 0 ? tiltSum / n : 0;
+
+            // The spread guard, printed so a reviewer can see whether the
+            // selection-tilt property had room to bite on this fixture.
+            var acc = sim.Engine.Access;
+            double maxSd = 0;
+            for (int cl = 0; cl < 3 && acc.EmploymentRate.Length == 3; cl++)
+            {
+                double bench = acc.ProspectBenchOdds(cl), wtot = 0, var2 = 0;
+                for (int c = 0; c < acc.C; c++)
+                {
+                    double wk = acc.WorkersByClass[cl][c];
+                    if (wk <= 1e-9) continue;
+                    wtot += wk;
+                    var2 += wk * Math.Pow(acc.EmploymentRate[cl][c] - bench, 2);
+                }
+                if (wtot > 0) maxSd = Math.Max(maxSd, Math.Sqrt(var2 / wtot));
+            }
+
+            const int MinAdmits = 40;
+            const double RatioBar = 0.97;   // healthy 1.018–1.028, mutant 0.726–0.774 (seeds 0–7, 25)
+            const double TiltBar = 0.002;   // healthy +0.0049..+0.0065, se ~0.0006; bench-only pricing reads 0
+            Check("prospects price the job odds of their chosen cluster (worker-weighted, not zero-diluted)",
+                  n >= MinAdmits && meanRatio >= RatioBar && meanTilt >= TiltBar,
+                  $"{n} admits with signal (of {tel.Count}): mean priced/bench {meanRatio:F3} vs ≥{RatioBar:F2} bar, " +
+                  $"selection tilt {meanTilt:+0.0000;-0.0000} vs ≥+{TiltBar:F4} bar " +
+                  $"(cross-cluster w-wtd rate sd ≤{maxSd:F3} bounds what tilt could show on this fixture)");
         }
 
         /// <summary>The housing assignment market has to actually BE a

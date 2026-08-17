@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace CS2Econ.Core
 {
@@ -47,6 +48,15 @@ namespace CS2Econ.Core
             public int Priced;       // looked, wanted something, could not have won it
         }
 
+        /// <summary>Harness-only telemetry: when non-null, every ADMITTED
+        /// prospect appends (labor class, cluster it chose, the employment odds
+        /// the mechanism priced that cluster at, the citywide worker-weighted
+        /// bench at that moment). The prospect-localization check reads this;
+        /// nothing in the mechanism does. Set it around a run and null it
+        /// after — it is static, so a leaked list would record every later sim
+        /// in the process.</summary>
+        public static List<(int labor, int cluster, double pricedOdds, double benchOdds)>? AdmitTelemetry;
+
         /// <summary>Offer the city to a batch of individuals and admit the ones
         /// who choose to come. Returns what happened, for telemetry.</summary>
         public static Result Step(WorldState w, AccessState acc, HousingAuction a, EconParams p)
@@ -70,6 +80,9 @@ namespace CS2Econ.Core
             if (nOffer <= 0) return res;
 
             int nSeg = Segment.Count;
+            // Scratch for the per-cluster evaluation below; one allocation per
+            // batch, reused across the batch's prospects.
+            var budgetByCluster = new double[acc.C];
             for (int q = 0; q < nOffer; q++)
             {
                 res.Offered++;
@@ -90,18 +103,38 @@ namespace CS2Econ.Core
                 double densTol = MathUtil.Clamp(seg.DensityTolerance + 0.4 * (v - 0.5), 0, 1);
                 double reservationShare = 0.5 * r * r;
 
-                // What it would earn HERE if it came: its own adults and job
-                // level, valued at the market's employment odds. Employment odds
-                // are a clearing outcome rather than a personal attribute, which
-                // is why reading them is legitimate — the same reason the bid
-                // ladder reads them for a resident who has not found work yet.
+                // What it would earn AT EACH SPECIFIC PLACE if it came: its own
+                // adults and job level, valued at that cluster's employment
+                // odds (local rate shrunk toward the citywide worker-weighted
+                // bench — see AccessState.ProspectLocalOdds for why the bench
+                // is a legitimate prior and the local term is the market
+                // outcome of the place itself). Employment odds are a clearing
+                // outcome rather than a personal attribute, which is why
+                // reading them is legitimate — the same reason the bid ladder
+                // reads them for a resident who has not found work yet. The
+                // old single citywide number made every door in a city with a
+                // booming district and a dead one price like a uniformly
+                // mediocre city — and, being an unweighted mean over all
+                // clusters, it was also diluted by every empty map square's
+                // structural zero.
                 byte jobLevel = (byte)(SplitMix64.Hash(key * 6151UL + 17UL) % 5UL);
-                double income = acc.ProspectIncome(seg, jobLevel, p);
-                double budget = rentShare * income;
-                double reservation = reservationShare * budget;
-                if (budget <= 0) continue;
+                double maxBudget = 0;
+                for (int c = 0; c < acc.C; c++)
+                {
+                    budgetByCluster[c] = rentShare * acc.ProspectIncome(seg, jobLevel, c, p);
+                    if (budgetByCluster[c] > maxBudget) maxBudget = budgetByCluster[c];
+                }
+                // The reservation is what NOT coming is worth, so it is priced
+                // at the OUTSIDE region's odds — the default is staying
+                // outside, and no statistic of this city can change what that
+                // is worth. This removes the last citywide read from the
+                // prospect's decision.
+                double reservation = reservationShare
+                                     * rentShare * acc.ProspectOutsideIncome(seg, jobLevel, p);
+                if (maxBudget <= 0) continue;
 
-                int bestSub = a.QuoteOutsider(s, budget, densTol, reservation, key, p,
+                int bestSub = a.QuoteOutsider(s, maxBudget, budgetByCluster, densTol, reservation,
+                                              key, p,
                                               out double bestSurplus, out bool anyAttainable);
                 if (bestSub < 0)
                 {
@@ -138,6 +171,13 @@ namespace CS2Econ.Core
                 // flag-off path, where prospects do not exist.
                 w.Ledger.Transfer(Account.OutsideWorld, Account.Households, hh.Money);
                 res.Admitted++;
+                if (AdmitTelemetry != null)
+                {
+                    int chosen = HousingAuction.KcOf(bestSub) % acc.C;
+                    AdmitTelemetry.Add(((int)seg.Labor, chosen,
+                                        acc.ProspectLocalOdds((int)seg.Labor, chosen, p),
+                                        acc.ProspectBenchOdds((int)seg.Labor)));
+                }
             }
             return res;
         }

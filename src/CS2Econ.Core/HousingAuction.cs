@@ -989,29 +989,44 @@ namespace CS2Econ.Core
         public int QuoteOutsider(int segment, double budget, double densityTol, double reservation,
                                  ulong tasteKey, EconParams p,
                                  out double bestSurplus, out bool anyAttainable)
+            => QuoteOutsider(segment, budget, null, densityTol, reservation, tasteKey, p,
+                             out bestSurplus, out anyAttainable);
+
+        /// <summary>Per-cluster-budget overload: `budgetByCluster[c]`, when
+        /// given, is the prospect's housing budget IF IT LIVED AT CLUSTER c —
+        /// rentShare × its cluster-specific expected income — so both the bid
+        /// base and the ability-to-pay cap become per-cluster inside the loop.
+        /// Null keeps the single-scalar behavior exactly (the old signature
+        /// delegates here), so existing callers and checks are untouched.</summary>
+        public int QuoteOutsider(int segment, double budget, double[]? budgetByCluster,
+                                 double densityTol, double reservation,
+                                 ulong tasteKey, EconParams p,
+                                 out double bestSurplus, out bool anyAttainable)
         {
             bestSurplus = double.NegativeInfinity; anyAttainable = false;
             int best = -1;
             EnsureLevelFactors(p);            // public entry: may be called outside a solve
             if (C <= 0 || (uint)segment >= (uint)_premium.Length) return -1;
-            double cap = p.MaxRentOfIncome * (budget / Math.Max(1e-9, 1.0)) / Math.Max(1e-9, 1.0);
-            // Ability to pay is derived the same way it is for a resident: from
-            // income, not from the housing budget. budget = rentShare × income,
-            // so income = budget / rentShare — but the caller already knows the
-            // income it used, and passing the cap explicitly would be one more
-            // thing to keep in step. Recover it from the same identity the
-            // resident path uses.
-            cap = p.MaxRentOfIncome * budget / Math.Max(1e-6, p.ProspectRentShareForCap);
 
             for (int k = 0; k < 2; k++)
             {
                 double appeal = k == 1
                     ? Segment.DensityFloor + (1 - Segment.DensityFloor) * MathUtil.Clamp(densityTol, 0, 1)
                     : 1.0;
-                double bse = budget * appeal;
-                if (bse <= 0) continue;
                 for (int c = 0; c < C; c++)
                 {
+                    double b = budgetByCluster != null && (uint)c < (uint)budgetByCluster.Length
+                        ? budgetByCluster[c] : budget;
+                    double bse = b * appeal;
+                    if (bse <= 0) continue;
+                    // Ability to pay is derived the same way it is for a
+                    // resident: from income, not from the housing budget.
+                    // b = rentShare × income(c), so income = b / rentShare —
+                    // but the caller already knows the income it used, and
+                    // passing the cap explicitly would be one more thing to
+                    // keep in step. Recover it from the same identity the
+                    // resident path uses, per cluster now that income is.
+                    double cap = p.MaxRentOfIncome * b / Math.Max(1e-6, p.ProspectRentShareForCap);
                     int kc = Key(k, c, C);
                     double prem = bse * _premium[segment][c];
                     double taste = p.AuctionTasteScale * bse * Gumbel01(tasteKey * 1000003UL + (ulong)kc * 31UL + 5);

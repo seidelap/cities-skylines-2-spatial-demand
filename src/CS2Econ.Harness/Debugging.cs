@@ -847,6 +847,59 @@ namespace CS2Econ.Harness
                 $"drift={w.Ledger.Drift():E1}");
         }
 
+        /// <summary>`harness jobspread` — measurement aid for the prospect
+        /// local-odds work (task #31): on the auction reference fixture
+        /// (10×10 clusters, 3000 seed households — the auction-equilibrium /
+        /// canary fixture), print the per-cluster worker-count distribution and
+        /// the per-cluster employment-rate spread for each labor class, at a few
+        /// ticks. This is what calibrates the shrinkage prior weight n0 in
+        /// AccessState.ProspectLocalOdds and decides whether the
+        /// prospect-localization check can bite. Prints, asserts nothing.</summary>
+        public static int JobSpread(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+            var sampleAt = new[] { 40, 80, 160, Math.Max(240, ticks) };
+            int done = 0;
+            for (int t = 1; t <= sampleAt[sampleAt.Length - 1]; t++)
+            {
+                sim.Step();
+                if (done < sampleAt.Length && t == sampleAt[done])
+                {
+                    done++;
+                    var acc = sim.Engine.Access;
+                    Console.WriteLine($"--- t={t} C={acc.C}");
+                    for (int cl = 0; cl < 3; cl++)
+                    {
+                        var wk = acc.WorkersByClass[cl];
+                        var er = acc.EmploymentRate[cl];
+                        var withWorkers = new List<(double w, double r)>();
+                        double totW = 0, totMatched = 0; int zero = 0;
+                        for (int c = 0; c < acc.C; c++)
+                        {
+                            if (wk[c] > 1e-9) { withWorkers.Add((wk[c], er[c])); totW += wk[c]; totMatched += wk[c] * er[c]; }
+                            else zero++;
+                        }
+                        if (withWorkers.Count == 0) { Console.WriteLine($"  class {cl}: no workers"); continue; }
+                        var ws = withWorkers.Select(x => x.w).OrderBy(x => x).ToList();
+                        double P(List<double> xs, double q) => xs[Math.Min(xs.Count - 1, (int)(q * xs.Count))];
+                        double bench = totMatched / totW;                    // worker-weighted citywide
+                        double dilute = 0; for (int c = 0; c < acc.C; c++) dilute += er[c];
+                        dilute /= acc.C;                                     // the old zero-diluted mean
+                        var rs = withWorkers.Select(x => x.r).OrderBy(x => x).ToList();
+                        double var2 = withWorkers.Sum(x => x.w * (x.r - bench) * (x.r - bench)) / totW;
+                        Console.WriteLine(
+                            $"  class {cl}: clusters w/ workers {withWorkers.Count}/{acc.C} (zero {zero}) | " +
+                            $"workers/cluster min={ws[0]:F1} p25={P(ws, 0.25):F1} med={P(ws, 0.5):F1} p75={P(ws, 0.75):F1} p90={P(ws, 0.90):F1} max={ws[ws.Count - 1]:F1} | " +
+                            $"rate bench(w-wtd)={bench:F3} diluted-mean={dilute:F3} " +
+                            $"p10={P(rs, 0.10):F3} med={P(rs, 0.5):F3} p90={P(rs, 0.90):F3} w-wtd-sd={Math.Sqrt(var2):F3}");
+                    }
+                }
+            }
+            return 0;
+        }
+
         /// <summary>End-of-run snapshot shared by `debug` and `map`.</summary>
         private static void PrintLevelByAccess(WorldState w, EconomyEngine engine)
         {

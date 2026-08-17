@@ -462,6 +462,24 @@ namespace CS2Econ.Core
         /// <summary>Mean rent share, used only to recover a prospect's income
         /// from its housing budget when deriving its ability to pay.</summary>
         public double ProspectRentShareForCap = 0.30;
+        /// <summary>n0 in AccessState.ProspectLocalOdds: the prior weight (in
+        /// workers) pulling a cluster's local employment rate toward the
+        /// citywide worker-weighted bench when a prospect prices its odds
+        /// there. Calibrated against the measured per-cluster worker-count
+        /// distribution on the auction reference fixture (10×10, 3000
+        /// households, seeds 0–1, t=40..240): occupied clusters hold min
+        /// 0.5–2, p25 2–5, median 4–9, p90 13–60, max 84 workers by class.
+        /// 4 ≈ p25–median: sparse clusters read as the city, real job centres
+        /// read as themselves.</summary>
+        public double ProspectOddsPriorWeight = 4.0;
+        /// <summary>Employment odds in the OUTSIDE region, where a prospect's
+        /// reservation lives. A global, and a legitimate one: it is genuinely a
+        /// property of the outside world, not a stand-in for anything local —
+        /// the default is staying outside, and how this city is doing does not
+        /// change what staying outside is worth. Set to 1 − NeutralUnemployment
+        /// (0.08, vanilla's m_NeutralUnemployment): the region at its neutral
+        /// unemployment rate.</summary>
+        public double OutsideEmploymentOdds = 0.92;
         /// <summary>How long a household that would rather be elsewhere waits
         /// before actually going. Its own patience, scaled by its own moving
         /// cost at the use site.</summary>

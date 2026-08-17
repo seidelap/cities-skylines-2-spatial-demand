@@ -510,7 +510,12 @@ namespace CS2Econ.Harness
                 sim.Run(ticks, s =>
                 {
                     n += s.Engine.LastFlows.DesiredBySegment?.Sum() ?? 0;
-                    realizedIn += s.Engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0;
+                    // Realized arrivals live in LastFlows on the posted path and
+                    // in LastProspects on the auction path (which zeroes
+                    // LastFlows); sum both so the printed number is honest on
+                    // either path instead of a structural 0 under --auction.
+                    realizedIn += (s.Engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0)
+                                  + s.Engine.LastProspects.Admitted;
                 });
                 return n;
             }

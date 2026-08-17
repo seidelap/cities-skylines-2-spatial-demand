@@ -145,19 +145,115 @@ namespace CS2Econ.Core
         public double LadderBase(Household h, ZoneKind kind, EconParams p)
             => h.RentShare * LadderIncome(h, Segment.All[h.Segment], p) * h.DensityAppeal(kind);
 
-        /// <summary>What somebody who does not live here yet would earn if they
-        /// came and found work at the market's current odds. Same construction
-        /// as HouseholdProspectiveIncome, which an unhoused resident already
-        /// uses — employment odds are a clearing outcome, not a personal
-        /// attribute, so a prospect may read them.</summary>
-        public double ProspectIncome(Segment seg, byte jobLevel, EconParams p)
+        /// <summary>MUTANT SWITCH, harness-only (`--mutant-citywide-odds`):
+        /// restores the defect this work removed — the prospect's employment
+        /// odds as the UNWEIGHTED mean of EmploymentRate over ALL clusters,
+        /// including the structural zeros of worker-less clusters. It exists so
+        /// the prospect-localization check stays falsifiable: that check must
+        /// fail whenever this is on. Never set outside the harness.</summary>
+        public static bool MutantCitywideProspectOdds = false;
+
+        /// <summary>The employment odds a newcomer would hear about the city
+        /// from outside: the WORKER-WEIGHTED citywide rate for a labor class —
+        /// total matched over total supplied, i.e. the rate the average actual
+        /// worker experiences. This is the shrinkage bench in ProspectLocalOdds.
+        /// It is legitimate under the model rules as a PRIOR the agent could
+        /// hold: what one hears about a city is what its workers experience,
+        /// which no map square dilutes. The old unweighted mean over all
+        /// clusters was not that — on the 10×10/3000-household auction fixture
+        /// (seed 0, t=40..240) 15–62 of 100 clusters hold no workers of a given
+        /// class and contribute structural zeros, dragging the mean to
+        /// 0.34/0.25/0.11 by class against a worker-weighted 0.42/0.34/0.31.</summary>
+        public double ProspectBenchOdds(int labor)
+        {
+            if (EmploymentRate.Length != 3 || WorkersByClass.Length != 3) return 0;
+            if (_prospectBench.Length == 3 && _prospectBenchVersion == _employmentVersion)
+                return _prospectBench[labor];
+            if (_prospectBench.Length != 3) _prospectBench = new double[3];
+            for (int cl = 0; cl < 3; cl++)
+            {
+                double matched = 0, workers = 0;
+                for (int c = 0; c < C; c++)
+                {
+                    double wk = WorkersByClass[cl][c];
+                    matched += wk * EmploymentRate[cl][c];
+                    workers += wk;
+                }
+                _prospectBench[cl] = workers > 1e-9 ? matched / workers : 0;
+            }
+            _prospectBenchVersion = _employmentVersion;
+            return _prospectBench[labor];
+        }
+        // Cache: the bench only changes when the labor matching reruns, but a
+        // prospect batch asks for it once per cluster per prospect — O(C²)
+        // per prospect without this.
+        private double[] _prospectBench = Array.Empty<double>();
+        private long _prospectBenchVersion = -1;
+        private long _employmentVersion;
+
+        /// <summary>The odds a prospect prices AT A SPECIFIC CLUSTER: the local
+        /// rate, shrunk toward the citywide worker-weighted bench by a small
+        /// prior weight n0 = p.ProspectOddsPriorWeight:
+        ///
+        ///     odds_c = (workers_c · rate_c + n0 · bench) / (workers_c + n0)
+        ///
+        /// The LOCAL term is what the specific place offers — the market
+        /// outcome its own workers experience — and the BENCH is the prior a
+        /// newcomer would actually hold before local evidence, which is why a
+        /// citywide read is legitimate here and only here on the prospect path.
+        /// Shrinkage also fixes the zero-dilution defect for free: a cluster
+        /// with no workers contributes no zero, it just shrinks fully to bench.
+        /// n0 is calibrated against the measured per-cluster worker-count
+        /// distribution on the auction reference fixture (10×10, 3000
+        /// households, seeds 0–1, t=40..240): occupied-cluster counts run
+        /// min 0.5–2, p25 2–5, median 4–9, p90 13–60, max 84 by class and
+        /// tick; 10–62 of 100 clusters hold no workers of a given class.
+        /// n0 = 4 sits at the p25–median: a 1–2-worker cluster is mostly bench
+        /// (its one hire or miss is not evidence), a median cluster is an even
+        /// split, and a p90 job centre is 75–95% its own local rate.</summary>
+        public double ProspectLocalOdds(int labor, int cluster, EconParams p)
+        {
+            if (EmploymentRate.Length != 3 || (uint)cluster >= (uint)C) return 0;
+            if (MutantCitywideProspectOdds)
+            {
+                // The restored defect, verbatim: unweighted over all clusters,
+                // structural zeros included.
+                double sum = 0; int n = 0;
+                for (int c = 0; c < C; c++) { sum += EmploymentRate[labor][c]; n++; }
+                return n > 0 ? sum / n : 0;
+            }
+            double bench = ProspectBenchOdds(labor);
+            double wk = WorkersByClass[labor][cluster];
+            double n0 = Math.Max(1e-9, p.ProspectOddsPriorWeight);
+            return (wk * EmploymentRate[labor][cluster] + n0 * bench) / (wk + n0);
+        }
+
+        /// <summary>What somebody who does not live here yet would earn if it
+        /// came to CLUSTER `cluster` and found work at that place's odds
+        /// (ProspectLocalOdds). Same construction as HouseholdProspectiveIncome,
+        /// which an unhoused resident already uses — employment odds are a
+        /// clearing outcome, not a personal attribute, so a prospect may read
+        /// them. Cluster-specific because the citywide version made a city with
+        /// a booming district and a dead one price identically to a uniformly
+        /// mediocre city at every door.</summary>
+        public double ProspectIncome(Segment seg, byte jobLevel, int cluster, EconParams p)
+            => ProspectIncomeAtOdds(seg, jobLevel, ProspectLocalOdds((int)seg.Labor, cluster, p), p);
+
+        /// <summary>The income a prospect would keep by NOT coming: its own
+        /// adults and job level, valued at the outside region's employment odds
+        /// (p.OutsideEmploymentOdds — a property of the outside world, not of
+        /// this city). The prospect's reservation is based on this, so no
+        /// citywide statistic of THIS city enters what the prospect compares
+        /// the city against — the default is staying outside, and the outside
+        /// is not made better or worse by how this city is doing.</summary>
+        public double ProspectOutsideIncome(Segment seg, byte jobLevel, EconParams p)
+            => ProspectIncomeAtOdds(seg, jobLevel, p.OutsideEmploymentOdds, p);
+
+        private double ProspectIncomeAtOdds(Segment seg, byte jobLevel, double rate, EconParams p)
         {
             Span<double> lw = stackalloc double[5];
             Span<double> lwage = stackalloc double[5];
             int levels = Income.JobLevels(seg, p, lw, lwage);
-            double rate = 0; int n = 0;
-            for (int c = 0; c < C; c++) { rate += EmploymentRate[(int)seg.Labor][c]; n++; }
-            rate = n > 0 ? rate / n : 0;
             double expectedEarners = seg.Adults * MathUtil.Clamp(seg.Participation * rate, 0, 1);
             double wage = expectedEarners * lwage[Math.Min(jobLevel, levels - 1)]
                           * (1 - p.IncomeTax(seg.Labor));
@@ -381,6 +477,7 @@ namespace CS2Econ.Core
             }
 
             // ---- labor market: one balanced matching per labor class --------
+            _employmentVersion++;              // invalidates the prospect-bench cache
             EmploymentRate = NewJagged(3, C);
             JobFillRate = NewJagged(3, C);
             ResidualJobs = NewJagged(3, C);
