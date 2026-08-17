@@ -1544,7 +1544,16 @@ namespace CS2Econ.Harness
             // and in fact only varied population (adversarial review).
             var p = new EconParams();
             var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
-            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            // PINNED POSTED: this check tests the posted path's own price
+            // transmission (FillEma → demand shares → the forecast clearing
+            // price) and stays meaningful only on that path. The flip inventory
+            // measured it on auction-built worlds: the same pre-existing
+            // flat-tranche fragility recorded for seed 9 simply re-rolls which
+            // seeds it fires on (0/1/25 red, 9 healed) — world composition, not
+            // transmission. The auction path's vacancy→price channel is
+            // asserted structurally by the auction-equilibrium check
+            // (a non-full door posts its reserve), canary-swept 39/39.
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = false });
             sim.Run(120);
             var w = sim.W; var acc = sim.Engine.Access; var pres = sim.Engine.SegmentPresence;
 
@@ -2923,15 +2932,20 @@ namespace CS2Econ.Harness
         {
             var p = new EconParams();
             var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
-            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            // PINNED POSTED, since the default flipped to the auction path:
+            // an arm on `new FeatureFlags()` would silently become a second
+            // auction arm (flip inventory: detail lines identical across
+            // "posted-curve" and "auction" columns) and the posted path's
+            // money coverage would vanish while it still ships via --posted.
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = false });
             double maxDrift = 0;
             var audit = new SectorAudit();
             sim.Run(300, s => { maxDrift = Math.Max(maxDrift, Math.Abs(s.W.Ledger.Drift())); audit.Sample(s); });
 
-            // BOTH PATHS. Running this only with the default flags left a whole
-            // class of bug invisible: prospect-level migration moves money
-            // across the border on arrival and departure, and it exists only on
-            // the auction path — an arrival that minted its savings instead of
+            // BOTH PATHS. Running this only on one path left a whole class of
+            // bug invisible: prospect-level migration moves money across the
+            // border on arrival and departure, and it exists only on the
+            // auction path — an arrival that minted its savings instead of
             // transferring them would have passed here forever.
             var simA = Sim.Create(new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed },
                                   new EconParams(), new FeatureFlags { HousingAuction = true });
@@ -3098,6 +3112,12 @@ namespace CS2Econ.Harness
             {
                 TierA_Migration = false, TierD_Trade = false,
                 TierC2_Leveling = false, ConstructionRewire = false,
+                // Pinned off: this smoke is the vanilla-mode fallback. With the
+                // auction now the DEFAULT, inheriting it here would run vanilla
+                // spawner + auction — a combination nothing ships and nothing
+                // else covers, which the flip inventory flagged as an accident
+                // waiting to be mistaken for coverage.
+                HousingAuction = false,
             };
             var sim = Sim.Create(cfg, p, flags, vanillaMode: true);
             sim.Run(150);

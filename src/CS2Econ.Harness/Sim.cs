@@ -30,11 +30,19 @@ namespace CS2Econ.Harness
         public static bool ForceStoreLevelSpending;
         /// <summary>Set by `--auction`: solve housing as one assignment market.</summary>
         public static bool ForceHousingAuction;
+        /// <summary>Set by `--posted`: force the posted/Poisson path even though
+        /// the auction path is now the default. The posted curve must stay
+        /// exercisable from the CLI for as long as it ships at all — the flip
+        /// inventory measured that without this switch NOTHING in the harness
+        /// could reach it (20/24 fixtures solve the auction under the new
+        /// default). Applied after --auction so an explicit --posted wins.</summary>
+        public static bool ForcePosted;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
             if (ForceStoreLevelSpending) flags.StoreLevelSpending = true;
             if (ForceHousingAuction) flags.HousingAuction = true;
+            if (ForcePosted) flags.HousingAuction = false;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);
@@ -42,6 +50,13 @@ namespace CS2Econ.Harness
             {
                 flags.ConstructionRewire = false;
                 flags.TierC2_Leveling = false;
+                // Vanilla mode means the VANILLA market. With the auction now
+                // the process default, inheriting it here would run vanilla
+                // spawner + assignment auction — a hybrid nothing ships — and
+                // every scenario's "vs vanilla" baseline would quietly stop
+                // being vanilla (measured at the flip round: the levels
+                // scenario's vanilla arm read −0.16 through the auction).
+                flags.HousingAuction = false;
                 sim.Vanilla = new VanillaSpawner();
             }
             return sim;

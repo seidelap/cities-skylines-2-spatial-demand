@@ -740,8 +740,16 @@ namespace CS2Econ.Core
         /// instead of a demand curve inverted for the price and a
         /// first-come-first-served queue for the keys. See HousingAuction for
         /// why the two-mechanism version could let the highest bidder lose a
-        /// unit to whoever had a lower household id.</summary>
-        public bool HousingAuction = false;
+        /// unit to whoever had a lower household id.
+        ///
+        /// DEFAULT TRUE since the flip inventory measured the full battery on
+        /// both arms (39/39 both canaries; one real red exposed, Weber seed 13,
+        /// recorded in KNOWN-RED; seed 9's occupancy red and the vacancy
+        /// scenario both HEAL on this path). The posted path stays reachable
+        /// via `--posted` and stays covered by the pinned posted arms of the
+        /// ledger/reconciliation/shelter checks, the occupancy-channel check,
+        /// and the fingerprint's posted arm — while it ships at all.</summary>
+        public bool HousingAuction = true;
         /// <summary>Clear the labor market as ONE assignment auction
         /// (LaborAuction): who works where, at what TOTAL comp, comes out of
         /// the same ascending machinery as the housing market, run in

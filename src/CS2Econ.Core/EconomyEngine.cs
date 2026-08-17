@@ -62,6 +62,10 @@ namespace CS2Econ.Core
 
         public void Step()
         {
+            // Zeroed every tick, set inside the refresh-tick market solve: a
+            // per-tick consumer (the boombust margin) then counts each decline
+            // exit exactly once instead of RefreshInterval times.
+            DeclineExitsThisTick = 0;
             bool refresh = W.Tick % P.RefreshInterval == 0;
             if (refresh) RefreshTick();
 

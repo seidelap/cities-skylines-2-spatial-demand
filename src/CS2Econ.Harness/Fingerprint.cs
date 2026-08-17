@@ -138,13 +138,23 @@ namespace CS2Econ.Harness
         public static List<Lane> Compute()
         {
             var lanes = new List<Lane>();
+            // The default arm IS the auction path since the flip
+            // (FeatureFlags.HousingAuction = true). Its lanes at the flip
+            // commit are hash-identical to the previously accepted auction-arm
+            // values (verified in the flip inventory before the flip landed),
+            // so the gating baseline carried over a measured state rather than
+            // a fresh one. The old "auction" arm would now duplicate default
+            // lane for lane, asserting nothing — replaced by a POSTED arm so
+            // the retired-in-default path keeps an invariance instrument for
+            // as long as it ships via --posted at all.
             lanes.AddRange(Arm("default", new FeatureFlags(), gating: true));
-            lanes.AddRange(Arm("auction", new FeatureFlags { HousingAuction = true }, gating: false));
-            // REPORT-ONLY like the auction arm, same promotion rule: the labor
-            // market is under active development and gating it now would train
-            // people to bump the baseline without reading it. The default arm
-            // still gates, so a labor change that leaks into the flag-off path
-            // reds a gate.
+            lanes.AddRange(Arm("posted", new FeatureFlags { HousingAuction = false }, gating: false));
+            // REPORT-ONLY, same promotion rule as ever: the labor market is
+            // under active development and gating it now would train people to
+            // bump the baseline without reading it. The default arm still
+            // gates, so a labor change that leaks into the labor-flag-off path
+            // reds a gate. HousingAuction spelled explicitly so this arm does
+            // not silently change worlds if the default ever moves again.
             lanes.AddRange(Arm("labor", new FeatureFlags { HousingAuction = true, LaborAuction = true },
                                gating: false));
             return lanes;

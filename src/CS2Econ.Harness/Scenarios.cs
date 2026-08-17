@@ -332,6 +332,16 @@ namespace CS2Econ.Harness
                     int lStar = 1; double best = double.NegativeInfinity;
                     for (int l = 1; l <= p.MaxLevel; l++)
                     {
+                        // FORECAST oracle (realized:false), deliberately: ℓ* asks
+                        // which of five mostly-COUNTERFACTUAL levels the location
+                        // would support, and only the forecast curve can price a
+                        // level with no stock. realized:true was built and
+                        // MEASURED WRONG at the flip round: the auction posts
+                        // prices only for stock that exists, so the argmax mixed
+                        // realized prices (suppressed by standing competition)
+                        // with forecasts across levels of one parcel — Spearman
+                        // 0.27 → −0.21 on the flip battery. The auction-arm gap
+                        // to the 0.35 bar is recorded in KNOWN-RED instead.
                         double bid = LandAccounting.BidPerUnit(sim.Engine.Access, sim.Engine.Trade,
                             pl.Cluster, pl.Use, l, sim.Engine.SegmentPresence, p);
                         double v = bid - LandAccounting.SPerUnit(l, 1.0, p);
@@ -494,26 +504,35 @@ namespace CS2Econ.Harness
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             sim.Run(300);
 
-            // Measured on the migration MARGIN (desired inflow), with realized
-            // arrivals reported alongside. Tier A's claim is about how fast the
-            // migration decision responds; realized arrivals are that decision
-            // ANDed with housing absorption, and whenever the absorption budget
-            // binds — which it does in any housing-tight city — realized inflow
-            // is supply-limited and cannot move at all, however attractive the
-            // city becomes. Reporting only the realized number would credit the
-            // absorption constraint with a failure of the migration margin, or
-            // vice versa. Both are printed so the distinction is visible.
+            // Measured on the inflow DECISION margin, with realized arrivals
+            // reported alongside. The two paths express that decision through
+            // different quantities and each is structurally zero on the other
+            // path, so both are summed and the total is the margin on either:
+            //   posted  → LastFlows.DesiredBySegment, the desire rate BEFORE
+            //             the absorption budget (realized arrivals are that
+            //             decision ANDed with absorption, and when the budget
+            //             binds they cannot move however attractive the city).
+            //   auction → LastProspects.Admitted + Priced: everyone who looked
+            //             and WANTED the city at its posted prices. Admitted
+            //             alone was built first and measured wrong (+0 inflow
+            //             response on the flip battery): admissions are gated
+            //             by attainable stock, so once the boom fills the
+            //             vacancies the extra hopefuls the pulse creates land
+            //             in Priced, not Admitted — counting both is exactly
+            //             "desire before the absorption budget", which is what
+            //             the posted margin always measured.
+            // The asserted margin read only the posted quantity until the flip
+            // inventory measured the auction arm failing structurally (+0 vs
+            // +1 with 2667 arrivals realized) — the mechanism alive and the
+            // telemetry dead.
             double realizedIn = 0;
             double ArrivalsOver(int ticks)
             {
                 double n = 0;
                 sim.Run(ticks, s =>
                 {
-                    n += s.Engine.LastFlows.DesiredBySegment?.Sum() ?? 0;
-                    // Realized arrivals live in LastFlows on the posted path and
-                    // in LastProspects on the auction path (which zeroes
-                    // LastFlows); sum both so the printed number is honest on
-                    // either path instead of a structural 0 under --auction.
+                    n += (s.Engine.LastFlows.DesiredBySegment?.Sum() ?? 0)
+                         + s.Engine.LastProspects.Admitted + s.Engine.LastProspects.Priced;
                     realizedIn += (s.Engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0)
                                   + s.Engine.LastProspects.Admitted;
                 });
@@ -521,8 +540,14 @@ namespace CS2Econ.Harness
             }
             double DeparturesOver(int ticks)
             {
+                // Departures: posted-path flows plus the auction path's decline
+                // exits (the whole of out-migration there — individual decisions
+                // that nothing beats one's own reservation). DeclineExitsThisTick
+                // is zeroed every tick by the engine and set on refresh ticks,
+                // so a per-tick sum counts each exit exactly once.
                 double n = 0;
-                sim.Run(ticks, s => n += s.Engine.LastFlows.DeparturesBySegment?.Sum() ?? 0);
+                sim.Run(ticks, s => n += (s.Engine.LastFlows.DeparturesBySegment?.Sum() ?? 0)
+                                         + s.Engine.DeclineExitsThisTick);
                 return n;
             }
 

@@ -20,6 +20,7 @@ namespace CS2Econ.Harness
             {
                 if (args[i] == "--store-level") { Sim.ForceStoreLevelSpending = true; continue; }
                 if (args[i] == "--auction") { Sim.ForceHousingAuction = true; continue; }
+                if (args[i] == "--posted") { Sim.ForcePosted = true; continue; }
                 // MUTANT SWITCH (see AccessState.MutantCitywideProspectOdds):
                 // restores the zero-diluted citywide prospect odds so the
                 // prospect-local-odds check can be shown to fail. Never a

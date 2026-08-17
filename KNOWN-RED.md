@@ -28,9 +28,24 @@ and 9; mutants that zero the queue build, zero the not-standing read, or
 corrupt the read rank by one all flip it red (same commit's measurement
 runs, seeds 0–1).
 
+**THE DEFAULT FLIPPED at the flip commit**: `FeatureFlags.HousingAuction`
+ships TRUE — migration as prospects, housing as the assignment market. The
+decision was made on a full measured inventory of both arms (all raw runs in
+the session record): one real defect exposed (Weber, seed 13 — row below),
+everything else either pinned (posted-mechanism checks now run the posted
+world explicitly: occupancy channel, the ledger/reconciliation/shelter
+posted arms, flags-off smoke — coverage preserved, verdicts unchanged),
+re-baselined with the reason recorded (fingerprint: default lanes carried
+over hash-identical to the previously ACCEPTED auction values), or measured
+unchanged (both canaries 39/39). At the flip commit: verify 33/33 on seed 1,
+32/33 on seed 9 (the standing posted-arm occupancy red, pinned check,
+unchanged numbers), 32/33 on seed 13 (Weber). The posted path stays
+reachable via `--posted` and covered by the pinned arms while it ships.
+
 | Seed | Check | Status | Attribution |
 |---|---|---|---|
-| 9 | occupancy channel: realized vacancy softens rent (price responds on a cleared submarket) | red | Predates `2eeefc3`; fails identically at `2eeefc3`, `7dcaf08`, `ffd9a03`, `6104275`, `694fbd3`, HEAD. Not an auction-era regression. Unowned. THE CHECK WAS REWRITTEN at the check-debt commit — dead fallback arm and never-firing vacancy disjunct deleted, cleared-submarket selection made a required leg — and the rewrite changed no verdict: per-seed verdicts identical on all 57 occsweep seeds (0–49, 138, 208, 271, 327, 549, 910, 6550), 54 pass, with 9, 910 red as before and 41 red under both forms (newly observed by that sweep, not newly caused; failure mode on all three: the first-cleared cluster's bid does not move ≥ 5 % when its FillEma is dropped 1.0 → 0.2, while later clusters on the same seeds respond strongly — a selection-composition question, not a channel-severed one). |
+| 13 | Weber: extraction follows geology; recipes follow input sourcing | red | New with the DEFAULT FLIP: on the auction-default world, 6 of 13 single-input industrials sit on the cheapest-sourced recipe (46% vs the ≥55% bar; the margin is 2 firms) while the extraction leg is clean at 100% and the sector is bigger and more diverse than required (13 firms, 4 outputs). Seed-13-specific: the same check reads 100% on flip seeds 0-1 and passes 2, 3, 9, 25; posted-arm seed 13 was green. Precedent: Weber was the red on auction-arm seed 0 at `c0c584d` — auction-world Weber fragility moves seeds, it is not new. Wants its own investigation: which 7 firms, their delivered-cost gaps, and whether entry timing under prospect-driven population growth outruns trade-price settling. Unowned. |
+| 9 | occupancy channel: realized vacancy softens rent (price responds on a cleared submarket) | red | PINNED POSTED at the flip commit (the check tests the posted path's own transmission; its world and verdicts are unchanged by the flip). Predates `2eeefc3`; fails identically at `2eeefc3`, `7dcaf08`, `ffd9a03`, `6104275`, `694fbd3`, HEAD. Not an auction-era regression. Unowned. THE CHECK WAS REWRITTEN at the check-debt commit — dead fallback arm and never-firing vacancy disjunct deleted, cleared-submarket selection made a required leg — and the rewrite changed no verdict: per-seed verdicts identical on all 57 occsweep seeds (0–49, 138, 208, 271, 327, 549, 910, 6550), 54 pass, with 9, 910 red as before and 41 red under both forms (newly observed by that sweep, not newly caused; failure mode on all three: the first-cleared cluster's bid does not move ≥ 5 % when its FillEma is dropped 1.0 → 0.2, while later clusters on the same seeds respond strongly — a selection-composition question, not a channel-severed one). |
 
 ## Measured dead ends — do not retry blind
 
@@ -104,17 +119,27 @@ below its alternatives and every attempted eviction succeed. Entry prices
 are monotone within a re-clear round again; laborcanary 39/39 at the fix
 commit (clean scans in 30-41 repair rounds, 13-17 bids/worker).
 
-## scenarios (seed 1)
+## scenarios (default scenario seed, measured at the flip commit)
 
-All three fail **byte-identically** at `2eeefc3`, `6104275`, and HEAD — the
-detail lines do not differ by a digit — so none is a recent regression. All
-predate the auction era; true origins untested further back.
+State under the AUCTION DEFAULT: 7/10. Two heals worth naming — `vacancy`
+(red since before the auction era) passes with suppression concentrated at
+the shock (contrast 6.0 vs bar 3.0; true-vanilla arm 2.7), and `perf` reads
+1.62–1.65 against the <1.8 bar (the posted-arm "ratio ≈2" seed-1 red retires
+with the posted default; timing-sensitive, keep watching). The battery costs
+~12× the posted battery (every refresh solves the auction; `levels` alone is
+the long pole) — budget accordingly, and note the vanilla arms of every
+scenario are PINNED to the vanilla market (`Sim.Create` vanillaMode) so
+"vs vanilla" keeps meaning vanilla.
 
-| Scenario | Failing line | Notes |
+Pre-flip history for these rows: vacancy/levels/perf failed byte-identically
+at `2eeefc3`, `6104275`, and the posted-default HEADs (seed-1 runs; true
+origins untested further back).
+
+| Scenario | Failing line | Attribution |
 |---|---|---|
-| vacancy | (unchanged across all commits tested) | Unowned. |
-| levels | `Spearman(realized level, ℓ*) spatial 0.34 vs vanilla −0.02` | The mod beats vanilla by a wide margin but sits under the absolute bar. The 0.34 is identical at every commit tested. Unowned. |
-| perf | `Tier B refresh 30.0 ms at 8 parcels/cluster vs 58.8 ms at 16 → ratio ≈2 (cluster count fixed)` | Refresh scales with parcel count where the target is cluster-count scaling. A real, old property violation. Unowned. |
+| levels | `Spearman(realized level, ℓ*) spatial 0.27 vs vanilla 0.03` (bar ≥0.35 absolute; the ≥+0.15 relative leg is beaten at +0.24) | Auction-default measurement with the FORECAST ℓ* oracle — `realized:true` was built and measured WRONG at the flip round (0.27 → −0.21; the auction posts prices only for stock that exists, so the argmax mixed suppressed realized prices with forecasts — see the scenario's comment). The 0.35 bar and 2600-tick horizon were tuned on posted-path transients; wants a re-measured horizon before any bar move. Unowned. |
+| tradebend | `bend 30 %` vs the ≥30 % bar (marginal 1.83 vs flat 2.60) | Pre-existing near-bar red at this seed on BOTH arms (posted sustained 78/tick, auction 69) — not flip-caused. Unowned. |
+| boombust | `migration-margin response +0 vs departure response +440` (2667 arrivals realized) | REAL mechanism finding, isolated at the flip commit once the margin telemetry was honest (it now sums posted Desired + prospect Admitted + Priced — the decision before the absorption budget, both paths): the auction path's come/stay decision reads only RELATIVE within-city access (`HousingAuction._premium` normalizes `AccessValue` by citywide `MeanAccess`), so a spatially UNIFORM amenity pulse moves neither premiums nor the reservation and is structurally invisible to the inflow decision — while a uniformly better city should win each individual's city-vs-outside comparison. The outflow side responds (+440 decline exits) through slower channels. Wants: the OUTSIDE region's access level anchoring the come/stay margin (a genuine property of the outside world — the same demotion the outside wage and outside employment odds already got), not `MeanAccess`. Task #42. |
 
 ## Closed
 
