@@ -44,7 +44,7 @@ reachable via `--posted` and covered by the pinned arms while it ships.
 
 | Seed | Check | Status | Attribution |
 |---|---|---|---|
-| 13 | Weber: extraction follows geology; recipes follow input sourcing | red | INVESTIGATED (probe run at the webersweep commit; the entry-freeze hypothesis from the flip inventory is measured half-true and the freeze is NOT the binding defect). Measured on the fixture: 5 of the 7 misaligned firms chose the then-cheapest raw at their entry tick (4 seed-built Food firms had own == cheapest exactly at t=1; the t=243 entrant was inside the band) and prices moved from under them as population grew 2241 → 4330 (Grain delivered 1.42 → 2.6 at their clusters while Wood fell to 1.88); the 2 Plastics entrants (t=18, 20) were outside the band already at entry — their entry argmax was profit, which the cheapest-input proxy does not always match. THE SHARPER FACT: at check time every misaligned firm's own re-run Weber comparison STILL picks its current recipe — cross-recipe profit margins sit within 2–4% while input costs differ 40%, because endogenous output prices absorb the input-cost gaps. Unfreezing the choice therefore changes nothing statically, and the dynamic version (retooling — dead-end row below) makes the check WORSE. The check's premise (recipes follow input sourcing) binds only where output prices are anchored; with the citywide LocalPrice statistic plus basket demand, one recipe (Food) is the near-global profit argmax and alignment survives only where the raw-cost structure happens to agree. The principled precondition is per-cluster local goods prices (task #30, in progress) — re-investigate after it lands, with `webersweep` (the Weber check alone across seeds; added at this row's commit). Sweep inventory at that commit, seeds 0–25: 23/26 pass; 13 red on the RECIPE leg as above (46% vs ≥55%, extraction 100%); 4 and 6 red on the EXTRACTION leg (both 75% = 6/8 extractors on the best raw, recipe leg 82% both) — newly observed by the sweep, not newly caused (no behavior changed at its commit; those seeds were never run before, the pre-flip inventory covered 0–3, 9, 25). The extraction-leg mode on 4/6 is its own question: the check's value-weighted oracle already tolerates price-chasing entrants, so a 75% read means geology and both oracles disagree with the sitting raw. Unowned. |
+| 13 | Weber: extraction follows geology; recipes follow input sourcing | red | INVESTIGATED (probe run at the webersweep commit; the entry-freeze hypothesis from the flip inventory is measured half-true and the freeze is NOT the binding defect). Measured on the fixture: 5 of the 7 misaligned firms chose the then-cheapest raw at their entry tick (4 seed-built Food firms had own == cheapest exactly at t=1; the t=243 entrant was inside the band) and prices moved from under them as population grew 2241 → 4330 (Grain delivered 1.42 → 2.6 at their clusters while Wood fell to 1.88); the 2 Plastics entrants (t=18, 20) were outside the band already at entry — their entry argmax was profit, which the cheapest-input proxy does not always match. THE SHARPER FACT (check-time probe, re-measured at the registry-correction commit): the re-run Weber argmax at check time is Food for EVERY single-input industrial on the fixture — the 5 misaligned Food firms re-choose their current recipe, and the 2 misaligned Plastics firms re-choose Food, where they would STILL be misaligned (Grain delivered 2.43/2.57 at their clusters vs alignment bands 2.08/2.15); Food's gross per-slot margin beats Plastics' by under 2% while their input costs differ 40%+, because endogenous output prices absorb the input-cost gaps. A static unfreeze therefore cannot change the verdict — misaligned firms adopting their re-run choice leave the recipe leg at 6/13 aligned (46%) and the diversity leg at ≥2 outputs (measured: 3) — and the dynamic version (retooling — dead-end row below) makes the check WORSE. The check's premise (recipes follow input sourcing) binds only where output prices are anchored; with the citywide LocalPrice statistic plus basket demand, one recipe (Food) is the near-global profit argmax and alignment survives only where the raw-cost structure happens to agree. The principled precondition is per-cluster local goods prices (task #30, in progress) — re-investigate after it lands, with `webersweep` (the Weber check alone across seeds; added at this row's commit). Sweep inventory at that commit, seeds 0–25: 23/26 pass; 13 red on the RECIPE leg as above (46% vs ≥55%, extraction 100%); 4 and 6 red on the EXTRACTION leg (both 75% = 6/8 extractors on the best raw, recipe leg 82% both) — newly observed by the sweep, not newly caused (no behavior changed at its commit; those seeds were never run before, the pre-flip inventory covered 0–3, 9, 25). The extraction-leg mode on 4/6 is its own question: the check's value-weighted oracle already tolerates price-chasing entrants, so a 75% read means geology and both oracles disagree with the sitting raw. Unowned. |
 | 9 | occupancy channel: realized vacancy softens rent (price responds on a cleared submarket) | red | PINNED POSTED at the flip commit (the check tests the posted path's own transmission; its world and verdicts are unchanged by the flip). Predates `2eeefc3`; fails identically at `2eeefc3`, `7dcaf08`, `ffd9a03`, `6104275`, `694fbd3`, HEAD. Not an auction-era regression. Unowned. THE CHECK WAS REWRITTEN at the check-debt commit — dead fallback arm and never-firing vacancy disjunct deleted, cleared-submarket selection made a required leg — and the rewrite changed no verdict: per-seed verdicts identical on all 57 occsweep seeds (0–49, 138, 208, 271, 327, 549, 910, 6550), 54 pass, with 9, 910 red as before and 41 red under both forms (newly observed by that sweep, not newly caused; failure mode on all three: the first-cleared cluster's bid does not move ≥ 5 % when its FillEma is dropped 1.0 → 0.2, while later clusters on the same seeds respond strongly — a selection-composition question, not a channel-severed one). |
 
 ## Measured dead ends — do not retry blind
@@ -76,34 +76,6 @@ point in this architecture.
 The old rule "converges" only because its cuts close no deals — the loop
 runs dry trivially.
 
-### Industrial recipe re-evaluation (retooling) for the seed-13 Weber red
-
-Built and measured at the webersweep-commit round; REVERTED. The mechanism
-was charter-clean: each industrial firm re-ran its own Weber comparison from
-its own location at current prices each tick and switched recipe when
-another beat its own, net of an amortized retooling wedge (the household
-moving-cost form — a per-firm hash draw over an amortization horizon, no
-cash gate: worker-collective firms measured money 0 to −17 against a ~196
-lump, so a paid lump can never clear), after a measured persistence window
-(transient dominance self-reverses ≤13 consecutive ticks; genuine dominance
-persists 26–86+; at persistence 20 one firm retooled every ~20 ticks — the
-near-flat cross-recipe margins let the argmax rotate — at 40 churn damped to
-18 retools/16 firms/300 ticks). Result: the alignment leg heals to 100%
-everywhere BUT the fixture collapses to Food monoculture — the citywide
-LocalPrice statistic plus one-sided basket demand make Food the profit
-argmax nearly everywhere, so continuous re-evaluation converges every
-industrial (Machinery plants included, 300-tick dominance episodes at
-~40/tick) onto one output. Measured: Weber check 6/26 seeds pass with the
-mechanism (fails 0, 4-6, 8-15, 17-22, 24, 25 on "1 distinct industrial
-output"; alignment 100% on every failing seed) vs 25/26 without; seed-13
-verify 31/33 (diversity leg red AND the seed-13 pairwise-stability
-knife-edge re-red: improving swaps 1, best 0.194) vs 32/33 at base. The
-baseline's output diversity is partly a FREEZE ARTIFACT — entrants at
-different ticks locked in different argmaxes. Do not retry re-evaluation
-until local prices are per-cluster (task #30): with a citywide price there
-is one argmax, and any re-evaluation mechanism, whatever its damping,
-walks every firm to it.
-
 **RESOLVED** — the down-phase moved inside the auction in the simplest
 possible way: every repair round is a full re-clear from the reserve, so a
 stale price cannot exist for anything to walk down. The accepted-standing-
@@ -114,6 +86,47 @@ structurally zero, and an LP-optimality gap of 0.01–0.03% of LP* where the
 resumed regime measured 0.81–1.61%.
 
 Seeds 0–7 and 13 are 27/27 at the fix commit; seed 25 is the one canary red.
+
+### Industrial recipe re-evaluation (retooling) for the seed-13 Weber red
+
+Built and measured at the webersweep-commit round; REVERTED — this dead end
+is NOT resolved, it is parked behind task #30 (patch preserved in the
+session record; the sweep and verify numbers below are re-measured from it
+per seed at the registry-correction commit — the persistence-window and
+retool-count numbers are the build round's own probe measurements). The
+mechanism was charter-clean: each industrial firm re-ran its own Weber
+comparison from its own location at current prices each tick and switched
+recipe when another beat its own, net of an amortized retooling wedge (the
+household moving-cost form — a per-firm
+hash draw over an amortization horizon, no cash gate: worker-collective
+firms measured money 0 to −17 against a ~196 lump, so a paid lump can never
+clear), after a measured persistence window (transient dominance
+self-reverses ≤13 consecutive ticks; genuine dominance persists 26–86+; at
+persistence 20 one firm retooled every ~20 ticks — the near-flat
+cross-recipe margins let the argmax rotate — at 40 churn damped to
+18 retools/16 firms/300 ticks). Result: continuous re-evaluation walks
+firms toward the one profit argmax the citywide LocalPrice statistic plus
+one-sided basket demand pick (Food nearly everywhere — on the seed-13
+fixture at check time it is the re-run argmax of EVERY single-input
+industrial), and the check gets worse, not better. Measured: Weber check
+6/26 seeds pass with the mechanism (fails 0, 4–6, 8–15, 17–22, 24, 25) vs
+23/26 without (fails 4, 6, 13 — 4 and 6 are the extraction-leg reds in the
+row above, red on BOTH arms). The failure mode is MIXED, not the uniform
+"100%-aligned Food monoculture" first recorded here: 17 of the 20 failing
+seeds do read 1 distinct industrial output, but 3 fail with 2 outputs
+(0, 4, 9); alignment reads 100% on 13 failing seeds and 40–73% on the
+other 7 (40% on seed 5, 50% on 4 and 9, 57–73% on 0, 14, 17, 20); and 7
+failing seeds (0, 4, 6, 15, 21, 22, 24) read fewer than 5 single-input
+industrials at check time — under re-evaluation the single-input
+population itself thins (firms end on the multi-input Machinery recipe or
+dead; not decomposed which), failing the check's population floor. Seed-13
+verify 31/33 with the mechanism (diversity leg red AND the seed-13
+pairwise-stability knife-edge re-red: improving swaps 1, best 0.194) vs
+32/33 at base. The baseline's output diversity is partly a FREEZE
+ARTIFACT — entrants at different ticks locked in different argmaxes. Do
+not retry re-evaluation until local prices are per-cluster (task #30):
+with a citywide price there is one argmax, and any re-evaluation
+mechanism, whatever its damping, walks firms toward it.
 
 ### Labor: household-atomic multi-earner demand with exact-set displacement
 
