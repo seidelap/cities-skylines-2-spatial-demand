@@ -491,9 +491,15 @@ namespace CS2Econ.Core
             // Developer prices the project at the clearing price with its OWN
             // units ADDED to the stock (they are not yet in it — stock counts
             // Built only), the same discipline Assess uses for candidates.
+            // The correction is the developer's own realized-vs-predicted
+            // record AT THIS CLUSTER (shrunk toward the use-wide record by
+            // how much local history exists — CalibrationState.Factor's
+            // per-cell blend): a forecast for a corridor is checked against
+            // that corridor, not against the citywide average of every other
+            // one.
             double bid = LandAccounting.BidPerUnit(acc, trade, pl.Cluster, use, level, segmentPresence, p,
                                                    addUnits: units)
-                         * w.Calibration.Factor(use);
+                         * w.Calibration.Factor(use, pl.Cluster, p.CalibClusterShrinkN0);
             double resid = residuals.Get(pl.Cluster, use, w.Claims);
             // A project under construction already sits in the claims ledger;
             // its own claim must not count against its own re-evaluation.
@@ -523,7 +529,8 @@ namespace CS2Econ.Core
                 if (pl.IsResidential) occ = pl.Units > 0 ? (double)pl.OccupantHouseholds.Count / pl.Units : 0;
                 else occ = pl.OccupantFirm >= 0 ? 1 : 0;
                 double realizedRent = LandAccounting.UnitAssessment(pl, p);
-                w.Calibration.Observe(pl.Use, realizedRent * occ / Math.Max(1e-6, predicted), p.CalibShrinkN0);
+                w.Calibration.Observe(pl.Use, pl.Cluster, realizedRent * occ / Math.Max(1e-6, predicted),
+                                      p.CalibShrinkN0);
                 pl.PredictedRentAtDecision = 0;   // observe once
             }
         }

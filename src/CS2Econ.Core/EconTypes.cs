@@ -354,6 +354,37 @@ namespace CS2Econ.Core
         public double ProminenceScale = 60_000;   // city size at which field widening doubles
         public double NetworkMemoryDecay = 0.995;
         public double NetworkMemoryGain = 0.08;
+        /// <summary>Per-offer-batch decay of the per-cluster chain-migration
+        /// stock (MigrationState.NetworkTies): each Prospects.Step call — one
+        /// per tick on the engine path — multiplies the whole stock by this
+        /// before the batch's admits are added, so one remembered arrival
+        /// fades on a ~34-tick half-life and the standing stock is ~50× the
+        /// per-tick admit flow (≈550 on the settled 10×10/3000 fixture, where
+        /// admits run ~11/tick — bring-up runs). Links go stale as the people
+        /// who hold them move on.</summary>
+        public double NetworkTieDecay = 0.98;
+        /// <summary>Familiarity bonus for a prospect's tie cluster, as a
+        /// fraction of its own bid base at that door (the same money unit the
+        /// taste term uses — AuctionTasteScale scales a Gumbel draw by bse;
+        /// this scales a constant). An individual's taste for the one place
+        /// its predecessors landed — individually legitimate, like taste.
+        /// Swept on the tie-channel fixture (`tiesweep --seeds 4 --tie-bonus
+        /// X`, seeds 0–3 + 9, 13, item-#34 bring-up) at {0.05, 0.10, 0.15,
+        /// 0.20}: tie-landing lift over the independence baseline reads
+        /// +0.008..+0.019 / +0.024..+0.032 / +0.032..+0.052 / +0.059..+0.074
+        /// by dose, zero-bonus mutant arm 0.000..+0.006 at every dose. 0.15
+        /// is the largest swept value not exceeding AuctionTasteScale — one
+        /// Gumbel sd of idiosyncratic taste (~0.19·bse) still outweighs the
+        /// tie, so familiarity tilts a close call rather than beating a
+        /// genuinely better door — and its worst-seed lift clears the 0.015
+        /// check bar with ~2x margin (0.10's worst seed left only 1.6x).</summary>
+        public double NetworkTieBonusScale = 0.15;
+        /// <summary>MUTANT SWITCH, harness-only (see the tie-channel verify
+        /// check): zeroes the familiarity bonus while the tie draw and the
+        /// stock keep running, so admits land independently of their tie
+        /// cluster. Exists so that check stays falsifiable; never a shipping
+        /// mode.</summary>
+        public bool MutantZeroTieBonus = false;
         public double FirmEntryElasticity = 0.004;
 
         // ---- trade (design §4.5) --------------------------------------------
@@ -368,6 +399,18 @@ namespace CS2Econ.Core
         public int MaxStartsPerTick = 6;          // construction industry capacity
         public double AbandonMarginFactor = 0.25; // abandon if E[flow] < factor·h·remainingCost
         public double CalibShrinkN0 = 12.0;       // shrinkage prior weight for correction factors
+        /// <summary>n0 in CalibrationState.Factor(use, cluster): the prior
+        /// weight (in completions observed) at which a cluster's own
+        /// realized-vs-predicted record counts as much as the use-wide factor.
+        /// Picked from the MEASURED per-cell completion counts on the
+        /// reference fixture (10×10, 3000 households, 400 ticks —
+        /// `calibsweep --seeds 4`, seeds 0–3 + 9, 13, item-#34 bring-up):
+        /// occupied (use, cluster) cells hold n_c min 1, p25 1–2, median 2–3,
+        /// p90 4–5, max 6–8 over 71–86 cells and 184–238 completions per
+        /// seed. n0 = 2 sits at the p25–median: a single-completion cell is
+        /// 1/3 its own record, a median cell an even split, and the deepest
+        /// cells (6–8) are 75–80% their own.</summary>
+        public double CalibClusterShrinkN0 = 2.0;
 
         // ---- condition / decay ----------------------------------------------
         public double ConditionDecayScale = 8.0;  // multiplies δ when S unpaid: vacant stock cheapens in ~sim-months, not years

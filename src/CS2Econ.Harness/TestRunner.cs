@@ -482,6 +482,50 @@ namespace CS2Econ.Harness
             return Math.Min(failed.Count, 100);
         }
 
+        /// <summary>The tie-channel check alone across seeds — the instrument
+        /// its bars were measured with (same rationale as PulseSweep): both
+        /// arms' lifts print per seed, so re-measuring the bands after a
+        /// change to the tie draw, the bonus, or the stock is one command.</summary>
+        public static int TieSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"tie-channel sweep: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                ProspectTieChannel(seed);
+                bool ok = Results.Count > before;
+                for (int k = before; k < Results.Count; k++) ok &= Results[k].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"tie sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
+        /// <summary>The per-cell calibration check alone across seeds — the
+        /// instrument its floors, gap and n0 thresholds were measured with;
+        /// each seed also prints the cell-depth distribution the n0 comment
+        /// in EconParams cites.</summary>
+        public static int CalibSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"calibration-cell sweep: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                CalibClusterCheck(seed);
+                bool ok = Results.Count > before;
+                for (int k = before; k < Results.Count; k++) ok &= Results[k].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"calib sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
         /// <summary>The assessment-tracks-price fixture alone (both its
         /// checks: the L1–L3 relation and the shadow-queue leg) — ~7 s
         /// against ~120 s for the full suite (measured, seed 1, check-debt
@@ -513,6 +557,8 @@ namespace CS2Econ.Harness
             Timed("auction-equilibrium", () => AuctionEquilibrium(seed));
             Timed("prospect-local-odds", () => ProspectLocalOddsCheck(seed));
             Timed("uniform-pulse", () => UniformPulseMonotonicity(seed));
+            Timed("prospect-tie-channel", () => ProspectTieChannel(seed));
+            Timed("calibration-cells", () => CalibClusterCheck(seed));
             Timed("exhaustive-shortlist", () => ExhaustiveShortlist(seed));
             Timed("assignment-oracle", () => {
                 var (lpOk, lpDetail) = AssignmentOracle.Run(seed);
@@ -1913,6 +1959,218 @@ namespace CS2Econ.Harness
                   $"clean: resident outside options fell {fallClean:F3} geo-mean over {clean.residN} residents "
                   + $"(≥{ResidFallBar:F3} bar, floor {MinResidents}; premium ratio {clean.prem1 / clean.prem0:F3}); "
                   + $"mutant: {fallMut:+0.000;-0.000;0.000} over {mut.residN} (must stay under the bar)");
+        }
+
+        /// <summary>TIES CHANGE WHERE ADMITS LAND — the channel, not the
+        /// geography. Each prospect draws a tie cluster ∝ the per-cluster
+        /// chain-migration stock and gets a familiarity bonus at that one
+        /// door (Prospects.Step → QuoteOutsider), so its tie must make it
+        /// MORE likely to land there than the batch's marginal landing
+        /// pattern alone predicts. The statistic is therefore a LIFT over an
+        /// independence baseline computed from the same batch's own
+        /// marginals — Σ_c P(tie=c)·P(chosen=c) — rather than any
+        /// concentration measure: popular clusters both attract admits and
+        /// hold big stocks, so raw tie-landing coincidence is high with the
+        /// bonus severed, and a geography-shaped statistic would pass on a
+        /// dead channel. Lift is exactly the dependence the bonus creates
+        /// and nothing else. (The #31 check's level/tilt split is the
+        /// template: one leg for the level a defect shifts, one for the
+        /// dependence only the live channel produces.)
+        ///
+        /// The probe batch reads the warmed-up world with an inflated offer
+        /// count, harness-side only — offer size is region-side, so a bigger
+        /// batch changes nothing about the world being quoted, it just gives
+        /// the shares a sample (same trick as the uniform-pulse check).
+        ///
+        /// MUTANT ARM, wired in Ward-style: p.MutantZeroTieBonus zeroes the
+        /// bonus while the tie draw and the stock keep running, so the same
+        /// fixture must read lift ≈ 0 — the check is vacuous otherwise. The
+        /// clean arm takes the switch at its EconParams default, so a
+        /// shipped default flip runs the clean arm as the mutant and goes
+        /// red here.
+        ///
+        /// Bars measured at the item-#34 bring-up (`tiesweep --seeds 16`,
+        /// seeds 0–15, the verify-pinned 9 and 13 among them, at the shipped
+        /// bonus 0.15): clean lift +0.027..+0.052 (probe batches admit
+        /// 1000–1150, every one tied), mutant arm −0.004..+0.006. The 0.015
+        /// bar is ~1.8x under the worst clean seed and ~2.5x over the worst
+        /// mutant reading — the same margin class as the uniform-pulse bar;
+        /// re-run the 16-seed sweep before tightening. Dose-response of the
+        /// bonus itself: EconParams.NetworkTieBonusScale.</summary>
+        /// <summary>Sweep instrument only (`tiesweep --tie-bonus X`): overrides
+        /// NetworkTieBonusScale in the tie-channel fixture's arms, so the
+        /// parameter's dose-response is one command per value. Null in every
+        /// other run.</summary>
+        public static double? TieBonusOverride;
+
+        private static void ProspectTieChannel(ulong seed)
+        {
+            (double lift, double match, double indep, int admits, int tied) Arm(bool mutantArm)
+            {
+                var p = new EconParams();
+                if (TieBonusOverride is double tb) p.NetworkTieBonusScale = tb;
+                if (mutantArm) p.MutantZeroTieBonus = true;
+                var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+                var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+                sim.Run(160);
+                p.RegionOfferRate = 250;
+                var tel = new List<(int tie, int chosen)>();
+                Prospects.TieTelemetry = tel;
+                try { Prospects.Step(sim.W, sim.Engine.Access, sim.Engine.Auction!, p); }
+                finally { Prospects.TieTelemetry = null; }
+                int C = sim.Engine.Access.C;
+                var tieCnt = new double[C]; var chosenCnt = new double[C];
+                int admits = 0, matched = 0, tied = 0;
+                foreach (var (tie, chosen) in tel)
+                {
+                    admits++;
+                    chosenCnt[chosen]++;
+                    if (tie < 0) continue;
+                    tied++;
+                    tieCnt[tie]++;
+                    if (tie == chosen) matched++;
+                }
+                double indep = 0;
+                if (tied > 0 && admits > 0)
+                    for (int c = 0; c < C; c++)
+                        indep += (tieCnt[c] / tied) * (chosenCnt[c] / admits);
+                double match = tied > 0 ? (double)matched / tied : 0;
+                return (match - indep, match, indep, admits, tied);
+            }
+
+            var clean = Arm(false);
+            var mut = Arm(true);
+            const double LiftBar = 0.015;
+            const int MinTied = 200;   // healthy probe batches admit ~1000-1100, every one tied (bring-up sweeps)
+            Check("prospect ties steer admits to the tied neighborhood: tie-landing lift over the batch's own independence baseline — and the zero-bonus mutant flips it",
+                  clean.tied >= MinTied && mut.tied >= MinTied
+                  && clean.lift >= LiftBar && mut.lift < LiftBar,
+                  $"clean: {clean.tied} tied admits (of {clean.admits}), landed-in-tie share {clean.match:F3} "
+                  + $"vs independence {clean.indep:F3} (lift +{clean.lift:F3} vs ≥{LiftBar:F3} bar); "
+                  + $"mutant: {mut.lift:+0.000;-0.000;0.000} on {mut.tied} tied (must stay under the bar)");
+        }
+
+        /// <summary>CONSTRUCTION CALIBRATION IS PER-PLACE. A developer's
+        /// forecast correction at (use, cluster) must be the developer's own
+        /// realized-vs-predicted record AT THAT PLACE where the record is
+        /// deep, and the use-wide record where it is thin — the same
+        /// shrinkage shape as ProspectLocalOdds (#31). Three legs on one
+        /// fixture, evaluated over divergent cells (|own mean − use factor|
+        /// ≥ the gap floor, so every leg has something to distinguish):
+        ///
+        ///  (1) CONVERGENCE: cells with n_c ≥ 2·n0 sit strictly closer to
+        ///      their own mean ratio than to the use factor (w ≥ 2/3 there).
+        ///      A restored citywide-only Factor pins every cell at the use
+        ///      factor and flips this leg (source mutant run, below).
+        ///  (2) SHRINKAGE: cells with n_c ≤ n0/2 sit closer to the use
+        ///      factor than to their own mean (w ≤ 1/3). A zeroed prior
+        ///      (n0 → 0) jumps them to their own one-completion mean and
+        ///      flips this leg (source mutant run, below).
+        ///  (3) CALL SITE: the construction forecast itself
+        ///      (ConstructionSystem.ExpectedFlow's predictedRent) equals
+        ///      bid × the PER-CELL factor at the deepest divergent cell —
+        ///      re-derived through LandAccounting.BidPerUnit — and that
+        ///      factor differs from the use factor by the cell's own gap.
+        ///      Reverting the call site to Factor(use) flips this leg while
+        ///      (1)-(2) stay green (the state would still be right, the
+        ///      decision would ignore it — the exact regression this leg
+        ///      exists to catch).
+        ///
+        /// Both source mutants were run and reverted at the item-#34
+        /// bring-up (`calibsweep --seeds 4` mutant runs, seeds 0–3 + 9, 13):
+        /// citywide-only (Factor(use, cluster, n0) → Factor(use)) reds legs
+        /// 1 and 3 on 6/6 seeds (convergence 0/14..0/27, call site "NOT the
+        /// cell" with factor ≡ use factor); zero-prior (w → 1 at the read)
+        /// reds exactly leg 2 on 6/6 (shrinkage 0/14..0/19, legs 1 and 3
+        /// green). Cell depth measured on this fixture (400 ticks, same
+        /// seeds): see EconParams.CalibClusterShrinkN0 for the distribution
+        /// the n0 and the leg thresholds were picked from; divergent-cell
+        /// floors below are from the same runs.</summary>
+        private static void CalibClusterCheck(ulong seed)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+            sim.Run(400);
+            var cal = sim.W.Calibration;
+            double n0 = p.CalibClusterShrinkN0;
+            const double MinGap = 0.05;
+
+            int bigCells = 0, bigOk = 0, smallCells = 0, smallOk = 0, cells = 0;
+            double totalN = 0;
+            (ZoneKind use, int cluster, double n, double gap) deepest = (ZoneKind.None, -1, 0, 0);
+            foreach (var kv in cal.ByCell)
+            {
+                cells++; totalN += kv.Value.N;
+                double mean = kv.Value.SumRatio / kv.Value.N;
+                double useF = cal.Factor(kv.Key.use);
+                double fc = cal.Factor(kv.Key.use, kv.Key.cluster, n0);
+                double gap = Math.Abs(mean - useF);
+                if (gap < MinGap) continue;
+                if (kv.Value.N >= 2 * n0)
+                {
+                    bigCells++;
+                    if (Math.Abs(fc - mean) < Math.Abs(fc - useF)) bigOk++;
+                    if (kv.Value.N > deepest.n || (kv.Value.N == deepest.n && gap > deepest.gap))
+                        deepest = (kv.Key.use, kv.Key.cluster, kv.Value.N, gap);
+                }
+                else if (kv.Value.N <= 0.5 * n0)
+                {
+                    smallCells++;
+                    if (Math.Abs(fc - useF) < Math.Abs(fc - mean)) smallOk++;
+                }
+            }
+
+            // Leg 3: the forecast at the deepest divergent cell reads the
+            // cell, not the citywide use factor. Any parcel of the cell's
+            // (use, cluster) works — ExpectedFlow prices by cluster and use,
+            // and predictedRent is bid × factor by construction.
+            bool callSite = false; double fcDeep = 0, useFDeep = 0, rel = 1;
+            if (deepest.cluster >= 0)
+            {
+                foreach (var pl in sim.W.Parcels)
+                {
+                    ZoneKind use = pl.State == ParcelState.UnderConstruction ? pl.Use : pl.Zoned;
+                    if (pl.Cluster != deepest.cluster || use != deepest.use) continue;
+                    sim.Engine.Construction.ExpectedFlow(sim.W, sim.Engine.Access, sim.Engine.Trade,
+                                                         sim.Engine.Residuals, sim.Engine.SegmentPresence,
+                                                         pl, Math.Max(1, (int)pl.Level), p,
+                                                         out double predictedRent, out _);
+                    double bid = LandAccounting.BidPerUnit(sim.Engine.Access, sim.Engine.Trade,
+                                                           pl.Cluster, use, Math.Max(1, (int)pl.Level),
+                                                           sim.Engine.SegmentPresence, p,
+                                                           addUnits: LandAccounting.UnitsFor(use));
+                    fcDeep = cal.Factor(deepest.use, deepest.cluster, n0);
+                    useFDeep = cal.Factor(deepest.use);
+                    rel = bid > 1e-9 ? Math.Abs(predictedRent - bid * fcDeep) / Math.Max(1e-9, bid * fcDeep) : 1;
+                    callSite = rel < 1e-9 && Math.Abs(fcDeep - useFDeep) > 1e-6;
+                    break;
+                }
+            }
+
+            // The cell-depth distribution the n0 choice cites (EconParams.
+            // CalibClusterShrinkN0) — printed, not asserted, so re-measuring
+            // it after a fixture change is free.
+            var depths = new List<double>();
+            foreach (var kv in cal.ByCell) depths.Add(kv.Value.N);
+            depths.Sort();
+            double Q(double q) => depths.Count > 0 ? depths[(int)Math.Min(depths.Count - 1, q * depths.Count)] : 0;
+            Console.WriteLine($"  cell depth n_c over {depths.Count} cells: "
+                + $"min {(depths.Count > 0 ? depths[0] : 0):F0} p25 {Q(0.25):F0} median {Q(0.5):F0} "
+                + $"p90 {Q(0.9):F0} max {(depths.Count > 0 ? depths[depths.Count - 1] : 0):F0}");
+
+            const int MinBig = 3, MinSmall = 3;   // measured: seeds 0-3, 9, 13 hold 13-25 deep / 14-21 thin divergent cells (calibsweep --seeds 4, item-#34 bring-up)
+            Check("construction calibration is per-(use, cluster): deep cells track their own realized/predicted record, thin cells shrink to the use factor, and the forecast reads the cell",
+                  bigCells >= MinBig && bigOk == bigCells
+                  && smallCells >= MinSmall && smallOk == smallCells
+                  && callSite,
+                  $"{cells} cells ({totalN:F0} completions observed): convergence {bigOk}/{bigCells} deep divergent cells "
+                  + $"(n_c ≥ {2 * n0:F0}, floor {MinBig}) closer to own mean; shrinkage {smallOk}/{smallCells} thin "
+                  + $"(n_c ≤ {0.5 * n0:F1}, floor {MinSmall}) closer to use factor; "
+                  + (deepest.cluster >= 0
+                      ? $"call site at ({deepest.use}, c{deepest.cluster}, n={deepest.n:F0}): factor {fcDeep:F3} vs use {useFDeep:F3}, "
+                        + $"forecast rel err {rel:E1} ({(callSite ? "reads the cell" : "NOT the cell")})"
+                      : "no divergent deep cell with a parcel — nothing valid to probe, failing"));
         }
 
         /// <summary>The housing assignment market has to actually BE a

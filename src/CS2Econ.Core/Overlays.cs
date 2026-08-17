@@ -15,7 +15,7 @@ namespace CS2Econ.Core
             int lvl = 2;
             return LandAccounting.BidPerUnit(acc, trade, cluster, use, lvl, segmentPresence, p,
                                              addUnits: LandAccounting.UnitsFor(use))
-                   * w.Calibration.Factor(use);
+                   * w.Calibration.Factor(use, cluster, p.CalibClusterShrinkN0);
         }
 
         /// <summary>Predicted time-to-fill (ticks) for one more unit of a use at a

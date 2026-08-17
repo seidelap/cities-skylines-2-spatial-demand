@@ -1001,17 +1001,25 @@ namespace CS2Econ.Core
                                  ulong tasteKey, EconParams p,
                                  out double bestSurplus, out bool anyAttainable)
             => QuoteOutsider(segment, budget, null, densityTol, reservation, tasteKey, p,
-                             out bestSurplus, out anyAttainable);
+                             -1, 0, out bestSurplus, out anyAttainable);
 
         /// <summary>Per-cluster-budget overload: `budgetByCluster[c]`, when
         /// given, is the prospect's housing budget IF IT LIVED AT CLUSTER c —
         /// rentShare × its cluster-specific expected income — so both the bid
         /// base and the ability-to-pay cap become per-cluster inside the loop.
         /// Null keeps the single-scalar behavior exactly (the old signature
-        /// delegates here), so existing callers and checks are untouched.</summary>
+        /// delegates here), so existing callers and checks are untouched.
+        ///
+        /// `tieCluster`/`tieBonusScale`: the prospect's familiarity bonus at
+        /// the ONE cluster its own predecessors landed in (drawn by the
+        /// caller — Prospects.Step — from the per-cluster chain-migration
+        /// stock). This is the only door the stock may reach valuation
+        /// through (MigrationState.NetworkTies' anti-smuggling guard); −1
+        /// means no tie and changes nothing.</summary>
         public int QuoteOutsider(int segment, double budget, double[]? budgetByCluster,
                                  double densityTol, double reservation,
                                  ulong tasteKey, EconParams p,
+                                 int tieCluster, double tieBonusScale,
                                  out double bestSurplus, out bool anyAttainable)
         {
             bestSurplus = double.NegativeInfinity; anyAttainable = false;
@@ -1041,6 +1049,9 @@ namespace CS2Econ.Core
                     int kc = Key(k, c, C);
                     double prem = bse * _premium[segment][c];
                     double taste = p.AuctionTasteScale * bse * Gumbel01(tasteKey * 1000003UL + (ulong)kc * 31UL + 5);
+                    // Familiarity: this individual's own tie to the one place
+                    // its predecessors landed, in the taste term's money unit.
+                    if (c == tieCluster) taste += tieBonusScale * bse;
                     for (int l = 1; l <= Levels; l++)
                     {
                         int sub = Sub(kc, l, C);

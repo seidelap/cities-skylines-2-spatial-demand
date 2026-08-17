@@ -284,7 +284,24 @@ namespace CS2Econ.Core
     {
         public double[] ReservationThreshold = new double[Segment.Count]; // rises with cumulative net inflow
         public double[] OutSignalEma = new double[Segment.Count];         // lagged out-migration signal
-        public double NetworkMemory;                                      // chain-migration stock
+        /// <summary>Chain-migration stock, POSTED-LEGACY: one citywide scalar,
+        /// read only by Migration.Step. The auction path keeps the per-cluster
+        /// stock below — people follow people to NEIGHBORHOODS, not to a
+        /// city-shaped average.</summary>
+        public double NetworkMemory;
+        /// <summary>Per-cluster chain-migration stock (auction path): a decaying
+        /// EMA of ADMITTED prospects by the cluster each one chose, maintained
+        /// by Prospects.Step (decay p.NetworkTieDecay per offer batch, +1 at
+        /// the chosen cluster per admit). Each unit is one remembered past
+        /// arrival — a link somebody outside has to a specific neighborhood.
+        ///
+        /// ANTI-SMUGGLING GUARD: this stock is a COUNT of past arrivals, never
+        /// a quality read. It may enter exactly two places — a prospect's own
+        /// tie-cluster familiarity bonus (Prospects.Step → QuoteOutsider's
+        /// tieCluster arg) and the total-stock term of prominence (offer count
+        /// only). It must never enter door valuation beyond that bonus, never
+        /// prices, assessment, or the firm side.</summary>
+        public double[] NetworkTies = Array.Empty<double>();
         public double CumulativeNetInflow;
         public double[] SegmentAttractEma = new double[Segment.Count];    // telemetry
     }
@@ -322,18 +339,46 @@ namespace CS2Econ.Core
     public sealed class CalibrationState
     {
         public sealed class PerUse { public double SumRatio; public double N; public double Factor = 1.0; }
+        public sealed class Cell { public double SumRatio; public double N; }
         public readonly Dictionary<ZoneKind, PerUse> ByUse = new Dictionary<ZoneKind, PerUse>();
+        /// <summary>Per-(use, cluster) realized-vs-predicted history: a
+        /// developer's own record of how its forecasts did AT A PLACE. The
+        /// routing doc's calibration is per-corridor; the citywide PerUse
+        /// factor above is kept as the shrinkage anchor (and the posted-path
+        /// telemetry read), not as the decision input.</summary>
+        public readonly Dictionary<(ZoneKind use, int cluster), Cell> ByCell
+            = new Dictionary<(ZoneKind, int), Cell>();
 
         public double Factor(ZoneKind use) => ByUse.TryGetValue(use, out var s) ? s.Factor : 1.0;
 
-        public void Observe(ZoneKind use, double realizedOverPredicted, double shrinkN0)
+        /// <summary>The correction factor a construction forecast at (use,
+        /// cluster) trusts: the cluster's own mean realized/predicted ratio,
+        /// shrunk toward the use-level factor by its own observation count —
+        ///     factor_c = clamp(useFactor + n_c/(n_c + n0) · (mean_c − useFactor))
+        /// — the same shrinkage form ProspectLocalOdds uses (n0 =
+        /// p.CalibClusterShrinkN0). A cluster with one completion is mostly
+        /// the use-wide record; a cluster with many is mostly its own.</summary>
+        public double Factor(ZoneKind use, int cluster, double clusterN0)
         {
+            double useF = Factor(use);
+            if (!ByCell.TryGetValue((use, cluster), out var c) || c.N <= 0) return useF;
+            double mean = c.SumRatio / c.N;
+            double w = c.N / (c.N + Math.Max(1e-9, clusterN0));
+            return MathUtil.Clamp(useF + w * (mean - useF), 0.4, 2.5);
+        }
+
+        public void Observe(ZoneKind use, int cluster, double realizedOverPredicted, double shrinkN0)
+        {
+            double clamped = MathUtil.Clamp(realizedOverPredicted, 0.1, 4.0);
             if (!ByUse.TryGetValue(use, out var s)) ByUse[use] = s = new PerUse();
-            s.SumRatio += MathUtil.Clamp(realizedOverPredicted, 0.1, 4.0);
+            s.SumRatio += clamped;
             s.N += 1;
             double mean = s.SumRatio / s.N;
             double w = s.N / (s.N + shrinkN0);          // shrink toward 1.0 on few observations
             s.Factor = MathUtil.Clamp(1.0 + w * (mean - 1.0), 0.4, 2.5);
+            if (!ByCell.TryGetValue((use, cluster), out var c)) ByCell[(use, cluster)] = c = new Cell();
+            c.SumRatio += clamped;
+            c.N += 1;
         }
     }
 
