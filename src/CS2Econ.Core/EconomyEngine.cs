@@ -34,6 +34,31 @@ namespace CS2Econ.Core
         // Telemetry (per tick)
         public double LandRevenueThisTick, IncomeTaxThisTick, ServiceCostThisTick;
         public double[] LandRevenueByCluster = Array.Empty<double>();
+        /// <summary>Assessment billed and collected this tick, split by who is
+        /// standing on the land. Both sides are the FULL bill (S + τ_S + φ·LR),
+        /// so owed − paid is the tick's shortfall on that side. Telemetry only:
+        /// nothing in the engine reads these, and the parity checks assert on
+        /// them.</summary>
+        public double HouseholdLevyOwedThisTick, HouseholdLevyPaidThisTick;
+        public double FirmLevyOwedThisTick, FirmLevyPaidThisTick;
+        /// <summary>Firms that released their parcel this tick because the land
+        /// charge went unmet for LandArrearsTicks — kept apart from the
+        /// working-capital bankruptcies at CompanyBankruptcyLimit so the two
+        /// exits can never be confused for one another in a check.</summary>
+        public int FirmArrearsExitsThisTick;
+        public int FirmArrearsExitsTotal;
+        /// <summary>Firms that moved to land they could carry rather than
+        /// exiting — the firm side of the household pipeline's SortDown stage.</summary>
+        public int FirmRelocationsTotal;
+
+        /// <summary>MUTANT SWITCH: restores office and extractor production
+        /// WITHOUT the level and condition terms their assessment prices them
+        /// on — the pre-parity production functions. Never a shipping mode.</summary>
+        public static bool MutantLevelFreeFirmOutput;
+        /// <summary>MUTANT SWITCH: restores the silent forgiveness of an unmet
+        /// land charge — the firm keeps the parcel however long it fails to
+        /// pay. Never a shipping mode.</summary>
+        public static bool MutantForgiveFirmArrears;
         /// <summary>(tick, household, reason): reason 0 = voluntary cost-driven
         /// relocation within the city, 1 = insolvency-pipeline emigration.</summary>
         public readonly List<(long tick, int household, int reason)> DisplacementExits
@@ -71,6 +96,9 @@ namespace CS2Econ.Core
 
             Array.Clear(LandRevenueByCluster, 0, LandRevenueByCluster.Length);
             LandRevenueThisTick = IncomeTaxThisTick = ServiceCostThisTick = 0;
+            HouseholdLevyOwedThisTick = HouseholdLevyPaidThisTick = 0;
+            FirmLevyOwedThisTick = FirmLevyPaidThisTick = 0;
+            FirmArrearsExitsThisTick = 0;
             foreach (var pl in W.Parcels) { pl.PaidTickS = 0; pl.OwedTickS = 0; }
 
             AssessmentSlice();
@@ -1370,6 +1398,7 @@ namespace CS2Econ.Core
                 pl.OwedTickS += sOwed;
                 double pay = Math.Min(Math.Max(0, h.Money), owed);
                 h.Money -= pay;
+                HouseholdLevyOwedThisTick += owed; HouseholdLevyPaidThisTick += pay;
                 if (pay < owed - 1e-9) h.StressTicks++;
                 else if (h.StressTicks > 0 && h.Money > 0) h.StressTicks--;
 
@@ -1460,7 +1489,15 @@ namespace CS2Econ.Core
                     {
                         // Output scales with the cluster's geology for THIS raw.
                         double suit = W.Clusters[c].ResourceSuitability[(int)f.Output];
-                        f.OutputThisTick = f.WorkersFilled * P.ExtractorOutputPerSlot * suit * cond;
+                        // Level premium: the same Quality(ℓ) term the extractor
+                        // BID is assessed on (LandAccounting.FirmBidPerSlot).
+                        // Without it the land is charged for a level premium
+                        // the production function does not deliver, which is
+                        // the assessment pricing a configuration that does not
+                        // exist. Industrial and commercial already carry it.
+                        f.OutputThisTick = f.WorkersFilled * P.ExtractorOutputPerSlot * suit * cond
+                                           * (P.NonResLandParity && !MutantLevelFreeFirmOutput
+                                              ? P.Quality(pl.Level) / P.Quality(1) : 1.0);
                         _supplyByCluster[(int)f.Output][c] += f.OutputThisTick;
                         _supplyTotal[(int)f.Output] += f.OutputThisTick;
                         break;
@@ -1499,8 +1536,19 @@ namespace CS2Econ.Core
                     }
                     case ZoneKind.Office:
                     {
+                        // Condition and level premium, the same two terms the
+                        // office BID is assessed on and the same two the other
+                        // three sectors' production already carries. Missing
+                        // them, an office was billed Quality(ℓ)/Quality(1) more
+                        // than it could ever earn: measured at 88fc88c
+                        // (parityprobe seed 1, 400 ticks) the office sector's
+                        // bill was 489/tick against 428 of GROSS revenue, and
+                        // 54 of 62 offices had been short for 200+ consecutive
+                        // ticks.
                         double rev = f.WorkersFilled * P.OfficeOutputPerSlot * P.OfficeOutputPrice
-                                     * Access.OfficeAgglomMult[c];
+                                     * Access.OfficeAgglomMult[c]
+                                     * (P.NonResLandParity && !MutantLevelFreeFirmOutput
+                                        ? cond * P.Quality(pl.Level) / P.Quality(1) : 1.0);
                         f.Money += rev; f.RevenueThisTick = rev;
                         W.Ledger.Transfer(Account.OutsideWorld, Account.Firms, rev);
                         break;
@@ -1632,6 +1680,9 @@ namespace CS2Econ.Core
                     pl.OwedTickS += sOwed;
                     double pay = Math.Min(Math.Max(0, f.Money), owed);
                     f.Money -= pay;
+                    FirmLevyOwedThisTick += owed; FirmLevyPaidThisTick += pay;
+                    f.LevyOwedCum += owed; f.LevyPaidCum += pay;
+                    if (pay < owed - 1e-9) f.LevyShortTicks++; else f.LevyShortTicks = 0;
                     double sPaid = Math.Min(pay, sOwed);
                     pl.PaidTickS += sPaid;
                     double structPaid = Math.Min(pay - sPaid, structTaxOwed);
@@ -1651,6 +1702,7 @@ namespace CS2Econ.Core
                         : f.PresentedThisTick;
                     if (f.PresentedThisTick > 0) f.PresentedObserved = true;
                 }
+                f.GrossRevenueLastTick = f.RevenueThisTick;
                 f.RevenueThisTick = 0; f.OutputThisTick = 0;
 
                 // Worker-collective distribution: surplus above the working
@@ -1699,9 +1751,39 @@ namespace CS2Econ.Core
                         f.DividendPerEarnerEma = MathUtil.Ema(f.DividendPerEarnerEma, paidPerEarner, 0.05);
                 }
 
-                if (f.Money < P.CompanyBankruptcyLimit)
+                // LAND ARREARS (EconParams.NonResLandParity — OFF by default,
+                // and that comment carries the measurement that keeps it off).
+                // The levy takes min(money, bill), so it can never by itself
+                // push a firm past CompanyBankruptcyLimit, and office and
+                // extractor firms carry no input debits either: with the flag
+                // off the unpaid remainder is forgiven every tick, forever.
+                // With it on, the outcome is the firm analog of the household
+                // floor and runs in the household pipeline's own order — grace,
+                // then sort down, then release the land.
+                //
+                // SORT DOWN. A firm's default is its current site, so it moves
+                // only where its OWN forecast of surplus beats its own forecast
+                // here; the search is a memoryless hazard on the household's
+                // own MoveSearchPeriod, so relocation is a distribution rather
+                // than a citywide event, and it costs a scan only for the firms
+                // actually in arrears.
+                if (Levying && P.NonResLandParity && !MutantForgiveFirmArrears
+                    && f.LevyShortTicks >= P.InsolvencyGraceTicks
+                    && f.LevyShortTicks < P.LandArrearsTicks
+                    && W.Rng.NextDouble() < 1.0 / Math.Max(1, P.MoveSearchPeriod)
+                    && RelocateFirm(f, pl))
+                { pl = W.Parcels[f.Parcel]; f.LevyShortTicks = P.InsolvencyGraceTicks; }
+
+                // RELEASE. Past the clock with nowhere better to go, the firm
+                // gives up the land and the entry rule below re-lets it to
+                // whichever forecast can carry it.
+                bool arrears = Levying && P.NonResLandParity && !MutantForgiveFirmArrears
+                               && f.LevyShortTicks >= P.LandArrearsTicks;
+                if (f.Money < P.CompanyBankruptcyLimit || arrears)
                 {
                     f.Dead = true;
+                    f.DiedOfArrears = arrears;
+                    if (arrears) { FirmArrearsExitsThisTick++; FirmArrearsExitsTotal++; }
                     double residual = Math.Max(0, f.Money);
                     if (residual > 0) W.Ledger.Transfer(Account.Firms, Account.PhantomBank, residual);
                     else W.Ledger.Transfer(Account.PhantomBank, Account.Firms, -f.Money); // written-off debt
@@ -1738,6 +1820,44 @@ namespace CS2Econ.Core
                     W.Ledger.Transfer(Account.PhantomBank, Account.Firms, P.FirmSeedCapital);
                 }
             }
+        }
+
+        /// <summary>The firm side of "re-sort down the price gradient" (§4.2):
+        /// move to standing, vacant, same-use land whose charge this firm's own
+        /// forecast can carry. The forecast is the firm's own — the entrant
+        /// arithmetic it would itself run at a site (bid at the site's level and
+        /// condition, less the site's bill) — and it must beat the same
+        /// arithmetic AT ITS CURRENT SITE, so the mechanism can only improve on
+        /// the firm's default. No citywide statistic enters, and nothing moves
+        /// unless a strictly better site exists.
+        ///
+        /// Cheaper land genuinely exists for firms for the same reason it does
+        /// for households: the charge is per parcel and the assessment varies by
+        /// cluster (measured, parityprobe seed 1: vacant office land ran from a
+        /// bill of 94.5 to 441 against 480 at the occupied median).</summary>
+        private bool RelocateFirm(Firm f, Parcel from)
+        {
+            double BidAt(Parcel q) => LandAccounting.FirmBidPerSlot(
+                    Access, Trade, q.Cluster, q.Use, q.Level, P, out _, W.Clusters)
+                * P.CondFactor(q.Condition) * q.Units
+                - LandAccounting.UnitAssessment(q, P) * q.Units;
+
+            double here = BidAt(from);
+            Parcel? best = null; double bestV = here;
+            foreach (var q in W.Parcels)
+            {
+                if (q.State != ParcelState.Built || q.OccupantFirm >= 0 || q.Warehousing) continue;
+                if (q.Use != f.Sector || q.Units <= 0) continue;
+                double v = BidAt(q);
+                if (v > bestV) { bestV = v; best = q; }
+            }
+            if (best == null || bestV <= 0) return false;
+            from.OccupantFirm = -1;
+            best.OccupantFirm = f.Id;
+            f.Parcel = best.Id;
+            f.JobSlots = best.Units;
+            FirmRelocationsTotal++;
+            return true;
         }
 
         private void AllocationAndInsolvency()

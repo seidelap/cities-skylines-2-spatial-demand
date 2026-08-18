@@ -441,6 +441,96 @@ namespace CS2Econ.Core
 
         // ---- insolvency / floor (design §4.2) -------------------------------
         public int InsolvencyGraceTicks = 18;
+        /// <summary>Task #19: put non-residential land on the residential rules.
+        /// Four behaviours, one switch, because they are one finding:
+        ///
+        ///   1. ASSESSMENT READS THE PARCEL'S OWN GEOLOGY. LandAccounting.Assess
+        ///      priced every extractor configuration at a flat 0.5 suitability
+        ///      (BidPerUnit had no way to carry ClusterInfo — an artifact of the
+        ///      residential signature being written first), while firm ENTRY and
+        ///      Construction priced the same parcel at the real geology.
+        ///      Measured, parityprobe seed 1 at 88fc88c: the two reads differ by
+        ///      up to 530% on a single parcel.
+        ///   2. A ONE-SELLER CELL IS NOT ITS OWN COMPARABLE. The industrial and
+        ///      extractor output term read OriginStat — "what sellers at c
+        ///      netted" — which where the parcel's own occupant is the only
+        ///      seller is that firm's own realized revenue pricing the land it
+        ///      stands on. That is the §3 circularity guard's firm analog, and
+        ///      it was open: 6 of 8 occupied producing parcels (seed 1, 400
+        ///      ticks), local evidence carrying 0.906 of the read.
+        ///   3. OFFICE AND EXTRACTOR PRODUCE WHAT THEY ARE ASSESSED ON. Their
+        ///      bids carry Quality(ℓ)/Quality(1) (and, for office, condition)
+        ///      while their production functions carried neither — commercial
+        ///      and industrial already carry both. An office was therefore
+        ///      billed for output that does not exist: 489/tick against 428 of
+        ///      GROSS revenue, same run.
+        ///   4. AN UNMET LAND CHARGE REACHES AN OUTCOME. Firms had no arrears
+        ///      semantics at all: pay min(money, bill), remainder forgiven, no
+        ///      counter, no consequence. The levy alone can never push a firm
+        ///      past CompanyBankruptcyLimit, and office and extractor firms
+        ///      carry no input debits either, so those sectors were immortal in
+        ///      permanent arrears — 54 of 62 standing offices short for 200+
+        ///      CONSECUTIVE ticks, 63.8% of the whole firm bill uncollected,
+        ///      against households paying 100.00% of theirs. With the switch on
+        ///      a firm gets the household pipeline's own shape on the household's
+        ///      own clock: grace (InsolvencyGraceTicks), sort down to land its
+        ///      own forecast can carry, then release the parcel
+        ///      (LandArrearsTicks).
+        ///
+        /// OFF BY DEFAULT, AND THE REASON IS MEASURED. Every one of these makes
+        /// the assessment MORE accurate, and the non-residential base cannot
+        /// carry an accurate assessment yet. ℓ* sits at the CORNER for every
+        /// firm sector — mean TargetLevel 5.00 for office and industrial against
+        /// standing levels 3.06 and 2.00 — because the firm bid is a per-slot
+        /// margin formula scaled by Quality(ℓ) with no market on the other side
+        /// to bound it, where the residential ladder is bounded by the auction's
+        /// posted price and its shadow queue (LandAccounting.BidPerUnit drops
+        /// `realized`, `addUnits` and `minSupply` on the firm branch because
+        /// none of them has a meaning there). Charging best-permitted-use at 95%
+        /// capture against a corner ℓ* exceeds what a firm below that level can
+        /// earn; a vacated parcel does not re-let either, because firm entry
+        /// compares a bid at the parcel's CURRENT level against an assessment
+        /// priced at ℓ*. So a correction that raises assessment where it was too
+        /// low kills the firms it lands on, and enforcement turns the standing
+        /// gap into exits.
+        ///
+        /// Measured ON, this commit's build: firms' uncollected share 64% → 21%
+        /// and no firm sits past the clock, but `webersweep` (seeds 0-7) reads
+        /// 0/8 against 6/8 at 88fc88c — every failure on the EXTRACTOR
+        /// POPULATION precondition (1 to 4 extractors against the ≥5 bar) with
+        /// the alignment legs the check exists for still at 100% — standing
+        /// offices go 62 → 8, and verify seed 9 loses the same check (48/51
+        /// against 51/51). That is vanilla's land-value death spiral (design §2)
+        /// reappearing on the firm side.
+        ///
+        /// ATTRIBUTED, not guessed: `webersweep --seeds 2` was run once per
+        /// mutant on the ungated build. All four behaviours on — 3 and 1
+        /// extractors, both red. Item 1 alone removed (--mutant-flat-geology,
+        /// items 2-4 still on) — 10 and 8 extractors, seed 1 green and seed 0
+        /// red on the industrial DIVERSITY precondition only (1 distinct
+        /// output). Item 2 alone removed — 3 and 1, red. Item 3 alone removed —
+        /// 1 and 0, red. All removed — 9 and 9, both green. So the extractor
+        /// collapse is ITEM 1: pricing ore land at its real geology is correct
+        /// and is exactly what the sector cannot carry at 95% capture against a
+        /// corner ℓ*, which is the same wall items 3 and 4 hit from their own
+        /// sides. One finding, one switch.
+        ///
+        /// THE OWED WORK, named: the non-residential ladder needs the bound the
+        /// residential one has — a realized comparable per (cluster, sector,
+        /// level) over OTHER firms, which is the same assessment-comparables
+        /// pattern this switch's item 2 installs on the goods side. Until that
+        /// exists this ships built, checked on both arms, and off.</summary>
+        public bool NonResLandParity = false;
+        /// <summary>Consecutive ticks a firm may fail to meet its land charge in
+        /// full before it releases the parcel — the firm side of the same floor
+        /// the household pipeline defines, and deliberately the SAME clock: a
+        /// household reaches its exit at StressTicks > 3 × InsolvencyGraceTicks,
+        /// which is 54 ticks on the shipped grace. Parity is the whole rationale
+        /// for the value, so it is written as the product rather than as an
+        /// independent number. UNSWEPT: no sweep has been run over this clock;
+        /// the population it acts on is in the parityprobe run recorded with
+        /// this commit.</summary>
+        public int LandArrearsTicks => 3 * InsolvencyGraceTicks;
         public double ConsumptionCutFactor = 0.6;
         public double EmigrationMoveCost = 40.0;
         public double ShelterCapacityShare = 0.015; // of population

@@ -329,6 +329,27 @@ namespace CS2Econ.Core
         public double RoundRatio;
         public double RemainingCapacity;
         public double[] InputNeedByRes = new double[ResourceCatalog.Count];
+
+        // ---- land-charge account (the firm side of the §4.3 levy) -----------
+        /// <summary>The gross revenue this firm's production booked on the last
+        /// tick it ran, kept because FirmLifecycle zeroes RevenueThisTick after
+        /// consuming it. Telemetry: the realized side of the parity check's
+        /// office identity, read against what the assessor prices the same
+        /// building at.</summary>
+        public double GrossRevenueLastTick;
+        /// <summary>Cumulative assessment billed to, and paid by, this firm.
+        /// The firm analog of the household's payment record; telemetry, and
+        /// what the parity checks read.</summary>
+        public double LevyOwedCum, LevyPaidCum;
+        /// <summary>Consecutive ticks this firm did not meet its land charge in
+        /// full — the firm analog of Household.StressTicks, and the clock the
+        /// arrears outcome reads. Reset by any tick paid in full.</summary>
+        public int LevyShortTicks;
+        /// <summary>Set when this firm exited because its land charge went
+        /// unmet for LandArrearsTicks consecutive ticks (as distinct from the
+        /// working-capital bankruptcy at CompanyBankruptcyLimit). Telemetry for
+        /// the parity checks' attribution leg.</summary>
+        public bool DiedOfArrears;
     }
 
     /// <summary>One outside connection with its own supply/demand law

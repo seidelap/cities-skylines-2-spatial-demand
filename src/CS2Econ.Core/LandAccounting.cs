@@ -16,6 +16,16 @@ namespace CS2Econ.Core
         /// <summary>Statistic of what sellers AT cluster c actually netted per
         /// unit of r, same shrinkage.</summary>
         double OriginStat(Res r, int cluster);
+        /// <summary>OriginStat restricted to what counts as a COMPARABLE for
+        /// assessment: the local cell's realized statistic is admitted only
+        /// where more than one seller of r stands at c, so a lone producer's
+        /// own realized takings can never price the land it stands on (§3).
+        /// Thinner than that, the read falls back to the citywide realized
+        /// prior, and where the whole city has no second seller it returns 0 —
+        /// leaving the caller's max() to price the output at exit parity, an
+        /// outside-world price. Assessment reads this; settlement and the
+        /// firms' own trading read OriginStat.</summary>
+        double OriginComparable(Res r, int cluster);
         /// <summary>Delivered cost of one unit of r at cluster c (a producing
         /// cluster's realized price + haul, or import parity — whichever is
         /// lower). Design §4.2 freight-in term.</summary>
@@ -44,7 +54,18 @@ namespace CS2Econ.Core
     /// Construction or Overlays); with owner parcels' units OUT of the uniform
     /// capacity, a lone owner parcel's assessment prices from its submarket's
     /// comparables or the shadow queue, closing the singleton self-assessment
-    /// that pooled granularity used to permit.</summary>
+    /// that pooled granularity used to permit.
+    ///
+    /// The guard binds on the FIRM side through the same shape. FirmBidPerSlot
+    /// takes no parcel and no firm, so per-parcel firm pricing is likewise
+    /// unrepresentable; the one read that could still resolve to the sitting
+    /// occupant is the output-price term, because "what sellers at c netted"
+    /// is that firm's own record wherever it is the only seller at c. That is
+    /// why the industrial and extractor legs read IPriceContext.
+    /// OriginComparable rather than OriginStat: a cell with fewer than two
+    /// sellers carries no comparable and the read falls back to the citywide
+    /// realized prior, or to exit parity where the city has no second seller
+    /// either. Both fallbacks are market signals no single parcel produces.</summary>
     public static class LandAccounting
     {
         public static int UnitsFor(ZoneKind use) => use switch
@@ -143,6 +164,12 @@ namespace CS2Econ.Core
         /// roughly twice. One parameter, one channel: appeal prices the bid;
         /// the share stays kind-neutral (adversarial review, measured A/B).</summary>
         public static long AuditExcessCalls, AuditBreakIter1, AuditRatio5e5, AuditAllAbove, AuditDustZero, AuditTotalPriced;
+
+        /// <summary>MUTANT SWITCH: restores the flat-0.5 geology the assessment
+        /// path used to price every extractor configuration at, so the
+        /// nonres-parity check's geology leg can be shown to fail. Never a
+        /// shipping mode.</summary>
+        public static bool MutantFlatGeologyAssessment;
 
         public static double ResidentialBidPerUnit(
             AccessState acc, int cluster, ZoneKind kind, int level,
@@ -435,11 +462,17 @@ namespace CS2Econ.Core
                     foreach (var recipe in ResourceCatalog.Recipes)
                     {
                         // A hypothetical entrant prices its output at realized
-                        // comparables AT THE PLACE (what sellers here actually
-                        // netted) or the exit alternative — the assessment-
-                        // comparables pattern on the goods side.
-                        double outNet = Math.Max(prices.OriginStat(recipe.Output, cluster),
-                                                 prices.BestExportNet(recipe.Output, cluster));
+                        // COMPARABLES at the place — sellers other than the one
+                        // standing here — or the exit alternative. OriginStat
+                        // itself would admit a cell whose only seller is this
+                        // parcel's own occupant, which is the §3 guard's firm
+                        // analog of assessing a parcel from its own realized
+                        // rent (measured at 88fc88c, parityprobe seed 1/400t:
+                        // 6 of 8 occupied producing parcels).
+                        double outNet = Math.Max(
+                            p.NonResLandParity ? prices.OriginComparable(recipe.Output, cluster)
+                                               : prices.OriginStat(recipe.Output, cluster),
+                            prices.BestExportNet(recipe.Output, cluster));
                         double inputCost = 0;
                         foreach (var (res, qty) in recipe.Inputs)
                             inputCost += qty * prices.DeliveredCost(res, cluster);
@@ -468,8 +501,12 @@ namespace CS2Econ.Core
                         double s2 = suit != null ? suit[rr] : 0.5;
                         if (s2 <= 0.05) continue;
                         var res = (Res)rr;
-                        double outNet = Math.Max(prices.OriginStat(res, cluster),
-                                                 prices.BestExportNet(res, cluster));
+                        // Comparables, not the cell's own record — see the
+                        // industrial leg above.
+                        double outNet = Math.Max(
+                            p.NonResLandParity ? prices.OriginComparable(res, cluster)
+                                               : prices.OriginStat(res, cluster),
+                            prices.BestExportNet(res, cluster));
                         double perSlot = p.ExtractorOutputPerSlot * quality * s2 * outNet - p.WageBasic;
                         if (perSlot > profitPerFilledSlot)
                         { profitPerFilledSlot = perSlot; chosenOutput = res; }
@@ -499,14 +536,20 @@ namespace CS2Econ.Core
             return MathUtil.Clamp(0.35 + 0.65 * fill, 0.35, 1.0);
         }
 
+        /// <summary>workCluster is the geology the extractor leg prices against.
+        /// Passing null prices EVERY raw at suitability 0.5 — a uniform geology
+        /// that exists nowhere, and the opposite of the Weber structure the
+        /// suitability field anchors. Every caller that holds a WorldState
+        /// passes w.Clusters; the null default survives only for callers that
+        /// have no world (unit fixtures).</summary>
         public static double BidPerUnit(
             AccessState acc, IPriceContext prices, int cluster, ZoneKind use, int level,
             double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0,
-            bool realized = false)
+            bool realized = false, ClusterInfo[]? workCluster = null)
             => use == ZoneKind.ResidentialLow || use == ZoneKind.ResidentialHigh
                 ? ResidentialBidPerUnit(acc, cluster, use, level, segmentPresence, p,
                                         addUnits, minSupply, realized)
-                : FirmBidPerSlot(acc, prices, cluster, use, level, p);
+                : FirmBidPerSlot(acc, prices, cluster, use, level, p, out _, workCluster);
 
         /// <summary>Permitted configurations for a parcel: its zoned kind at any
         /// level. (Rezoning arrives as a change to Zoned from the host.)
@@ -527,6 +570,7 @@ namespace CS2Econ.Core
 
             double aOp(double lump) => Annuity.FlowOf(lump, p.HurdleRate, p.AnnuityHorizon);
             int c = parcel.Cluster;
+            var geology = p.NonResLandParity && !MutantFlatGeologyAssessment ? w.Clusters : null;
 
             // Current-configuration residual (also a candidate: "current use at
             // declining condition, saving δ").
@@ -539,7 +583,8 @@ namespace CS2Econ.Core
                 // (it is Built); minSupply only guards the one refresh window
                 // where a just-completed building has not been counted yet.
                 double bidCur = BidPerUnit(acc, prices, c, parcel.Use, parcel.Level, segmentPresence, p,
-                                           addUnits: 0, minSupply: parcel.Units, realized: true)
+                                           addUnits: 0, minSupply: parcel.Units, realized: true,
+                                           workCluster: geology)
                                 * p.CondFactor(parcel.Condition);
                 currentResidual = (bidCur - SPerUnit(parcel.Level, parcel.Condition, p)) * parcel.Units;
             }
@@ -565,9 +610,9 @@ namespace CS2Econ.Core
                                       && zonedUse == parcel.Use && units == parcel.Units;
                 double bid = alreadyInStock
                     ? BidPerUnit(acc, prices, c, zonedUse, lvl, segmentPresence, p,
-                                 addUnits: 0, minSupply: units, realized: true)
+                                 addUnits: 0, minSupply: units, realized: true, workCluster: geology)
                     : BidPerUnit(acc, prices, c, zonedUse, lvl, segmentPresence, p,
-                                 addUnits: units, realized: true);
+                                 addUnits: units, realized: true, workCluster: geology);
                 double flow = (bid - SPerUnit(lvl, 1.0, p)) * units;
                 if (flow <= 0) continue;
 

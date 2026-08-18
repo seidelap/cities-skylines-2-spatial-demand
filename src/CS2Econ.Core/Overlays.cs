@@ -14,7 +14,8 @@ namespace CS2Econ.Core
         {
             int lvl = 2;
             return LandAccounting.BidPerUnit(acc, trade, cluster, use, lvl, segmentPresence, p,
-                                             addUnits: LandAccounting.UnitsFor(use))
+                                             addUnits: LandAccounting.UnitsFor(use),
+                                             workCluster: p.NonResLandParity ? w.Clusters : null)
                    * w.Calibration.Factor(use, cluster, p.CalibClusterShrinkN0);
         }
 

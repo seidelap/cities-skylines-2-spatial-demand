@@ -11,7 +11,7 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (51 checks)
+## verify (60 checks)
 
 29 at the per-cluster prospect-odds commit (28 plus prospect-local-odds;
 seeds 0–7 and 25 measured 29/29 there, canary 39/39) plus the three
@@ -241,6 +241,82 @@ both arms with a pooled arm added to those checks, (6) the mechanical pins:
 `--pooled`, `vanillaMode`, flags-off smoke, the occupancy pin, a pooled
 fingerprint arm.
 
+The 52nd to 60th are the task #19 non-residential parity legs — one fixture,
+four properties each asserted TWICE, plus a conservation leg on the parity arm: once as it stands on the shipped default
+(the leg states the defect, and IS the non-degeneracy floor for its partner)
+and once with `EconParams.NonResLandParity` on (the leg states the property).
+`paritysweep` runs the fixture alone across seeds; `parityprobe` is the census
+every number in the item was measured from. The four: extractor land assessed
+on its own cluster's geology rather than a flat 0.5; a one-seller (output,
+cluster) cell never admitted as its own comparable (the §3 circularity guard's
+firm analog); office production carrying the level and condition terms its
+assessment prices it on; and an unmet land charge reaching a stated outcome
+(grace, sort down, release the parcel) instead of being forgiven forever; the
+ninth leg reconciles the parity arm's money, because the arrears exit is the
+only new way a firm can leave and the suite's ledger fixture never reaches it.
+
+**THE PARITY SWITCH DID NOT FLIP, AND THE BLOCKER IS MEASURED.**
+`EconParams.NonResLandParity` ships FALSE and the default world is BYTE-
+IDENTICAL to 88fc88c — `fingerprint --check` reads all 13 lanes matching with
+no accept, and `webersweep` reproduces the standing seed-0 red with the same
+numbers (10 extractors, 80% on best raw, 1 distinct output). Every one of the
+four makes the assessment MORE accurate, and the non-residential base cannot
+carry an accurate assessment: ℓ* sits at the CORNER for every firm sector
+(mean TargetLevel 5.00 for office and industrial against standing levels 3.06
+and 2.00), because the firm bid is a per-slot margin formula scaled by
+Quality(ℓ) with nothing on the other side to bound it, where the residential
+ladder is bounded by the auction's posted price and its shadow queue. At 95%
+capture that exceeds what a firm below ℓ* can earn, and a vacated parcel does
+not re-let either, because firm entry compares a bid at the parcel's CURRENT
+level against an assessment priced at ℓ*. Measured ON: uncollected firm share
+64% → 21% with no firm past the clock, but `webersweep --seeds 8` reads 0/8
+against 6/8 — every failure on the extractor POPULATION precondition (1 to 4
+against the ≥5 bar) with the alignment legs at 100% — standing offices 62 → 8,
+and verify seed 9 loses the same check (48/51). Attributed by running
+`webersweep --seeds 2` once per mutant: the collapse is the GEOLOGY correction
+alone (10 and 8 extractors with it removed and the other three on, against 3
+and 1 with all four). WHAT WOULD UNBLOCK IT: a realized comparable per
+(cluster, sector, level) over OTHER firms, which is the bound the residential
+ladder has and the same assessment-comparables pattern this item's guard
+installs on the goods side. Unowned.
+
+AT THE PARITY COMMIT the gate is the base's, plus nine green: verify **59/60**
+on seed 1 (the standing occupancy red, unchanged leg), **60/60** on seed 9 and
+**59/60** on seed 13 (the standing clearing-price population-collapse red) —
+so every one of the nine new legs is green on all three gate seeds, and no
+standing red moved in either direction. `canary` 39/39, `laborcanary` 39/39,
+`paritysweep --seeds 4` 6/6 (seeds 0-3, 9, 13), `webersweep --seeds 8` 6/8 red
+{0, 5}, `fingerprint --check` all 13 lanes matching with no accept, and the
+`fiscal` scenario 1/1 (corridor +15.7% vs control −2.8%). `occsweep`,
+`goodssweep`, `shopsweep` and the rest of the scenario battery were NOT re-run:
+the default world is byte-identical, which the fingerprint and the reproduced
+Weber verdicts measure rather than assume.
+
+THE OWNER-DOOR QUESTION (item #19's fourth) IS OUT OF SCOPE, MEASURED RATHER
+THAN ASSUMED. `Allocation.cs`'s owner-tagging gate (`pl.Use ==
+ZoneKind.ResidentialLow && h.OwnerMinded`) admits no other zone kind, and
+nothing else in the tree ever sets `Parcel.OwnerHousehold` on non-residential
+land: `parityprobe` seed 1, 400 ticks reads 367 built non-residential parcels,
+0 with `OwnerHousehold >= 0`, 0 with a standing ask. That is not a missing
+flag — the residential owner/door/ask apparatus (`HousingAuction`'s reserve,
+fold and no-ratchet rules) models a household's choice between renting and
+owning CAPITAL EQUITY in its home, drawn at birth (`Household.DrawAtBirth`,
+`OwnerMinded`) and cleared through the housing auction's own door market. A
+firm has no analog of any of that: every firm today occupies speculatively
+built stock (the same generic `Construction`/`Assess` residual-flow logic
+that builds residential stock, with no distinct "developer-landlord" role)
+and pays S + the land levy on it exactly like a residential RENTER, never an
+owner; there is no firm-side auction (`FirmLifecycle`'s entry is a bid-vs-
+assessment probability draw, not a competitive door market), no firm analog
+of `OwnerMinded`, and no firm financing model for a capital purchase, so
+nothing on the other side of a firm's building could ever bid to buy it. Land
+and tax parity — the thing #19 was asked to fix — does not require this: the
+levy already falls on firms and households alike regardless of tenure (design
+§3/§4.3's whole point). Modeling a firm that owns its own building outright
+would be a firm-side capital-ownership market invented from a standing start,
+which is a separate, larger design question than this item's mandate. Left
+unowned rather than retrofitted here.
+
 **AT THE TWO-TRACK MERGE** (housing: outside-access anchor, per-cluster ties
 and calibration, owner doors; goods: the Weber investigation, per-cluster goods
 prices and its fix round, commerce) the registry's rows are re-derived from runs
@@ -306,6 +382,7 @@ with no accept.
 
 | Seed | Check | Status | Attribution |
 |---|---|---|---|
+| 5 | nonres parity: office product carries the level and condition terms its land is assessed on | red | NEW, found by extending `paritysweep` past its claimed sweep (seeds 0-3, 9, 13 all green, matching the item's commit) to seeds 4-5: `paritysweep --seeds 6` (which resolves to seeds 0-5, 9, 13) reads 7/8, red only on seed 5, on this leg's own non-degeneracy floor — 0 staffed offices on the parity arm carry an assessed level×condition term ≥ 1.15, so `oOn.n >= 1` fails outright (the leg cannot even be evaluated, let alone pass). This is not a new mechanism defect: it is the SAME ℓ*-corner population collapse the item's own commit measures and ships the switch off for (turning `NonResLandParity` on starves the office/extractor sectors on some seeds) — seed 5 is simply a seed where that collapse empties the exact sub-population this leg counts. Seed 4 (also untested by the original claim) passes in full. Unowned; the fix is the same owed work as the switch's own blocker (a realized comparable per (cluster, sector, level) over other firms to bound ℓ*), not a fix to the check. |
 | 0, 5 | Weber: extraction follows geology; recipes follow input sourcing | red | MEASURED ON THE TWO-TRACK MERGE, which is the shipping state and supersedes every per-branch tally below: `webersweep` (seeds 0-25) reads **24/26**, red only on 0 and 5, against 22/26 {0,4,7,16} on the goods track alone and reds on 9 and 13 on the housing track alone (all three sweeps run by the orchestrator on their own trees). Seeds 1, 9 and 13 are GREEN on the merge — each track healed part of what the other left red, which is why no branch's row could be textually correct about the combination. **Seed 5 fails on the DIVERSITY PRECONDITION ALONE**: 10 extractors at 100% on the best raw and 7 of 7 single-input industrials on the cheapest-sourced recipe — the Weber property the check exists to assert holds PERFECTLY — and the verdict is red because the city produces 1 distinct industrial output against a >=2 bar. That is a fixture-adequacy failure, not an economics failure, and it is the shape the whole Weber history has been pointing at: the alignment legs now pass wherever the premise is delivered. Seed 0 is a real miss on the extraction leg (10 extractors, 80% on best raw vs the >=90% bar) with recipes passing at 67% of 6 and the same 1-output diversity fail. THE OWED INVESTIGATION is therefore re-scoped by measurement: it is no longer 'why do recipes misalign' (localized prices answered that - see Closed) but 'when is one industrial output the correct answer for a small city, and should the diversity leg be a precondition rather than an assertion'. Unowned. PER-BRANCH HISTORY, retained for attribution: New with the DEFAULT FLIP: on the auction-default world, 6 of 13 single-input industrials sit on the cheapest-sourced recipe (46% vs the ≥55% bar; the margin is 2 firms) while the extraction leg is clean at 100% and the sector is bigger and more diverse than required (13 firms, 4 outputs). At the FLIP commit it was seed-13-specific — the same check read 100% on flip seeds 0-1 and passed 2, 3, 9, 25 (posted-arm seed 13 green); that cohort statement is DATED: at the outside-anchor commit the extraction leg is red on seeds 0, 9 and 25 (fix-round measurement — class row below). Precedent: Weber was the red on auction-arm seed 0 at `c0c584d` — auction-world Weber fragility moves seeds, it is not new. Wants its own investigation: which 7 firms, their delivered-cost gaps, and whether entry timing under prospect-driven population growth outruns trade-price settling. Unowned. AT THE OUTSIDE-ANCHOR COMMIT (#42) the same row stays red with different numbers — recipes 14% of 14 industrials, extraction still 100% — the anchored outside re-equilibrates the whole default world (baseline churn, population, entry timing), and Weber's verdict re-rolls with it. AT THE PER-CLUSTER-MEMORY COMMIT (#34) seed 13 is GREEN (extraction 100%, recipes 85% of 13) — the tie-driven admission re-roll moves the verdict again, in Weber's documented seed-moving way; the class row below carries the standing red. AT THE OWNER-DOOR COMMIT (#41) seed 13 is RED again, and on the fixture's POPULATION PRECONDITION rather than on any alignment: 4 extractors against the `extract >= 5` minimum, with extraction 100% on best raw and recipes passing at 69% of 13. Measured against the branch tip in the same session (tip 209e232: 6 extractors, 100%, recipes 85% of 13, GREEN). #41 touches no pricing, recipe or siting rule — its diff is the housing auction, the owner tag and the checks; LandAccounting changes only its header comment and Trade is untouched — so this is the same re-equilibration channel #42 and #34 moved the verdict through, now reaching the industrial sector's SIZE. | || AND THE EXTRACTION-LEG CLASS: NEW at the outside-anchor commit (#42), on the EXTRACTION leg — seed 9 registered at that commit; seeds 0 and 25 found red at the SAME commit by the refuter's wider sweep (finding F1) and registered at the fix round, which reproduced them (fix-round verify runs, seeds 0 and 25; both are FULLY GREEN at base 554b56a, extraction 100%). Numbers at the fix commit: seed 9 — 7 of 10 extractors on the best raw (70% vs the ≥90% bar), recipe leg passes at 80%; seed 0 — 8 of 9 extractors (89%), the margin one extractor, recipes pass at 82% of 11; seed 25 — 7 of 8 extractors (88%), recipes pass at 82% of 17. Seeds 2 and 5 pass in full. Tally across the seeds measured in the two sessions (0, 1, 2, 5, 9, 13, 25): Weber red on 4 of 7 — 0, 9, 25 on extraction, 13 on recipes — against 1 of 7 at base; the owed Weber investigation is that much bigger than a single-seed row suggested. Same fragility class as the seed-13 row — the anchored outside option changes the default world every fixture equilibrates in (churn, entry timing, trade-price settling), and Weber's seed-dependent verdict moves seeds with it, exactly as it moved 0 → 13 at the flip. No pricing/recipe rule is touched by #42 (the diff is Prospects/HousingAuction/Access outside-door legs only; posted fingerprint lanes are hash-identical). Belongs to the same owed Weber investigation as the row above. Unowned. AT THE PER-CLUSTER-MEMORY COMMIT (#34) the class re-rolls again: seeds 0 and 9 GREEN (extraction 100% both, recipes 90%/78%), seed 25 red and DEEPER — extraction 44% of 9 extractors (4 on best raw) vs the ≥90% bar, recipes pass at 81% of 16 (#34 gate runs, verify seeds 0, 9, 25). Tally on the measured cohort {0, 1, 9, 13, 25}: 1 of 5 red at #34 against 4 of 7 at #42. The owed investigation is unchanged in shape and now owns seed 25's deep extraction miss. AT THE OWNER-DOOR COMMIT (#41) seed 9 is RED again on this leg — 6 of 7 extractors on the best raw (86% vs the ≥90% bar, the margin one extractor), recipes passing at 80% of 10 — against a tip-209e232 run in the same session that reads 9 extractors, 100%, GREEN. Same channel as the rows above: the auction-default world re-equilibrates and Weber's verdict re-rolls with it; #41 touches no pricing or recipe rule. |
 | 13 | clearing price: quantity responds (population-collapse leg) | red | NEW AT THE TWO-TRACK MERGE, and an INTERACTION - it is green on each track alone, measured by the orchestrator on all three trees: housing tip 01c7543 reads bid 2.96 -> 2.51 after 638 citywide exits (PASS, verify 38/39), the goods track reads verify 35/35 at seed 13, and the merge reads bid 2.15 -> **2.56** after 695 exits - the price RISES where the leg requires it to fall. The supply and demand legs stay monotone and correct on the merge (supply x{0.5,2,8} -> 8.56/0.52/0.52; demand x{0.5,1,2} -> 0.52/2.15/8.56; 25-point sweep monotone), so what fails is only the population-collapse direction. HYPOTHESIS, NOT MEASURED: per-parcel owner asks (#41) hold occupied doors at their floors while the survivors of a collapse re-sort upward into the best stock, so the probed submarket's marginal bidder can end up richer than before the collapse - the composition effect outrunning the scarcity effect. That is a guess and must be measured before anyone acts on it: the honest next step is to re-run the collapse leg with owner asks disabled (`--owner-ask 0`) and with localized goods prices mutated off (`--mutant-citywide-goods`) and see which one restores the fall. Unowned.
 

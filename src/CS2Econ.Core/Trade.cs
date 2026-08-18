@@ -66,6 +66,9 @@ namespace CS2Econ.Core
         // included), for the DeliveredCost quote's local leg. Refresh cadence.
         private int[][] _producerCluster = new int[ResourceCatalog.Count][];
         private double[][][] _producerHaul = new double[ResourceCatalog.Count][][];
+        // Sellers of r standing at c, and citywide — the comparable count.
+        private int[][] _sellersAt = new int[ResourceCatalog.Count][];
+        private readonly int[] _sellersCity = new int[ResourceCatalog.Count];
         private double[][] _haulToExit = Array.Empty<double[]>();   // [exitIdx][cluster]
         // ClearTick scratch (reused; sized to cluster count)
         private double[] _supRemaining = Array.Empty<double>();
@@ -208,6 +211,9 @@ namespace CS2Econ.Core
             for (int r = 0; r < ResourceCatalog.Count; r++)
             {
                 var res = (Res)r;
+                if (_sellersAt[r] == null || _sellersAt[r].Length != C) _sellersAt[r] = new int[C];
+                Array.Clear(_sellersAt[r], 0, C);
+                _sellersCity[r] = 0;
                 if (!ResourceCatalog.IsTradable(res))
                 { _producerCluster[r] = null!; _producerHaul[r] = null!; continue; }
                 var producers = new List<int>();
@@ -216,6 +222,7 @@ namespace CS2Econ.Core
                         && (f.Sector == ZoneKind.Extractor || f.Sector == ZoneKind.Industrial))
                     {
                         int c = _w.Parcels[f.Parcel].Cluster;
+                        _sellersAt[r][c]++; _sellersCity[r]++;
                         if (!producers.Contains(c)) producers.Add(c);
                     }
                 producers.Sort();
@@ -315,6 +322,37 @@ namespace CS2Econ.Core
         /// cluster via DeliveredStat.</summary>
         public double CityDelivered(Res r) => _cityDelivered[(int)r];
         public double CityOrigin(Res r) => _cityOrigin[(int)r];
+
+        /// <summary>Sellers of r standing at c, and in the city, as of the last
+        /// Refresh — the comparable count OriginComparable gates on.</summary>
+        public int SellersAt(Res r, int cluster) => _sellersAt[(int)r][cluster];
+        public int SellersCity(Res r) => _sellersCity[(int)r];
+
+        /// <summary>How many sellers a cell needs before its realized statistic
+        /// is a COMPARABLE rather than one firm's own record. Two is the
+        /// smallest count at which the read is not a single agent, and it is the
+        /// same threshold the residential guard reaches by construction (a
+        /// submarket's price is keyed by (cluster, kind, level) and an owner
+        /// parcel's own units are out of the uniform capacity). UNSWEPT: no
+        /// sweep has been run over this threshold — the measured population at
+        /// the shipped value is in the parityprobe run recorded with this
+        /// commit (seed 1, 400 ticks: 6 of 8 occupied producing parcels sat in
+        /// one-seller cells whose local statistic carried 0.906 of the read).</summary>
+        public const int MinComparableSellers = 2;
+
+        /// <summary>MUTANT SWITCH: readmits a one-seller cell as its own
+        /// comparable — the pre-parity read, where a lone producer's realized
+        /// takings priced the land it stood on. Never a shipping mode.</summary>
+        public static bool MutantSelfSellerComparable;
+
+        public double OriginComparable(Res r, int cluster)
+        {
+            if (MutantSelfSellerComparable) return OriginStat(r, cluster);
+            if (_sellersCity[(int)r] < MinComparableSellers) return 0;
+            if (_sellersAt[(int)r][cluster] < MinComparableSellers) return _cityOrigin[(int)r];
+            return OriginStat(r, cluster);
+        }
+
         /// <summary>Sustained transacted-volume evidence behind DeliveredStat
         /// at (r, c) — what the shrinkage weighs the local statistic by.</summary>
         public double DeliveredEvidence(Res r, int cluster) => _emaDeliveredQty[(int)r][cluster];

@@ -756,6 +756,7 @@ namespace CS2Econ.Harness
             Timed("occupied-stock-rent", () => OccupiedStockCarriesRent(seed));
             Timed("coop-rerate", () => CoopInstantRerate(seed));
             Timed("circularity-guard", () => CircularityGuard(seed));
+            Timed("nonres-parity", () => NonResidentialParity(seed));
             Timed("assessment-tracks-price", () => AssessmentTracksPrice(seed));
             Timed("ledger-conservation", () => LedgerConservation(seed));
             Timed("shadow-mode", () => ShadowMode(seed));
@@ -5056,6 +5057,260 @@ namespace CS2Econ.Harness
             public override string ToString()
                 => $"hh {WorstHh:E1} / firms {WorstFirm:E1} / escrow {WorstEscrow:E1}";
         }
+
+        private static double Pct(List<double> sorted, double q)
+        {
+            if (sorted.Count == 0) return 0;
+            double idx = q * (sorted.Count - 1);
+            int lo = (int)Math.Floor(idx), hi = Math.Min(sorted.Count - 1, lo + 1);
+            return sorted[lo] + (idx - lo) * (sorted[hi] - sorted[lo]);
+        }
+
+        /// <summary>The nonres-parity fixture alone across seeds — the
+        /// instrument its four effect sizes were measured with, and what a
+        /// change to the firm levy, the firm bid or the firm production
+        /// functions is re-measured on.</summary>
+        public static int NonResParitySweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"nonres-parity sweep: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                NonResidentialParity(seed);
+                bool ok = Results.Count > before;
+                for (int k = before; k < Results.Count; k++) ok &= Results[k].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"parity sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
+        /// <summary>Task #19: the non-residential side of land accounting must
+        /// face the residential rules, and its assessment base must be what
+        /// §4.3 says it is. EconParams.NonResLandParity ships OFF (its comment
+        /// carries the measurement that keeps it off), so every property here
+        /// is asserted TWICE — once as it stands on the shipped default, where
+        /// the leg states the defect, and once with the switch on, where it
+        /// states the property. The default leg IS the non-degeneracy floor: it
+        /// proves the population the parity leg acts on is real, not empty.
+        ///
+        /// THE TWO ASSESSMENT LEGS RUN ON ONE WORLD, priced under both
+        /// parameter sets. Assessment is a pure function of (world, access,
+        /// prices, params), so the honest counterfactual is the same parcels
+        /// re-priced — not a second city, whose non-residential population
+        /// diverges for reasons that have nothing to do with the read under
+        /// test (the parity arm's producing sector thins to 0-2 parcels, which
+        /// would decide the verdict by selection rather than by the channel).
+        /// The two PRODUCTION legs cannot be done that way — they are about
+        /// what the engine actually produced — so those keep a second arm.
+        ///
+        /// Every parity leg is a CAUSAL probe: change one input the property
+        /// names and require the assessment (or the realized product) to move.
+        /// Nothing re-derives a number from the code under test and compares it
+        /// to itself; the office legs pair a realized-production record the
+        /// engine accumulates against the formula the assessor prices.
+        ///
+        /// Mutants RUN, each flipping exactly its own leg red:
+        /// --mutant-flat-geology equalizes the geology arms,
+        /// --mutant-self-comparable leaves the second-seller arms unmoved,
+        /// --mutant-level-free-output puts realized/base at 1.0, and
+        /// --mutant-forgive-arrears leaves firms sitting past the clock.</summary>
+        private static void NonResidentialParity(ulong seed)
+        {
+            // A 12x12 city at 6000 seed households, not the 14x14/9000 default:
+            // the fixture runs TWO worlds, and every population it gates on
+            // clears its bar by an order of magnitude at this size (measured at
+            // 14x14/9000 on seeds 0-3, 9, 13 — 71-95 extractor parcels against
+            // a bar of 5, 6-11 one-seller cells against 1, 36-44 lifted offices
+            // against 3, 188-202 standing firms against 20). Halving the work
+            // keeps the suite's cost proportionate to what this item adds.
+            var cfg = new SyntheticCity.Config { Seed = seed, Cols = 12, Rows = 12, SeedHouseholds = 6000 };
+            var pOff = new EconParams();
+            var pOn = new EconParams { NonResLandParity = true };
+            var sim = Sim.Create(cfg, pOff, new FeatureFlags());
+            sim.Run(300);
+            var w = sim.W;
+            var acc = sim.Engine.Access;
+            var trade = sim.Engine.Trade;
+            var presence = sim.Engine.SegmentPresence;
+
+            // ---- LEG 1: extractor land is assessed on its own geology --------
+            // Probe: drive the parcel's cluster geology to 1.0 and to 0.01 and
+            // reassess. A flat-0.5 read cannot tell them apart.
+            var exList = w.Parcels.Where(x => x.State == ParcelState.Built && x.Zoned == ZoneKind.Extractor
+                                              && w.Clusters[x.Cluster].ResourceSuitability.Max() > 0.05)
+                                  .ToList();
+            double offHi = 0, offLo = 0, onHi = 0, onLo = 0;
+            if (exList.Count > 0)
+            {
+                var ex = exList.OrderByDescending(x => w.Clusters[x.Cluster].ResourceSuitability.Max()).First();
+                var ci = w.Clusters[ex.Cluster];
+                var saved = (double[])ci.ResourceSuitability.Clone();
+                double At(double suit, EconParams p)
+                {
+                    for (int i = 0; i < ci.ResourceSuitability.Length; i++) ci.ResourceSuitability[i] = suit;
+                    LandAccounting.Assess(w, acc, trade, ex, presence, p);
+                    return ex.AssessedLR;
+                }
+                offHi = At(1.0, pOff); offLo = At(0.01, pOff);
+                onHi = At(1.0, pOn); onLo = At(0.01, pOn);
+                Array.Copy(saved, ci.ResourceSuitability, saved.Length);
+                LandAccounting.Assess(w, acc, trade, ex, presence, pOff);   // as it was found
+            }
+            Check("nonres parity floor: extractor parcels exist and the shipped default prices them blind to geology",
+                  exList.Count >= 5 && offHi == offLo,
+                  $"{exList.Count} built extractor parcels; default read LR {offHi:F3} at suitability 1.0 "
+                  + $"and {offLo:F3} at 0.01 (identical — the flat-0.5 read)");
+            Check("nonres parity: extractor land is assessed on its own cluster's geology",
+                  exList.Count >= 5 && onHi > onLo + 1e-9,
+                  $"parity read LR {onHi:F3} at suitability 1.0 vs {onLo:F3} at 0.01 "
+                  + $"over {exList.Count} built extractor parcels");
+
+            // ---- LEG 2: a one-seller cell is not its own comparable ----------
+            // Probe: ADMIT a second seller — a firm with no realized flows, so
+            // the cell's own statistic is untouched — and require the
+            // assessment to move. If it moves, the read was not resting on the
+            // sitting occupant's record; if it cannot move, it was.
+            //
+            // NOT every one-seller parcel must move: an industrial parcel whose
+            // argmax recipe outputs a different resource, or one already beaten
+            // by exit parity, is priced off that cell either way. The bar is a
+            // third of the population, and the default read moves none of them.
+            var singles = new List<Parcel>();
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.OccupantFirm < 0) continue;
+                var f0 = w.Firms[pl.OccupantFirm];
+                if (f0.Dead || (f0.Sector != ZoneKind.Industrial && f0.Sector != ZoneKind.Extractor)) continue;
+                if (trade.SellersAt(f0.Output, pl.Cluster) == 1) singles.Add(pl);
+            }
+            int movedOff = 0, movedOn = 0; double wb = 0, wa = 0;
+            foreach (var pl in singles)
+            {
+                var f0 = w.Firms[pl.OccupantFirm];
+                double Price(EconParams p) { LandAccounting.Assess(w, acc, trade, pl, presence, p); return pl.AssessedLR; }
+                double preOff = Price(pOff), preOn = Price(pOn);
+                w.Firms.Add(new Firm { Id = w.Firms.Count, Sector = f0.Sector, Parcel = pl.Id, Output = f0.Output });
+                trade.Refresh(pOff);
+                double postOff = Price(pOff), postOn = Price(pOn);
+                w.Firms.RemoveAt(w.Firms.Count - 1);
+                trade.Refresh(pOff);
+                Price(pOff);                           // leave the world as it was found
+                if (Math.Abs(postOff - preOff) > 1e-6 * Math.Max(1, Math.Abs(preOff))) movedOff++;
+                if (Math.Abs(postOn - preOn) > 1e-6 * Math.Max(1, Math.Abs(preOn)))
+                { movedOn++; if (Math.Abs(postOn - preOn) > Math.Abs(wa - wb)) { wb = preOn; wa = postOn; } }
+            }
+            Check("nonres parity floor: one-seller cells with a sitting occupant exist, and the default prices them off themselves",
+                  singles.Count >= 1 && movedOff == 0,
+                  $"{singles.Count} one-seller (output, cluster) cells with a sitting occupant; the default read "
+                  + $"re-prices {movedOff} of them when a second seller is admitted (it was already the cell's own)");
+            Check("nonres parity: assessment never rests on a one-seller cell's own record",
+                  singles.Count >= 1 && movedOn >= 1 && movedOn * 3 >= singles.Count,
+                  $"{movedOn}/{singles.Count} one-seller parcels re-priced under the parity read when a second "
+                  + $"seller was admitted (bound ≥ 1/3; largest move {wb:F3} -> {wa:F3})");
+
+            // ---- LEG 3 and 4 need a second world: they are about what the
+            // engine PRODUCED and what it DID, not about how a parcel prices.
+            var simOn = Sim.Create(new SyntheticCity.Config
+                                   { Seed = seed, Cols = 12, Rows = 12, SeedHouseholds = 6000 },
+                                   pOn, new FeatureFlags());
+            // Conservation on THIS arm, because it is a code path the suite's
+            // ledger fixture never reaches: the arrears exit is the only new
+            // way a firm can leave, and it must settle through the same two
+            // legs the working-capital bankruptcy already uses. Both records
+            // are sampled every tick, the same pair LedgerConservation
+            // reconciles and the same 1e-9 bound.
+            double driftOn = 0;
+            var auditOn = new SectorAudit();
+            simOn.Run(300, s2 =>
+            {
+                driftOn = Math.Max(driftOn, Math.Abs(s2.W.Ledger.Drift()));
+                auditOn.Sample(s2);
+            });
+            Check("nonres parity: the arrears path settles — conservation and per-sector reconciliation on the parity arm",
+                  driftOn < 1e-3 && auditOn.Worst < 1e-9,
+                  $"max |drift| {driftOn:E2} (bound 1e-3); worst relative |Sigma entity - ledger| over "
+                  + $"{auditOn.Ticks} tick samples: {auditOn} (bound 1e-9)");
+
+            // The realized side is the LAST TICK's booked office revenue
+            // (Firm.GrossRevenueLastTick), not an EMA: an EMA of a building that
+            // renovated inside its window is averaging two different buildings,
+            // and the identity does not hold of it. The assessed side is read
+            // from the parcel as the assessor would read it now, and for an
+            // office that met its charge nothing between production and here
+            // moves either term — so a correct build reads zero, not a band.
+            (int n, double medErr) Office(Sim s, EconParams p)
+            {
+                var errs = new List<double>();
+                foreach (var f in s.W.Firms)
+                {
+                    if (f.Dead || f.Parcel < 0 || f.Sector != ZoneKind.Office || f.WorkersFilled <= 0) continue;
+                    var pl = s.W.Parcels[f.Parcel];
+                    double base_ = f.WorkersFilled * p.OfficeOutputPerSlot * p.OfficeOutputPrice
+                                   * s.Engine.Access.OfficeAgglomMult[pl.Cluster];
+                    if (base_ <= 1e-9) continue;
+                    // Only offices whose assessed level×condition term is a REAL
+                    // lift are in scope: at term == 1 the identity reads 1 ≈ 1 on
+                    // both arms and asserts nothing.
+                    double term = Math.Max(0.2, pl.Condition) * p.Quality(pl.Level) / p.Quality(1);
+                    if (term < 1.15) continue;
+                    errs.Add(Math.Abs(f.GrossRevenueLastTick / base_ - term) / term);
+                }
+                errs.Sort();
+                return (errs.Count, errs.Count > 0 ? Pct(errs, 0.5) : 0);
+            }
+            var oOff = Office(sim, pOff);
+            var oOn = Office(simOn, pOn);
+            Check("nonres parity floor: staffed offices carry an assessed level term, and the default does not produce it",
+                  oOff.n >= 3 && oOff.medErr > 0.25,
+                  $"{oOff.n} staffed offices assessed on a level×condition term ≥ 1.15 on the default arm, where "
+                  + $"realized product misses that term by a median {oOff.medErr * 100:F1}%");
+            // The identity is EXACT, not statistical — a broken production term
+            // puts every office in scope at ~51% — so one office in scope is a
+            // verdict, and the paired floor leg above is what proves the
+            // population is real. The parity arm's office sector is thin BY
+            // CONSEQUENCE of the switch (its own comment carries why), which is
+            // exactly why the bar counts rather than assumes.
+            Check("nonres parity: office product carries the level and condition terms its land is assessed on",
+                  oOn.n >= 1 && oOn.medErr < 0.02,
+                  $"median |realized/base − condition×Quality(ℓ)/Quality(1)| / term = {oOn.medErr * 100:F3}% "
+                  + $"over {oOn.n} staffed offices (bound 2%; level-free production reads ~51%)");
+
+            // ---- LEG 4: an unmet land charge reaches a stated outcome --------
+            (int alive, int stuck, int dead, int released) Arrears(Sim s, EconParams p)
+            {
+                int al = 0, st = 0, dd = 0, rel = 0;
+                foreach (var f in s.W.Firms)
+                {
+                    if (f.Dead)
+                    {
+                        if (!f.DiedOfArrears) continue;
+                        dd++;
+                        if (f.Parcel < 0 || s.W.Parcels[f.Parcel].OccupantFirm != f.Id) rel++;
+                        continue;
+                    }
+                    if (f.Parcel < 0) continue;
+                    al++;
+                    if (f.LevyShortTicks >= p.LandArrearsTicks) st++;
+                }
+                return (al, st, dd, rel);
+            }
+            var aOff = Arrears(sim, pOff);
+            var aOn = Arrears(simOn, pOn);
+            Check("nonres parity floor: with the outcome off, firms really do sit past the arrears clock",
+                  aOff.stuck >= 1 && aOff.alive >= 20 && aOff.dead == 0,
+                  $"{aOff.stuck} of {aOff.alive} standing firms have missed the land charge for "
+                  + $"{pOff.LandArrearsTicks}+ consecutive ticks under the shipped default, and none is asked to leave");
+            Check("nonres parity: with the outcome on, no firm sits past the arrears clock and every exit released its parcel",
+                  aOn.stuck == 0 && aOn.dead >= 1 && aOn.released == aOn.dead && aOn.alive >= 20,
+                  $"{aOn.stuck} standing firms past the clock (bound 0); {aOn.released}/{aOn.dead} arrears exits "
+                  + $"left their parcel unoccupied; {simOn.Engine.FirmRelocationsTotal} firms sorted down instead; "
+                  + $"{aOn.alive} firms still standing");
+        }
+
 
         private static void LedgerConservation(ulong seed)
         {
