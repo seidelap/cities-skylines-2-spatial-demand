@@ -2053,6 +2053,17 @@ namespace CS2Econ.Harness
         ///     full-swing tick, so anything under 0.75 is a claim about how
         ///     fast this fixture's occupancy moves, not about the mechanism.
         ///
+        /// THE REWRITE IS STRICTLY STRONGER WHERE IT LOOKS WEAKER, measured on
+        /// the five mutant sweeps below: the deleted `worstErr < 0.5` bound is
+        /// SATISFIED — the old form would not have fired at all — on 51/57 seeds
+        /// under `--mutant-fill-pooled`, 54/57 under `--mutant-fill-alpha`,
+        /// 41/57 under `--mutant-fill-shift`, 11/57 under
+        /// `--mutant-fill-frozen` and 52/57 under `--mutant-fill-blind`, while
+        /// the identity leg below reds all 57 on each of them. What it IS more
+        /// tolerant of is the clean arm's six red seeds, and that is the item
+        /// rather than a side effect: four of them were the bound at its own
+        /// observed maximum and two were the selection.
+        ///
         /// LEG (a) IS NOW A DIFFERENTIAL ORACLE, exact instead of bounded. The
         /// per-submarket fill target is recomputed here from the parcels, the
         /// sim is advanced across ONE refresh, and the shipped FillEma must
