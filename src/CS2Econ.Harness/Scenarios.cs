@@ -302,24 +302,78 @@ namespace CS2Econ.Harness
         private static string Fmt(double r) => double.IsPositiveInfinity(r) ? "∞" : r.ToString("F1");
 
         // ------------------------------------------------------------------
+        /// <summary>THE LEVEL MAP IS GEOGRAPHY, NOT GRIND: §6 asks that the
+        /// realized level map correlate with what each location supports, as a
+        /// rank correlation against ℓ*.
+        ///
+        /// THE BAR AND THE HORIZON ARE RE-DERIVED HERE, from a measured
+        /// trajectory on the shipping default rather than from the posted-path
+        /// transients they were tuned on. The comment this replaces claimed
+        /// "Spearman 0.29 at 1300 → 0.42 at 2600 → 0.43 at 4000 ... a transient
+        /// being read as an equilibrium"; that was measured on the POSTED path
+        /// and does not describe this one. Measured on the auction default
+        /// (`leveltraj --seed 20260806 --every 250`, both arms scored on the
+        /// same run):
+        ///
+        ///   t        250    500    750   1000   1250   1500   1750   2000   2250
+        ///   spatial 0.315  0.310  0.293  0.338  0.339  0.344  0.340  0.319  0.366
+        ///   vanilla 0.031  0.010  0.023  0.004 −0.027 −0.025 −0.005 −0.020  0.011
+        ///
+        /// with the full-battery reading at the shipped horizon 0.37 spatial vs
+        /// 0.03 vanilla (`scenarios` at 88fc88c). Two things follow, and neither
+        /// is what the old comment assumed:
+        ///
+        ///   THE SERIES DOES NOT CLIMB. On this path the statistic is inside
+        ///   0.29–0.37 from the EARLIEST horizon measured, with no trend beyond
+        ///   its own ±0.03 wobble. The horizon is therefore already well past
+        ///   any flattening point and stays at 2600 — not because 2600 is
+        ///   special, but because nothing measurable is bought by more, and
+        ///   cutting it (this seed says ~1000 would do, and `levels` is the
+        ///   battery's long pole) is a claim about one seed that no run has
+        ///   checked on others. That run is named in KNOWN-RED.
+        ///
+        ///   THE OLD 0.35 BAR SAT INSIDE THAT BAND. Its verdict was decided by
+        ///   where in the band the horizon happened to sample: 0.37 at 2600 is a
+        ///   PASS by two hundredths, and 0.293 at t=750 on the same run would
+        ///   have been a fail. That is the same defect as a bound set at the
+        ///   observed maximum, and it is not fixed by moving the bar to what was
+        ///   observed. The bar is instead placed BETWEEN the measured healthy
+        ///   band and the null: the vanilla arm — the same city with the spatial
+        ///   mechanism off, which is this scenario's own control — measures
+        ///   −0.027..+0.031 across every horizon above. 0.15 sits 0.12 clear of
+        ///   the null's top and 0.14 clear of the worst healthy reading.
+        ///
+        /// IT CAN FAIL, and two independent measurements say so rather than one
+        /// argument: the vanilla arm reads -0.027..+0.031 on all nine horizons measured, and
+        /// switching the ℓ* oracle to `realized:true` was built and MEASURED at
+        /// −0.21 on the flip battery (the auction posts prices only for stock
+        /// that exists, so the argmax mixed suppressed realized prices with
+        /// forecasts across levels of one parcel — that door is closed and this
+        /// is the record of it). Both are far below 0.15.
+        ///
+        /// THE FLOORS exist because Spearman returns 0 on a degenerate input and
+        /// a 0 would read as "no geography" rather than "nothing to correlate":
+        /// the scored population and the number of distinct realized levels and
+        /// distinct ℓ* values are asserted, so a dead or single-level map fails
+        /// saying that instead rather than failing the bar for the wrong reason.
+        /// Measured at the shipped horizon (`scenarios --only levels`): 790
+        /// scored parcels, 5 distinct realized levels, 4 distinct ℓ*, against
+        /// floors of 200 parcels and 2 distinct values on each side. The
+        /// trajectory run's histogram shows the same spread building up
+        /// (263/328/140/47/7 across the five levels at t=2250).
+        ///
+        /// WHAT IS STILL OWED, named rather than implied: the trajectory is ONE
+        /// seed. The band it measures is what the bar is placed against, so a
+        /// second and third seed's `leveltraj` would either widen that band or
+        /// confirm it, and the same run would settle whether the horizon can be
+        /// cut from 2600.</summary>
         private static void LevelGeography(ulong seed)
         {
-            double Corr(bool vanilla)
+            (double corr, int n, int levelsSeen, int starsSeen) Corr(bool vanilla)
             {
                 var p = new EconParams();
                 var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
                 var sim = Sim.Create(cfg, p, new FeatureFlags(), vanillaMode: vanilla);
-                // The level map is scored at STEADY STATE, and reaching it takes
-                // longer than it used to. 1300 ticks was enough when two thirds
-                // of the map priced below S(1) and had nothing to redevelop:
-                // ℓ* was 1 almost everywhere, realized levels were 1–2, and the
-                // map "settled" because most of it was dead. Now every submarket
-                // clears, ℓ* is 3–4, and the stock has to climb a level at a
-                // time against construction pacing. Measured on the same city:
-                // Spearman 0.29 at 1300 → 0.42 at 2600 → 0.43 at 4000, with the
-                // realized mode walking L2 → L3 → L3/L4 behind an ℓ* that does
-                // not move. That is a transient being read as an equilibrium,
-                // so the horizon moves to where the series has flattened.
                 sim.Run(2600);
                 // §6: "the realized level map correlates with access (rank
                 // correlation against ℓ*)" — ℓ* is the supported level of the
@@ -335,13 +389,8 @@ namespace CS2Econ.Harness
                         // FORECAST oracle (realized:false), deliberately: ℓ* asks
                         // which of five mostly-COUNTERFACTUAL levels the location
                         // would support, and only the forecast curve can price a
-                        // level with no stock. realized:true was built and
-                        // MEASURED WRONG at the flip round: the auction posts
-                        // prices only for stock that exists, so the argmax mixed
-                        // realized prices (suppressed by standing competition)
-                        // with forecasts across levels of one parcel — Spearman
-                        // 0.27 → −0.21 on the flip battery. The auction-arm gap
-                        // to the 0.35 bar is recorded in KNOWN-RED instead.
+                        // level with no stock. See the summary for the measured
+                        // reason `realized:true` is not an option.
                         double bid = LandAccounting.BidPerUnit(sim.Engine.Access, sim.Engine.Trade,
                             pl.Cluster, pl.Use, l, sim.Engine.SegmentPresence, p);
                         double v = bid - LandAccounting.SPerUnit(l, 1.0, p);
@@ -350,12 +399,22 @@ namespace CS2Econ.Harness
                     levels.Add(pl.Level);
                     supported.Add(lStar);
                 }
-                return Spearman(levels, supported);
+                return (Spearman(levels, supported), levels.Count,
+                        levels.Distinct().Count(), supported.Distinct().Count());
             }
-            double spatial = Corr(false), baseline = Corr(true);
-            bool pass = spatial >= 0.35 && spatial > baseline + 0.15;
-            Record("level map correlates with access (rank corr vs ℓ*, not grind)", pass,
-                $"Spearman(realized level, ℓ*) spatial {spatial:F2} vs vanilla {baseline:F2}");
+            var s = Corr(false);
+            var v = Corr(true);
+            bool floors = s.n >= 200 && s.levelsSeen >= 2 && s.starsSeen >= 2;
+            bool absolute = s.corr >= 0.15;
+            bool relative = s.corr > v.corr + 0.15;
+            Record("level map correlates with access (rank corr vs ℓ*, not grind)",
+                floors && absolute && relative,
+                $"Spearman(realized level, ℓ*) spatial {s.corr:F2} (bar 0.15, null = vanilla) "
+                + $"vs vanilla {v.corr:F2} (lead {s.corr - v.corr:F2}, bar +0.15) over {s.n} scored parcels, "
+                + $"{s.levelsSeen} realized levels / {s.starsSeen} distinct ℓ*"
+                + (floors ? "" : " — FLOOR")
+                + (absolute ? "" : " — ABSOLUTE")
+                + (relative ? "" : " — RELATIVE"));
         }
 
         // ------------------------------------------------------------------
@@ -490,93 +549,177 @@ namespace CS2Econ.Harness
         }
 
         // ------------------------------------------------------------------
+        /// <summary>BOOM AND BUST ARE NOT MIRROR IMAGES: the come/stay margin
+        /// answers a citywide improvement faster than it answers its removal.
+        ///
+        /// WHAT THIS USED TO MEASURE, AND THE TWO DEFECTS RE-MEASURED HERE.
+        /// Item #42 fixed the MECHANISM (the outside region became one more
+        /// door priced at its own access, so a uniform pulse moves the margin at
+        /// all — gated on 24 seeds by verify's uniform-pulse check) and
+        /// deliberately left the SCENARIO alone rather than smuggle a scenario
+        /// edit into a mechanism commit. Two things were wrong with it, and the
+        /// second was not known until this round measured it:
+        ///
+        ///   1. THE BOOKKEEPING. The inflow side was differenced against a
+        ///      measured base window while the outflow side was compared with a
+        ///      hard-coded `baseOut = 0` — an assumption #42's own anatomy had
+        ///      measured false, since this fixture settles into a CHURN
+        ///      equilibrium carrying ~450 decline exits per window with no pulse
+        ///      at all. Against zero, that churn WAS the "departure response",
+        ///      and no inflow response could clear 1.5x of it.
+        ///
+        ///   2. BEFORE-AND-AFTER IS NOT A CONTROL. The three windows ran back to
+        ///      back on ONE sim, so every difference mixed the pulse with
+        ///      whatever the fixture was doing anyway. Measured (`boomprobe
+        ///      --seed 20260806`, 120-tick windows in 20-tick sub-windows): the
+        ///      offer budget is flat at 1619–1627 per window — `Prospects.Step`
+        ///      sizes it from population and the tie stock alone, region-side
+        ///      and blind to city quality by its own anti-smuggling rule — and
+        ///      every other quantity moves MONOTONICALLY across base → boom →
+        ///      bust, which a ±Δ pulse cannot explain: want share 83.96 → 83.08
+        ///      → 80.21 %, declined share 16.04 → 16.92 → 19.79 %, priced-out
+        ///      share 3.69 → 12.48 → 12.17 %, decline exits 659 → 655 → 600. The
+        ///      priced-out share more than triples and then does not come back
+        ///      when the pulse reverses. That is drift, it is bigger than
+        ///      anything the pulse does, and the old arithmetic counted it as
+        ///      response.
+        ///
+        /// SO THE PULSE GETS A CONTROL — the design the vacancy scenario one row
+        /// above already uses. Two sims are built from the SAME seed and settled
+        /// over the same 300 ticks, then advanced through the same three
+        /// windows, with only one of them pulsed. Every response is
+        /// treated-minus-control WITHIN a window, so drift cancels instead of
+        /// being counted. The pairing is asserted rather than assumed: the
+        /// unpulsed first window must come out identical on both arms, which is
+        /// what makes the control a counterfactual instead of another run.
+        ///
+        /// WHAT EACH PATH CONTRIBUTES, reported separately because the two
+        /// express the same decision through different quantities and each is
+        /// structurally zero on the other path (measured: on the auction default
+        /// the posted columns read 0 in every sub-window of `boomprobe`):
+        ///   posted  → LastFlows.DesiredBySegment in, DeparturesBySegment out.
+        ///   auction → LastProspects.Admitted + Priced in — everyone who looked
+        ///             and WANTED the city at its posted prices. Admitted alone
+        ///             was built first and measured wrong (+0 on the flip
+        ///             battery) because admissions are gated by attainable
+        ///             stock, so the extra hopefuls a boom creates land in
+        ///             Priced. Out: DeclineExitsThisTick, the whole of
+        ///             out-migration on that path.
+        /// The inflow margin is divided by `Offered` before anything is compared
+        /// with it, because that denominator is the region-side budget above and
+        /// a raw count would report the budget rather than the decision.
+        ///
+        /// THE SOFT-BASELINE PREMISE, with an honest caveat. MigInElasticity is
+        /// cut to 0.3x to keep desired inflow below the absorption budget — but
+        /// that parameter is read only by `Migration.Step`, which the auction
+        /// path does not run at all, so on the shipping default the device does
+        /// NOTHING and the premise it was meant to guarantee is not guaranteed.
+        /// It is left in place because it still applies under `--posted`; what
+        /// protects the auction arm instead is the control, which cancels any
+        /// absorption ceiling the two arms share.
+        ///
+        /// IT CAN FAIL: `--mutant-relative-outside` restores the defect #42
+        /// removed (the outside door anchored on the city's own MeanAccess,
+        /// which makes a spatially uniform improvement structurally invisible to
+        /// the come/stay margin) — exactly the channel the response leg names.
+        /// Both arms' numbers are in KNOWN-RED's boombust row.</summary>
         private static void BoomBustAsymmetry(ulong seed)
         {
-            // Soft baseline with vacancy HEADROOM: at the absorption frontier
-            // realized arrivals are pinned at hazard × vacant stock, so an
-            // amenity pulse cannot move them (+0) no matter how it moves
-            // desire. With desired inflow below the budget, the pulse's
-            // arrival response is demand-revealing again — while departures
-            // stay lagged and attachment-damped, which is the asymmetry
-            // under test.
-            var p = new EconParams { MigInElasticity = new EconParams().MigInElasticity * 0.3 };
-            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 6000 };
-            var sim = Sim.Create(cfg, p, new FeatureFlags());
-            sim.Run(300);
-
-            // Measured on the inflow DECISION margin, with realized arrivals
-            // reported alongside. The two paths express that decision through
-            // different quantities and each is structurally zero on the other
-            // path, so both are summed and the total is the margin on either:
-            //   posted  → LastFlows.DesiredBySegment, the desire rate BEFORE
-            //             the absorption budget (realized arrivals are that
-            //             decision ANDed with absorption, and when the budget
-            //             binds they cannot move however attractive the city).
-            //   auction → LastProspects.Admitted + Priced: everyone who looked
-            //             and WANTED the city at its posted prices. Admitted
-            //             alone was built first and measured wrong (+0 inflow
-            //             response on the flip battery): admissions are gated
-            //             by attainable stock, so once the boom fills the
-            //             vacancies the extra hopefuls the pulse creates land
-            //             in Priced, not Admitted — counting both is exactly
-            //             "desire before the absorption budget", which is what
-            //             the posted margin always measured.
-            // The asserted margin read only the posted quantity until the flip
-            // inventory measured the auction arm failing structurally (+0 vs
-            // +1 with 2667 arrivals realized) — the mechanism alive and the
-            // telemetry dead.
-            double realizedIn = 0;
-            double ArrivalsOver(int ticks)
+            Sim Settled()
             {
-                double n = 0;
+                var p = new EconParams { MigInElasticity = new EconParams().MigInElasticity * 0.3 };
+                var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 6000 };
+                var sim = Sim.Create(cfg, p, new FeatureFlags());
+                sim.Run(300);
+                return sim;
+            }
+            var control = Settled();
+            var treated = Settled();
+
+            (double offered, double want, double inPosted, double outAuction,
+             double outPosted, double realized) Window(Sim sim, int ticks)
+            {
+                double offered = 0, want = 0, inPosted = 0, outAuction = 0, outPosted = 0, realized = 0;
                 sim.Run(ticks, s =>
                 {
-                    n += (s.Engine.LastFlows.DesiredBySegment?.Sum() ?? 0)
-                         + s.Engine.LastProspects.Admitted + s.Engine.LastProspects.Priced;
-                    realizedIn += (s.Engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0)
-                                  + s.Engine.LastProspects.Admitted;
+                    var pr = s.Engine.LastProspects;
+                    offered += pr.Offered;
+                    want += pr.Admitted + pr.Priced;
+                    inPosted += s.Engine.LastFlows.DesiredBySegment?.Sum() ?? 0;
+                    // DeclineExitsThisTick is zeroed every tick by the engine and
+                    // set on refresh ticks, so a per-tick sum counts each once.
+                    outAuction += s.Engine.DeclineExitsThisTick;
+                    outPosted += s.Engine.LastFlows.DeparturesBySegment?.Sum() ?? 0;
+                    realized += (s.Engine.LastFlows.ArrivalsBySegment?.Sum() ?? 0) + pr.Admitted;
                 });
-                return n;
+                return (offered, want, inPosted, outAuction, outPosted, realized);
             }
-            double DeparturesOver(int ticks)
-            {
-                // Departures: posted-path flows plus the auction path's decline
-                // exits (the whole of out-migration there — individual decisions
-                // that nothing beats one's own reservation). DeclineExitsThisTick
-                // is zeroed every tick by the engine and set on refresh ticks,
-                // so a per-tick sum counts each exit exactly once.
-                double n = 0;
-                sim.Run(ticks, s => n += (s.Engine.LastFlows.DeparturesBySegment?.Sum() ?? 0)
-                                         + s.Engine.DeclineExitsThisTick);
-                return n;
-            }
+            // The inflow DECISION as a rate: on the auction path the share of
+            // lookers who chose to come; on the posted path the desire rate,
+            // which is already a rate and carries no denominator.
+            double InRate((double offered, double want, double inPosted, double outAuction,
+                           double outPosted, double realized) w)
+                => w.offered > 0 ? w.want / w.offered : w.inPosted;
+            double OutCount((double offered, double want, double inPosted, double outAuction,
+                             double outPosted, double realized) w) => w.outAuction + w.outPosted;
 
-            double baseIn = ArrivalsOver(120), baseOut = 0;
-            sim.Run(0);
-            // Symmetric amenity pulse: +Δ then −Δ.
-            foreach (var c in sim.W.Clusters) c.Amenity += 0.9;
-            double boomIn = ArrivalsOver(120);
-            foreach (var c in sim.W.Clusters) c.Amenity -= 1.8;
-            // baseOut = 0 is an ASSUMPTION, not a measurement, and since the
-            // outside-anchor commit it is measured false: this fixture's
-            // baseline is a churn equilibrium (base-window decline exits 456
-            // vs bust-window 434 at the shipping OutsideAccessValue — the
-            // bust does not lift decline exits above baseline at all;
-            // item-#42 anatomy run). The asserted asymmetry therefore
-            // compares a DIFFERENCED inflow margin against an UNdifferenced
-            // outflow. Left as-is on purpose — the honest restatement of this
-            // scenario's margins is recorded in KNOWN-RED's boombust row and
-            // is a separate change from the mechanism work measured here.
-            baseOut = 0;
-            double bustOut = DeparturesOver(120);
-            foreach (var c in sim.W.Clusters) c.Amenity += 0.9;
+            var c1 = Window(control, 120);
+            var t1 = Window(treated, 120);
+            foreach (var c in treated.W.Clusters) c.Amenity += 0.9;      // +Delta, treated only
+            var c2 = Window(control, 120);
+            var t2 = Window(treated, 120);
+            foreach (var c in treated.W.Clusters) c.Amenity -= 1.8;      // -Delta
+            var c3 = Window(control, 120);
+            var t3 = Window(treated, 120);
+            foreach (var c in treated.W.Clusters) c.Amenity += 0.9;      // restore
 
-            double inResponse = Math.Max(0, boomIn - baseIn);
-            double outResponse = Math.Max(1, bustOut - baseOut);
-            bool pass = inResponse > 1.5 * outResponse;
-            Record("boom/bust asymmetry: inflow reacts faster than outflow", pass,
-                $"migration-margin response +{inResponse:F0} vs departure response +{outResponse:F0} " +
-                $"over equal windows/pulse ({realizedIn:F0} arrivals realized after absorption)");
+            // PAIRING. Before the pulse the two arms are the same run, so this
+            // is an exact identity; if it ever fails the control is not a
+            // counterfactual and no difference below means anything.
+            bool paired = Math.Abs(InRate(c1) - InRate(t1)) < 1e-12
+                          && Math.Abs(OutCount(c1) - OutCount(t1)) < 1e-9;
+
+            double inResponse = InRate(t2) - InRate(c2);
+            double outResponse = OutCount(t3) - OutCount(c3);
+            double inRel = InRate(c2) > 0 ? inResponse / InRate(c2) : 0;
+            double outRel = OutCount(c3) > 0 ? outResponse / OutCount(c3) : 0;
+            double realizedIn = t1.realized + t2.realized + t3.realized;
+
+            bool floors = t2.offered + t2.inPosted > 0 && realizedIn > 100 && paired;
+            // THE BAR sits midway between the two measured arms, not at either
+            // of them. Both arms run at the instruments commit on three seeds
+            // (`scenarios --only boombust [--seed N] [--mutant-relative-outside]`):
+            //   seed        clean inflow    mutant inflow
+            //   20260806      +1.3 %          -0.3 %
+            //   1             +2.5 %          -0.2 %
+            //   7             +1.7 %          +0.46 %
+            // The separating interval is therefore [+0.46 %, +1.3 %] and the bar
+            // is its midpoint, 0.85 % — 0.45 points under the worst clean seed
+            // and 0.39 over the best mutant one. It was 0.5 % when only the
+            // default seed had been run, which the seed-7 mutant at +0.46 %
+            // would have left almost no margin against; that is the reason the
+            // band is measured on more than one seed before a bar is placed.
+            // The same runs give the outflow side: clean 600 -> 600 (0.0 %) on
+            // the default seed, mutant 618 -> 635 (+2.8 %), which is what turns
+            // the asymmetry leg red on the mutant as well — a city whose
+            // come/stay margin cannot see a uniform improvement still bleeds
+            // residents when it is made worse. Seed 7's CLEAN arm fails that
+            // same leg at +1.7 % against the 1.8 % its own +1.2 % outflow
+            // response demands; KNOWN-RED's boombust row owns it.
+            bool responds = inRel >= 0.0085;
+            bool asymmetric = inRel > 1.5 * Math.Max(0, outRel);
+            Record("boom/bust asymmetry: inflow reacts faster than outflow", floors && responds && asymmetric,
+                $"vs a PAIRED unpulsed control on the same seed: inflow rate {InRate(c2):F4} control -> "
+                + $"{InRate(t2):F4} pulsed ({inRel:+0.0%;-0.0%;0%}, bar +0.85%) "
+                + $"[auction want/offered {t2.want:F0}/{t2.offered:F0} vs {c2.want:F0}/{c2.offered:F0}; "
+                + $"posted desired {t2.inPosted:F0} vs {c2.inPosted:F0}]; "
+                + $"departures {OutCount(c3):F0} control -> {OutCount(t3):F0} pulsed ({outRel:+0.0%;-0.0%;0%}) "
+                + $"[auction decline {t3.outAuction:F0} vs {c3.outAuction:F0}; posted {t3.outPosted:F0} vs {c3.outPosted:F0}]; "
+                + $"{realizedIn:F0} arrivals realized after absorption"
+                + (paired ? "" : " — ARMS NOT PAIRED")
+                + (floors ? "" : " — FLOOR")
+                + (responds ? "" : " — NO INFLOW RESPONSE")
+                + (asymmetric ? "" : " — NOT ASYMMETRIC"));
         }
 
         // ------------------------------------------------------------------

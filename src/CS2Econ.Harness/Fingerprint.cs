@@ -26,12 +26,12 @@ namespace CS2Econ.Harness
     /// change through a green suite. Four devices push against that here, in
     /// descending order of how much they actually do:
     ///
-    ///   1. LANES, NOT ONE NUMBER. Eight of them: demography / built / price /
-    ///      money, on two arms (default flags, HousingAuction on). The
-    ///      maintainer reads a claim about their own diff — "price and money
-    ///      moved, demography and built did not" — and a claim that contradicts
-    ///      what they think they changed is a finding. This does most of the
-    ///      work.
+    ///   1. LANES, NOT ONE NUMBER. Thirteen of them: demography / built /
+    ///      price / money on three arms (default flags, posted, labor), plus the
+    ///      labor arm's cleared-market lane. The maintainer reads a claim about
+    ///      their own diff — "price and money moved, demography and built did
+    ///      not" — and a claim that contradicts what they think they changed is
+    ///      a finding. This does most of the work.
     ///   2. THE DELTA REPORT IS COMPUTED, NEVER TYPED. `--accept` diffs the new
     ///      scalars against the previous stanza and writes the result into the
     ///      file, so "sumLR 17770.00 → 15765.00 (−11.28 %)" lands in the commit
@@ -69,15 +69,65 @@ namespace CS2Econ.Harness
     ///     measured because over 120 ticks the assessment cut feeds back through
     ///     construction and leveling; the point is the reporting, not the size.)
     ///
-    /// WHAT IT COSTS, and the honest bit of that. The default arm's update rate
-    /// was measured by a previous round over the last 20 commits of this branch:
-    /// the hash took two values across 19 transitions, i.e. ONE accept per 19
-    /// commits. The AUCTION arm's rate is NOT measured — the arm did not exist
-    /// at those commits — and this repo has four open auction-touching tasks. So
-    /// the auction lanes ship REPORT-ONLY, with a falsifiable promotion rule
-    /// rather than a guess: after 10 auction-touching commits, measure how often
-    /// the auction lanes actually fired. Promote them to gating if fewer than 1
-    /// in 3; otherwise leave them report-only and say so here.
+    /// WHAT IT COSTS, MEASURED PER COMMIT. Every fingerprint-era commit of this
+    /// branch (0b5b658..88fc88c, 24 commits, 23 transitions) was rebuilt and
+    /// `fingerprint` run at each, and every lane compared with its predecessor.
+    /// Per arm: transitions in which any of its lanes moved, and how many of
+    /// those moves were the FALSE-ALARM signature documented below — hash moved,
+    /// every printed scalar unchanged.
+    ///
+    ///   arm       born      transitions   fired    rate   false alarms
+    ///   default   0b5b658            23      11   0.478              0
+    ///   auction   0b5b658             9       2   0.222              0   (retired 554b56a)
+    ///   posted    554b56a            13       6   0.462              0
+    ///   labor     25b24b1            15      10   0.667              0
+    ///
+    /// Following each WORLD across the flip's rename rather than the arm's name:
+    /// the auction world fired 12/23 (0.522) and the posted world 6/23 (0.261).
+    /// The flip transition itself moved neither — the new default arm is
+    /// hash-identical to the retired auction arm, and the new posted arm to the
+    /// retired default — so the rename cost nothing and the earlier claim to
+    /// that effect (stanza 6) is confirmed by measurement.
+    ///
+    /// THE OLD PROMOTION RULE CANNOT BE EXECUTED, and this replaces it. It read:
+    /// "after 10 auction-touching commits, measure how often the auction lanes
+    /// actually fired; promote them to gating if fewer than 1 in 3." Three
+    /// things stop it, each measured above:
+    ///   1. ITS SUBJECT IS GONE. The auction arm was retired at 554b56a with 9
+    ///      transitions behind it — one short of its own window — and that world
+    ///      gates today under the name `default`, promoted by the flag flip
+    ///      rather than by this rule.
+    ///   2. ITS MEASUREMENT CANNOT COME FROM THE LOG. A report-only lane's move
+    ///      never forces a stanza, so the log records a report arm's moves only
+    ///      when they ride along with a gating accept, and undercounts by
+    ///      construction. The numbers above needed all 24 commits rebuilt.
+    ///   3. ITS CRITERION CONTRADICTS THIS FILE. Applied to the arm that gates
+    ///      today, default fires 0.478 — well over 1 in 3 — so the rule would
+    ///      DEMOTE the gate. Firing is not the cost; a fire that says nothing
+    ///      is, and across 29 arm-fires in this history ZERO were that.
+    ///
+    /// THE PROMOTION RULE, restated so it can be run. An arm GATES unless its
+    /// fires are uninformative.
+    ///   MEASUREMENT: rebuild every commit since the arm appeared, run
+    ///     `fingerprint` at each, and per transition record (i) whether any lane
+    ///     of the arm moved and (ii) whether that move left every printed scalar
+    ///     unchanged (`drift` excepted — it is the reconciliation residual, not
+    ///     a model scalar). Do NOT read this off the log; see (2) above.
+    ///   TRIGGER: a gating arm is demoted to report-only when its false-alarm
+    ///     rate over its last 10 or more transitions reaches 1 in 3; a
+    ///     report-only arm is promoted when it falls below that. Re-measure
+    ///     every 20 commits, whenever an arm is added, and whenever a
+    ///     FeatureFlags default changes.
+    ///   DECISION at 88fc88c: every arm measures 0 false alarms, so the posted
+    ///     and labor arms are PROMOTED and all thirteen lanes now gate. The
+    ///     accept burden that adds is measured at ZERO: all 6 posted fires and
+    ///     all 10 labor fires landed on commits where the default arm fired too,
+    ///     so the same single `--accept` covers them. The limit of that number
+    ///     is stated rather than hidden: no commit in this window moved posted
+    ///     or labor WITHOUT moving default, so it bounds nothing about a future
+    ///     commit that touches only the labor auction — that case would add one
+    ///     accept, and the re-measurement trigger above is what catches it if
+    ///     such commits become common.
     ///
     /// KNOWN FALSE-ALARM MODE, measured. Math.Pow/Exp/Log are library code, so a
     /// runtime or CPU change can move last bits and light a lane. MUT-3
@@ -119,7 +169,7 @@ namespace CS2Econ.Harness
             public string Name = "";
             public ulong Hash;
             public List<(string key, double value)> Scalars = new List<(string, double)>();
-            public bool Gating;          // default arm gates; auction arm reports
+            public bool Gating;          // every arm gates since the promotion measurement
         }
 
         // ---- hashing -----------------------------------------------------
@@ -148,15 +198,16 @@ namespace CS2Econ.Harness
             // the retired-in-default path keeps an invariance instrument for
             // as long as it ships via --posted at all.
             lanes.AddRange(Arm("default", new FeatureFlags(), gating: true));
-            lanes.AddRange(Arm("posted", new FeatureFlags { HousingAuction = false }, gating: false));
-            // REPORT-ONLY, same promotion rule as ever: the labor market is
-            // under active development and gating it now would train people to
-            // bump the baseline without reading it. The default arm still
-            // gates, so a labor change that leaks into the labor-flag-off path
-            // reds a gate. HousingAuction spelled explicitly so this arm does
+            // PROMOTED to gating by the measurement at the head of this file:
+            // 0 of 6 fires were the false-alarm signature, and all 6 landed on
+            // commits where the default arm fired anyway, so the accept this
+            // costs is one already being written.
+            lanes.AddRange(Arm("posted", new FeatureFlags { HousingAuction = false }, gating: true));
+            // Also promoted, on the same measurement (0 of 10 fires false, 0
+            // extra accepts). HousingAuction spelled explicitly so this arm does
             // not silently change worlds if the default ever moves again.
             lanes.AddRange(Arm("labor", new FeatureFlags { HousingAuction = true, LaborAuction = true },
-                               gating: false));
+                               gating: true));
             return lanes;
         }
 
@@ -338,7 +389,7 @@ namespace CS2Econ.Harness
                 {
                     Name = arm + ".labor",
                     Hash = lh.Value,
-                    Gating = false,
+                    Gating = gating,
                     Scalars =
                     {
                         ("empRate", demanded > 0 ? employed / demanded : 0),
@@ -447,8 +498,17 @@ namespace CS2Econ.Harness
             public readonly List<string> GatingMismatch = new List<string>();
             public readonly List<string> ReportMismatch = new List<string>();
             public readonly List<string> Missing = new List<string>();
+            /// <summary>Missing lanes that GATE. Was written as
+            /// `Missing.Count(m =&gt; m.StartsWith("default."))` — the gating arm's
+            /// name spelled into the pass condition, which silently stops
+            /// covering any arm promoted later. It is the lane's own Gating flag
+            /// that decides, so the promotion of the posted and labor arms
+            /// (measured; see the promotion rule at the head of this file) does
+            /// not leave a hole where a gating lane could vanish from the
+            /// baseline unnoticed.</summary>
+            public readonly List<string> MissingGating = new List<string>();
             public bool GatePass => BaselineFound && SignatureOk && GatingMismatch.Count == 0
-                                    && Missing.Count(m => m.StartsWith("default.")) == 0;
+                                    && MissingGating.Count == 0;
         }
 
         public static Verdict Check(List<Lane> lanes)
@@ -465,7 +525,12 @@ namespace CS2Econ.Harness
             v.SignatureOk = string.Equals(last.Sig, Sign(last.SigOver).ToString("X16"), StringComparison.OrdinalIgnoreCase);
             foreach (var lane in lanes)
             {
-                if (!last.Lanes.TryGetValue(lane.Name, out var rec)) { v.Missing.Add(lane.Name); continue; }
+                if (!last.Lanes.TryGetValue(lane.Name, out var rec))
+                {
+                    v.Missing.Add(lane.Name);
+                    if (lane.Gating) v.MissingGating.Add(lane.Name);
+                    continue;
+                }
                 if (rec.hash == lane.Hash) continue;
                 (lane.Gating ? v.GatingMismatch : v.ReportMismatch).Add(lane.Name);
             }
@@ -545,11 +610,12 @@ namespace CS2Econ.Harness
             "# MODEL FINGERPRINT — append-only baseline for the acceptance suite.\n"
           + "#\n"
           + "# Each stanza records what the pinned fixture produced at one commit:\n"
-          + "# eight lanes (demography / built / price / money, on the default and\n"
-          + "# auction arms), each an entity-level hash plus the human-readable\n"
-          + "# scalars behind it. `verify` gates on the four default-arm lanes and\n"
-          + "# REPORTS the auction lanes (see Fingerprint.cs for why that split, and\n"
-          + "# for the rule that would promote them).\n"
+          + "# thirteen lanes (demography / built / price / money on the default,\n"
+          + "# posted and labor arms, plus the labor arm's cleared-market lane),\n"
+          + "# each an entity-level hash plus the human-readable scalars behind it.\n"
+          + "# `verify` gates on all of them: the promotion rule at the head of\n"
+          + "# Fingerprint.cs was measured over this branch's whole fingerprint era\n"
+          + "# and promoted the two report-only arms.\n"
           + "#\n"
           + "# DO NOT HAND-EDIT. Each stanza is signed over its own text, deltas\n"
           + "# included, so an edited hash fails as 'hand-edited' rather than\n"

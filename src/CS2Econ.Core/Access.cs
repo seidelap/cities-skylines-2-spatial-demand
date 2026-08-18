@@ -153,6 +153,32 @@ namespace CS2Econ.Core
         /// fail whenever this is on. Never set outside the harness.</summary>
         public static bool MutantCitywideProspectOdds = false;
 
+        /// <summary>MUTANT SWITCH, harness-only (`--mutant-fill-blind`): severs
+        /// realized occupancy from the location decision — the attraction term
+        /// in <see cref="RebuildDemandShares"/> reads raw capacity, so a
+        /// submarket standing empty looks exactly as good to a household as one
+        /// that is full. This is the channel the occupancy check names, and the
+        /// switch is what keeps that check falsifiable: both of its legs must
+        /// fail on every seed whenever this is on (measured, `occsweep
+        /// --seeds 50`: 0/57 pass with it, 57/57 without). Never set outside the
+        /// harness.</summary>
+        public static bool MutantFillBlindShares = false;
+
+        /// <summary>MUTANT SWITCH, harness-only: breaks the OTHER half of the
+        /// occupancy channel — what FillEma is a smoothed average OF. The
+        /// occupancy check's leg (a) is a differential oracle against an
+        /// independently recomputed per-submarket fill target, and each value
+        /// here is a way that oracle must be able to catch:
+        ///   1 `--mutant-fill-pooled` — the citywide fill of the density kind,
+        ///     so every submarket is told the average city's vacancy;
+        ///   2 `--mutant-fill-alpha` — a different smoothing constant;
+        ///   3 `--mutant-fill-frozen` — never updated after the first build;
+        ///   4 `--mutant-fill-shift` — the neighbouring cluster's fill.
+        /// Measured: 0/57 seeds pass `occsweep --seeds 50` under any of the
+        /// four; the shipped path passes 57/57. Never set outside the
+        /// harness.</summary>
+        public static int MutantFillEmaSource = 0;
+
         /// <summary>The employment odds a newcomer would hear about the city
         /// from outside: the WORKER-WEIGHTED citywide rate for a labor class —
         /// total matched over total supplied, i.e. the rate the average actual
@@ -692,13 +718,23 @@ namespace CS2Econ.Core
             // Clusters holding no stock stay neutral so a greenfield site is
             // not pre-judged empty.
             for (int k = 0; k < 2; k++)
+            {
+                double pooledStock = 0, pooledFilled = 0;
+                if (MutantFillEmaSource == 1)
+                    for (int c = 0; c < C; c++) { pooledStock += HousingStock[k][c]; pooledFilled += filled[k][c]; }
                 for (int c = 0; c < C; c++)
                 {
-                    double stock = HousingStock[k][c];
-                    double target = stock > 0 ? MathUtil.Clamp(filled[k][c] / stock, 0, 1) : 1.0;
+                    int src = MutantFillEmaSource == 4 ? (c + 1) % C : c;
+                    double stock = HousingStock[k][src];
+                    double target = stock > 0 ? MathUtil.Clamp(filled[k][src] / stock, 0, 1) : 1.0;
+                    if (MutantFillEmaSource == 1)
+                        target = pooledStock > 0 ? MathUtil.Clamp(pooledFilled / pooledStock, 0, 1) : 1.0;
+                    double alpha = MutantFillEmaSource == 2 ? 0.5 : FillEmaAlpha;
+                    if (MutantFillEmaSource == 3 && !fillFirstBuild) continue;
                     FillEma[k][c] = fillFirstBuild ? target
-                                                   : MathUtil.Ema(FillEma[k][c], target, FillEmaAlpha);
+                                                   : MathUtil.Ema(FillEma[k][c], target, alpha);
                 }
+            }
 
             // Household ladders BEFORE demand shares: the shares read
             // AccessValue only, but ExpectedIncome (used downstream by
@@ -791,7 +827,8 @@ namespace CS2Econ.Core
                 for (int c = 0; c < C; c++)
                 {
                     double attract = HousingCapacity[k][c]
-                                     * (OccupancyFloor + (1 - OccupancyFloor) * FillEma[k][c]);
+                                     * (MutantFillBlindShares ? 1.0
+                                        : OccupancyFloor + (1 - OccupancyFloor) * FillEma[k][c]);
                     sizeTerm[k][c] = attract > 1e-9 ? Math.Log(attract) : -50;
                 }
             }
