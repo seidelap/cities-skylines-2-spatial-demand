@@ -11,7 +11,7 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (51 checks)
+## verify (60 checks)
 
 29 at the per-cluster prospect-odds commit (28 plus prospect-local-odds;
 seeds 0–7 and 25 measured 29/29 there, canary 39/39) plus the three
@@ -240,6 +240,82 @@ on the ON arm, (5) ledger conservation and per-sector reconciliation exact on
 both arms with a pooled arm added to those checks, (6) the mechanical pins:
 `--pooled`, `vanillaMode`, flags-off smoke, the occupancy pin, a pooled
 fingerprint arm.
+
+The 52nd to 60th are the task #19 non-residential parity legs — one fixture,
+four properties each asserted TWICE, plus a conservation leg on the parity arm: once as it stands on the shipped default
+(the leg states the defect, and IS the non-degeneracy floor for its partner)
+and once with `EconParams.NonResLandParity` on (the leg states the property).
+`paritysweep` runs the fixture alone across seeds; `parityprobe` is the census
+every number in the item was measured from. The four: extractor land assessed
+on its own cluster's geology rather than a flat 0.5; a one-seller (output,
+cluster) cell never admitted as its own comparable (the §3 circularity guard's
+firm analog); office production carrying the level and condition terms its
+assessment prices it on; and an unmet land charge reaching a stated outcome
+(grace, sort down, release the parcel) instead of being forgiven forever; the
+ninth leg reconciles the parity arm's money, because the arrears exit is the
+only new way a firm can leave and the suite's ledger fixture never reaches it.
+
+**THE PARITY SWITCH DID NOT FLIP, AND THE BLOCKER IS MEASURED.**
+`EconParams.NonResLandParity` ships FALSE and the default world is BYTE-
+IDENTICAL to 88fc88c — `fingerprint --check` reads all 13 lanes matching with
+no accept, and `webersweep` reproduces the standing seed-0 red with the same
+numbers (10 extractors, 80% on best raw, 1 distinct output). Every one of the
+four makes the assessment MORE accurate, and the non-residential base cannot
+carry an accurate assessment: ℓ* sits at the CORNER for every firm sector
+(mean TargetLevel 5.00 for office and industrial against standing levels 3.06
+and 2.00), because the firm bid is a per-slot margin formula scaled by
+Quality(ℓ) with nothing on the other side to bound it, where the residential
+ladder is bounded by the auction's posted price and its shadow queue. At 95%
+capture that exceeds what a firm below ℓ* can earn, and a vacated parcel does
+not re-let either, because firm entry compares a bid at the parcel's CURRENT
+level against an assessment priced at ℓ*. Measured ON: uncollected firm share
+64% → 21% with no firm past the clock, but `webersweep --seeds 8` reads 0/8
+against 6/8 — every failure on the extractor POPULATION precondition (1 to 4
+against the ≥5 bar) with the alignment legs at 100% — standing offices 62 → 8,
+and verify seed 9 loses the same check (48/51). Attributed by running
+`webersweep --seeds 2` once per mutant: the collapse is the GEOLOGY correction
+alone (10 and 8 extractors with it removed and the other three on, against 3
+and 1 with all four). WHAT WOULD UNBLOCK IT: a realized comparable per
+(cluster, sector, level) over OTHER firms, which is the bound the residential
+ladder has and the same assessment-comparables pattern this item's guard
+installs on the goods side. Unowned.
+
+AT THE PARITY COMMIT the gate is the base's, plus nine green: verify **59/60**
+on seed 1 (the standing occupancy red, unchanged leg), **60/60** on seed 9 and
+**59/60** on seed 13 (the standing clearing-price population-collapse red) —
+so every one of the nine new legs is green on all three gate seeds, and no
+standing red moved in either direction. `canary` 39/39, `laborcanary` 39/39,
+`paritysweep --seeds 4` 6/6 (seeds 0-3, 9, 13), `webersweep --seeds 8` 6/8 red
+{0, 5}, `fingerprint --check` all 13 lanes matching with no accept, and the
+`fiscal` scenario 1/1 (corridor +15.7% vs control −2.8%). `occsweep`,
+`goodssweep`, `shopsweep` and the rest of the scenario battery were NOT re-run:
+the default world is byte-identical, which the fingerprint and the reproduced
+Weber verdicts measure rather than assume.
+
+THE OWNER-DOOR QUESTION (item #19's fourth) IS OUT OF SCOPE, MEASURED RATHER
+THAN ASSUMED. `Allocation.cs`'s owner-tagging gate (`pl.Use ==
+ZoneKind.ResidentialLow && h.OwnerMinded`) admits no other zone kind, and
+nothing else in the tree ever sets `Parcel.OwnerHousehold` on non-residential
+land: `parityprobe` seed 1, 400 ticks reads 367 built non-residential parcels,
+0 with `OwnerHousehold >= 0`, 0 with a standing ask. That is not a missing
+flag — the residential owner/door/ask apparatus (`HousingAuction`'s reserve,
+fold and no-ratchet rules) models a household's choice between renting and
+owning CAPITAL EQUITY in its home, drawn at birth (`Household.DrawAtBirth`,
+`OwnerMinded`) and cleared through the housing auction's own door market. A
+firm has no analog of any of that: every firm today occupies speculatively
+built stock (the same generic `Construction`/`Assess` residual-flow logic
+that builds residential stock, with no distinct "developer-landlord" role)
+and pays S + the land levy on it exactly like a residential RENTER, never an
+owner; there is no firm-side auction (`FirmLifecycle`'s entry is a bid-vs-
+assessment probability draw, not a competitive door market), no firm analog
+of `OwnerMinded`, and no firm financing model for a capital purchase, so
+nothing on the other side of a firm's building could ever bid to buy it. Land
+and tax parity — the thing #19 was asked to fix — does not require this: the
+levy already falls on firms and households alike regardless of tenure (design
+§3/§4.3's whole point). Modeling a firm that owns its own building outright
+would be a firm-side capital-ownership market invented from a standing start,
+which is a separate, larger design question than this item's mandate. Left
+unowned rather than retrofitted here.
 
 **AT THE TWO-TRACK MERGE** (housing: outside-access anchor, per-cluster ties
 and calibration, owner doors; goods: the Weber investigation, per-cluster goods

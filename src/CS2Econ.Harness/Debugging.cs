@@ -1276,6 +1276,270 @@ namespace CS2Econ.Harness
             acc.CountShopIntents(w, p, bestU);   // leave the field as the engine had it
         }
 
+        /// <summary>`harness parityprobe` — the task-#19 measurement: what a
+        /// firm on a parcel actually faces against what a household on a parcel
+        /// faces. Every number the parity answer quotes comes from here.</summary>
+        public static int ParityProbe(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 9000 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            var w = sim.W;
+
+            double hhOwed = 0, hhPaid = 0, fOwed = 0, fPaid = 0;
+            int firmShortTicks = 0, firmTicks = 0;
+            sim.Run(ticks, s =>
+            {
+                var e = s.Engine;
+                hhOwed += e.HouseholdLevyOwedThisTick; hhPaid += e.HouseholdLevyPaidThisTick;
+                fOwed += e.FirmLevyOwedThisTick; fPaid += e.FirmLevyPaidThisTick;
+                foreach (var fm in s.W.Firms)
+                {
+                    if (fm.Dead || fm.Parcel < 0) continue;
+                    firmTicks++;
+                    if (fm.LevyShortTicks > 0) firmShortTicks++;
+                }
+            });
+
+            Console.WriteLine($"parityprobe seed={seed} ticks={ticks} pop={sim.Population[^1]}");
+            Console.WriteLine("-- levy incidence (cumulative over the run) --");
+            Console.WriteLine($"  households  owed={hhOwed:F0} paid={hhPaid:F0} " +
+                              $"shortfall={(hhOwed > 0 ? 1 - hhPaid / hhOwed : 0) * 100:F2}%");
+            Console.WriteLine($"  firms       owed={fOwed:F0} paid={fPaid:F0} " +
+                              $"shortfall={(fOwed > 0 ? 1 - fPaid / fOwed : 0) * 100:F2}%");
+            Console.WriteLine($"  firm share of billed assessment = " +
+                              $"{(hhOwed + fOwed > 0 ? fOwed / (hhOwed + fOwed) : 0) * 100:F2}%");
+            Console.WriteLine($"  firm-ticks in arrears = {firmShortTicks}/{firmTicks} " +
+                              $"({(firmTicks > 0 ? (double)firmShortTicks / firmTicks : 0) * 100:F2}%)");
+            Console.WriteLine($"  arrears exits = {sim.Engine.FirmArrearsExitsTotal} " +
+                              $"(land charge unmet for {p.LandArrearsTicks} consecutive ticks)");
+
+            // -- sustained arrears, by sector, and what happened to those firms.
+            var bySector = new Dictionary<ZoneKind, (int alive, int arrears50, int arrears200, double cumShort)>();
+            int aliveTotal = 0, deadTotal = 0;
+            foreach (var f in w.Firms)
+            {
+                if (f.Dead) { deadTotal++; continue; }
+                if (f.Parcel < 0) continue;
+                aliveTotal++;
+                bySector.TryGetValue(f.Sector, out var e2);
+                e2.alive++;
+                if (f.LevyShortTicks >= 50) e2.arrears50++;
+                if (f.LevyShortTicks >= 200) e2.arrears200++;
+                e2.cumShort += Math.Max(0, f.LevyOwedCum - f.LevyPaidCum);
+                bySector[f.Sector] = e2;
+            }
+            Console.WriteLine($"-- sustained arrears at t={w.Tick} (alive={aliveTotal} dead={deadTotal}) --");
+            foreach (var kv in bySector.OrderBy(k => k.Key.ToString()))
+                Console.WriteLine($"  {kv.Key,-12} alive={kv.Value.alive,4} " +
+                                  $"short>=50t={kv.Value.arrears50,4} short>=200t={kv.Value.arrears200,4} " +
+                                  $"cumUnpaid={kv.Value.cumShort:F0}");
+
+            // -- can the bill be met? Per sector: the firm's own revenue EMA
+            // against the per-tick bill on the land it stands on, plus fill and
+            // condition. The household analog pays 95% of a price it bid itself;
+            // a firm is billed 95% of a forecast made for a hypothetical entrant.
+            Console.WriteLine("-- bill vs takings, per sector (alive, parcelled firms) --");
+            foreach (var sector in new[] { ZoneKind.Commercial, ZoneKind.Industrial,
+                                           ZoneKind.Office, ZoneKind.Extractor })
+            {
+                int n = 0; double bill = 0, rev = 0, wages = 0, money = 0, cond = 0, fill = 0;
+                foreach (var f in w.Firms)
+                {
+                    if (f.Dead || f.Parcel < 0 || f.Sector != sector) continue;
+                    var pl = w.Parcels[f.Parcel];
+                    n++;
+                    bill += LandAccounting.UnitAssessment(pl, p) * pl.Units;
+                    rev += f.ProfitEma;
+                    for (int cl = 0; cl < 3; cl++) wages += f.FilledByClass[cl] * p.Wage((LaborClass)cl);
+                    money += f.Money; cond += pl.Condition;
+                    fill += pl.Units > 0 ? f.WorkersFilled / pl.Units : 0;
+                }
+                if (n == 0) { Console.WriteLine($"  {sector,-12} none alive"); continue; }
+                Console.WriteLine($"  {sector,-12} n={n,4} bill/tick={bill / n,9:F2} revEma={rev / n,9:F2} " +
+                                  $"wages={wages / n,8:F2} money={money / n,9:F2} " +
+                                  $"cond={cond / n:F2} fill={fill / n:F2}");
+            }
+
+            // -- which configuration is the bill actually priced at? The
+            // residential level ladder is bounded by what households would pay
+            // (the auction price / shadow queue); the firm ladder is a margin
+            // formula with no clearing, so the level-max is unopposed.
+            Console.WriteLine("-- assessed configuration, per sector (occupied parcels) --");
+            foreach (var sector in new[] { ZoneKind.Commercial, ZoneKind.Industrial,
+                                           ZoneKind.Office, ZoneKind.Extractor })
+            {
+                int n = 0; double lvl = 0, tlvl = 0, lrAt = 0, lrCur = 0;
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || pl.Use != sector || pl.OccupantFirm < 0) continue;
+                    n++; lvl += pl.Level; tlvl += pl.TargetLevel;
+                    lrAt += pl.AssessedLR; lrCur += pl.CurrentResidual;
+                }
+                if (n == 0) continue;
+                Console.WriteLine($"  {sector,-12} n={n,4} meanLevel={lvl / n:F2} meanTargetLevel={tlvl / n:F2} " +
+                                  $"meanLR={lrAt / n,9:F2} meanCurrentResidual={lrCur / n,9:F2}");
+            }
+
+            // -- is there cheaper land to move to? The firm analog of the
+            // household's SortDown leg needs a vacant same-sector parcel whose
+            // bill the firm could actually meet.
+            Console.WriteLine("-- vacant non-residential land, per sector --");
+            foreach (var sector in new[] { ZoneKind.Commercial, ZoneKind.Industrial,
+                                           ZoneKind.Office, ZoneKind.Extractor })
+            {
+                int nv = 0; double minBill = double.PositiveInfinity, sumBill = 0;
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || pl.Use != sector || pl.OccupantFirm >= 0) continue;
+                    if (pl.Warehousing) continue;
+                    nv++;
+                    double b = LandAccounting.UnitAssessment(pl, p) * pl.Units;
+                    sumBill += b; if (b < minBill) minBill = b;
+                }
+                Console.WriteLine($"  {sector,-12} vacant={nv,4} " +
+                                  $"minBill={(nv > 0 ? minBill : 0),9:F2} meanBill={(nv > 0 ? sumBill / nv : 0),9:F2}");
+            }
+
+            // -- circularity exposure: which (resource, cluster) origin cells a
+            // non-residential assessment reads, and how many sellers stand in
+            // them. A singleton cell is a firm's own realized revenue feeding
+            // the assessment of the land it sits on.
+            int C = sim.Engine.Access.C;
+            var sellers = new int[ResourceCatalog.Count, C];
+            foreach (var f in w.Firms)
+            {
+                if (f.Dead || f.Parcel < 0) continue;
+                if (f.Sector != ZoneKind.Industrial && f.Sector != ZoneKind.Extractor) continue;
+                sellers[(int)f.Output, w.Parcels[f.Parcel].Cluster]++;
+            }
+            int occupied = 0, singleton = 0, thin = 0;
+            double ownWeightSum = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.OccupantFirm < 0) continue;
+                var f = w.Firms[pl.OccupantFirm];
+                if (f.Dead) continue;
+                if (f.Sector != ZoneKind.Industrial && f.Sector != ZoneKind.Extractor) continue;
+                occupied++;
+                int n = sellers[(int)f.Output, pl.Cluster];
+                if (n == 1) singleton++;
+                else if (n == 2) thin++;
+                // How much of OriginStat is the LOCAL cell (the rest is the
+                // citywide shrinkage prior): local weight n/(n+n0).
+                double ev = sim.Engine.Trade.OriginEvidence(f.Output, pl.Cluster);
+                double n0 = Math.Max(0, p.TradePricePriorVolume);
+                if (n == 1) ownWeightSum += ev + n0 > 1e-12 ? ev / (ev + n0) : 0;
+            }
+            Console.WriteLine("-- assessment circularity exposure (industrial + extractor) --");
+            Console.WriteLine($"  occupied producing parcels = {occupied}");
+            Console.WriteLine($"  whose (output, cluster) origin cell has EXACTLY ONE seller = {singleton}" +
+                              $" ({(occupied > 0 ? (double)singleton / occupied : 0) * 100:F1}%)");
+            Console.WriteLine($"  two sellers = {thin}");
+            Console.WriteLine($"  mean local-evidence weight on those singleton cells = " +
+                              $"{(singleton > 0 ? ownWeightSum / singleton : 0):F3}");
+
+            // -- extractor geology: Assess prices extractor land at a flat 0.5
+            // suitability (the 4-arg FirmBidPerSlot passes workCluster: null),
+            // while firm ENTRY prices the same parcel at the real geology.
+            double flatSum = 0, geoSum = 0; int extParcels = 0; double worst = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.Use != ZoneKind.Extractor) continue;
+                extParcels++;
+                double flat = LandAccounting.FirmBidPerSlot(sim.Engine.Access, sim.Engine.Trade,
+                                                            pl.Cluster, pl.Use, pl.Level, p);
+                double geo = LandAccounting.FirmBidPerSlot(sim.Engine.Access, sim.Engine.Trade,
+                                                           pl.Cluster, pl.Use, pl.Level, p, out _, w.Clusters);
+                flatSum += flat; geoSum += geo;
+                double rel = flat > 1e-9 ? Math.Abs(geo - flat) / flat : (geo > 1e-9 ? 1 : 0);
+                if (rel > worst) worst = rel;
+            }
+            Console.WriteLine("-- extractor assessment geology --");
+            Console.WriteLine($"  built extractor parcels = {extParcels} " +
+                              $"Σbid(flat 0.5)={flatSum:F1} Σbid(own geology)={geoSum:F1} " +
+                              $"worst per-parcel rel gap={worst * 100:F1}%");
+
+            // -- the three causal probes the parity checks are built on, run
+            // here first so their bands are set from measurement.
+            void Reassess(Parcel q) => LandAccounting.Assess(w, sim.Engine.Access, sim.Engine.Trade,
+                                                             q, sim.Engine.SegmentPresence, p);
+            var exList = w.Parcels.Where(x => x.State == ParcelState.Built && x.Zoned == ZoneKind.Extractor
+                                              && w.Clusters[x.Cluster].ResourceSuitability.Max() > 0.05).ToList();
+            Console.WriteLine($"-- probe A: geology response (candidates={exList.Count}) --");
+            if (exList.Count > 0)
+            {
+                var ex = exList.OrderByDescending(x => w.Clusters[x.Cluster].ResourceSuitability.Max()).First();
+                var ci = w.Clusters[ex.Cluster];
+                var saved = (double[])ci.ResourceSuitability.Clone();
+                for (int i = 0; i < ci.ResourceSuitability.Length; i++) ci.ResourceSuitability[i] = 1.0;
+                Reassess(ex); double hi = ex.AssessedLR;
+                for (int i = 0; i < ci.ResourceSuitability.Length; i++) ci.ResourceSuitability[i] = 0.01;
+                Reassess(ex); double lo = ex.AssessedLR;
+                Array.Copy(saved, ci.ResourceSuitability, saved.Length);
+                Reassess(ex);
+                Console.WriteLine($"  parcel {ex.Id} L{ex.Level} cond={ex.Condition:F2}: " +
+                                  $"LR(suit=1.0)={hi:F3} LR(suit=0.01)={lo:F3} LR(own)={ex.AssessedLR:F3}");
+            }
+
+            Console.WriteLine("-- probe B: admitting a second seller to a one-seller cell --");
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.OccupantFirm < 0) continue;
+                var f = w.Firms[pl.OccupantFirm];
+                if (f.Dead || (f.Sector != ZoneKind.Industrial && f.Sector != ZoneKind.Extractor)) continue;
+                if (sim.Engine.Trade.SellersAt(f.Output, pl.Cluster) != 1) continue;
+                Reassess(pl); double before = pl.AssessedLR;
+                var ghost = new Firm { Id = w.Firms.Count, Sector = f.Sector, Parcel = pl.Id, Output = f.Output };
+                w.Firms.Add(ghost);
+                sim.Engine.Trade.Refresh(p);
+                Reassess(pl); double after = pl.AssessedLR;
+                w.Firms.RemoveAt(w.Firms.Count - 1);
+                sim.Engine.Trade.Refresh(p);
+                Reassess(pl);
+                Console.WriteLine($"  parcel {pl.Id} out={f.Output} cl={pl.Cluster}: LR {before:F3} -> {after:F3} " +
+                                  $"(originStat={sim.Engine.Trade.OriginStat(f.Output, pl.Cluster):F3} " +
+                                  $"cityOrigin={sim.Engine.Trade.CityOrigin(f.Output):F3} " +
+                                  $"export={sim.Engine.Trade.BestExportNet(f.Output, pl.Cluster):F3})");
+            }
+
+            Console.WriteLine("-- probe C: realized office product vs the base it is assessed on --");
+            var ratios = new List<double>();
+            foreach (var f in w.Firms)
+            {
+                if (f.Dead || f.Parcel < 0 || f.Sector != ZoneKind.Office || f.WorkersFilled <= 0) continue;
+                var pl = w.Parcels[f.Parcel];
+                double base_ = f.WorkersFilled * p.OfficeOutputPerSlot * p.OfficeOutputPrice
+                               * sim.Engine.Access.OfficeAgglomMult[pl.Cluster];
+                if (base_ > 1e-9) ratios.Add(f.ProfitEma / base_);
+            }
+            ratios.Sort();
+            Console.WriteLine($"  alive office firms with staff = {ratios.Count} " +
+                              $"median realized/base = {(ratios.Count > 0 ? Pct(ratios, 0.5) : 0):F3} " +
+                              $"p10={(ratios.Count > 0 ? Pct(ratios, 0.1) : 0):F3} " +
+                              $"p90={(ratios.Count > 0 ? Pct(ratios, 0.9) : 0):F3}");
+
+            // -- owner disposition on firm-occupied land.
+            int firmParcels = 0, firmOwned = 0, firmAsk = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.IsResidential || pl.Use == ZoneKind.None) continue;
+                firmParcels++;
+                if (pl.OwnerHousehold >= 0) firmOwned++;
+                if (pl.OwnerAskPerUnit > 0) firmAsk++;
+            }
+            Console.WriteLine("-- owner doors on non-residential land --");
+            Console.WriteLine($"  built non-residential parcels = {firmParcels} " +
+                              $"with OwnerHousehold >= 0 = {firmOwned} with an ask = {firmAsk}");
+
+            // -- the go-live ramp: households interpolate onto the market
+            // assessment over a staggered window; firms are billed the market
+            // assessment from the first levying tick.
+            Console.WriteLine($"-- go-live ramp -- GoLiveRampTicks={p.GoLiveRampTicks} " +
+                              "(households staggered; firm path has no ramp term)");
+            return 0;
+        }
+
         private static double Pct(List<double> sorted, double q)
         {
             if (sorted.Count == 0) return 0;

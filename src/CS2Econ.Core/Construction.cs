@@ -508,7 +508,8 @@ namespace CS2Econ.Core
             // that corridor, not against the citywide average of every other
             // one.
             double bid = LandAccounting.BidPerUnit(acc, trade, pl.Cluster, use, level, segmentPresence, p,
-                                                   addUnits: units)
+                                                   addUnits: units,
+                                                   workCluster: p.NonResLandParity ? w.Clusters : null)
                          * w.Calibration.Factor(use, pl.Cluster, p.CalibClusterShrinkN0);
             double resid = residuals.Get(pl.Cluster, use, w.Claims);
             // A project under construction already sits in the claims ledger;

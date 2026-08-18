@@ -37,12 +37,17 @@ namespace CS2Econ.Harness
         /// could reach it (20/24 fixtures solve the auction under the new
         /// default). Applied after --auction so an explicit --posted wins.</summary>
         public static bool ForcePosted;
+        /// <summary>Set by `--nonres-parity`: turns on EconParams.NonResLandParity
+        /// for every sim this process builds, so the task-#19 arm can be
+        /// measured without editing a default that ships off.</summary>
+        public static bool ForceNonResLandParity;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
             if (ForceStoreLevelSpending) flags.StoreLevelSpending = true;
             if (ForceHousingAuction) flags.HousingAuction = true;
             if (ForcePosted) flags.HousingAuction = false;
+            if (ForceNonResLandParity) p.NonResLandParity = true;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);

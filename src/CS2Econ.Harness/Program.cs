@@ -21,6 +21,7 @@ namespace CS2Econ.Harness
                 if (args[i] == "--store-level") { Sim.ForceStoreLevelSpending = true; continue; }
                 if (args[i] == "--auction") { Sim.ForceHousingAuction = true; continue; }
                 if (args[i] == "--posted") { Sim.ForcePosted = true; continue; }
+                if (args[i] == "--nonres-parity") { Sim.ForceNonResLandParity = true; continue; }
                 // MUTANT SWITCH (see AccessState.MutantCitywideProspectOdds):
                 // restores the zero-diluted citywide prospect odds so the
                 // prospect-local-odds check can be shown to fail. Never a
@@ -53,6 +54,22 @@ namespace CS2Econ.Harness
                 // intent probe stops comparing against what each household
                 // already settled for, so the counted signal stops saturating.
                 if (args[i] == "--mutant-intent-unsaturated") { AccessState.MutantIntentUnsaturated = true; continue; }
+                // MUTANT SWITCH (see LandAccounting.MutantFlatGeologyAssessment):
+                // assessment prices every extractor configuration at a flat 0.5
+                // suitability again, so the nonres-parity geology leg can be
+                // shown to fail.
+                if (args[i] == "--mutant-flat-geology") { LandAccounting.MutantFlatGeologyAssessment = true; continue; }
+                // MUTANT SWITCH (see TradeSystem.MutantSelfSellerComparable):
+                // a one-seller cell prices itself again, so the nonres-parity
+                // circularity leg can be shown to fail.
+                if (args[i] == "--mutant-self-comparable") { TradeSystem.MutantSelfSellerComparable = true; continue; }
+                // MUTANT SWITCH (see EconomyEngine.MutantLevelFreeFirmOutput):
+                // office and extractor produce without the level and condition
+                // terms they are assessed on.
+                if (args[i] == "--mutant-level-free-output") { EconomyEngine.MutantLevelFreeFirmOutput = true; continue; }
+                // MUTANT SWITCH (see EconomyEngine.MutantForgiveFirmArrears):
+                // an unmet land charge is forgiven forever again.
+                if (args[i] == "--mutant-forgive-arrears") { EconomyEngine.MutantForgiveFirmArrears = true; continue; }
                 if (i + 1 >= args.Length) continue;
                 if (args[i] == "--seed") seed = ulong.Parse(args[i + 1]);
                 if (args[i] == "--only") only = args[i + 1];
@@ -137,6 +154,21 @@ namespace CS2Econ.Harness
                         if (set.Count < n) set.Add(s);
                     for (ulong s = 4; set.Count < n; s++) if (!set.Contains(s)) set.Add(s);
                     return TestRunner.GoodsSweep(set);
+                }
+                case "paritysweep": // the task #19 nonres-parity fixture across seeds
+                {
+                    int n = 8;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    var set = new List<ulong>();
+                    for (ulong s = 0; s < (ulong)n; s++) set.Add(s);
+                    // The verify-gate seeds ride along on a real sweep; at
+                    // --seeds 1 the command is the single-seed instrument a
+                    // mutant demonstration needs, and stays one seed.
+                    if (n > 1)
+                        foreach (ulong s in new ulong[] { 9, 13 })
+                            if (!set.Contains(s)) set.Add(s);
+                    return TestRunner.NonResParitySweep(set);
                 }
                 case "shopsweep":   // both task #20 commerce checks across seeds (see TestRunner.ShopSweep)
                 {
@@ -320,6 +352,15 @@ namespace CS2Econ.Harness
                     for (int i = 1; i + 1 < args.Length; i += 2)
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.VacProbe(seed, ticks);
+                }
+                case "parityprobe":
+                {
+                    // Task #19 measurement aid (see Debugging.ParityProbe):
+                    // every parity number the item quotes comes from here.
+                    int ticks = 400;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                    return Debugging.ParityProbe(seed, ticks);
                 }
                 case "firmdiag":
                 {
