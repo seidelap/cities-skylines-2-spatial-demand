@@ -182,9 +182,15 @@ namespace CS2Econ.Harness
                 case "auctionprobe":
                 {
                     int ticks = 300;
+                    double ownerAsk = 1.0;
                     for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
-                    return Debugging.AuctionProbe(seed, ticks);
+                        // The item-#41 A/B: 0 = asks disabled (every owner door
+                        // folds; structure-only arm), 1 = shipped.
+                        if (args[i] == "--owner-ask") ownerAsk = double.Parse(args[i + 1]);
+                    }
+                    return Debugging.AuctionProbe(seed, ticks, ownerAsk);
                 }
                 case "scanoracle":
                 {

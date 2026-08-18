@@ -472,6 +472,18 @@ namespace CS2Econ.Core
         private void SolveHousingMarket()
         {
             Access.Auction = Auction;
+            Auction.OwnerDoorsEnabled = Flags.OwnerDoors;
+            // Owner tags whose household no longer lives there (exits that
+            // bypass Vacate) are cleared before the solve reads them, so an
+            // owner door always has a live agent behind its ask.
+            foreach (var pl in W.Parcels)
+            {
+                int oh = pl.OwnerHousehold;
+                if (oh < 0) continue;
+                var owner = W.Households[oh];
+                if (owner.ExitedTick >= 0 || owner.HomeParcel != pl.Id)
+                { pl.OwnerHousehold = -1; pl.OwnerAskPerUnit = 0; }
+            }
             Auction.Solve(W, Access, P);
 
             // Who has to leave the unit they are in: assigned somewhere else, or
@@ -485,8 +497,18 @@ namespace CS2Econ.Core
                 if ((uint)h.Id >= (uint)Auction.Assignment.Length) continue;
                 int want = Auction.Assignment[h.Id];
                 var pl = W.Parcels[h.HomeParcel];
-                int have = Auction.SubOf(pl.Cluster, pl.Use, pl.Level);
+                // The home is its DOOR: for a household at a live owner door,
+                // re-winning that parcel-door is renewing in place, and
+                // winning the uniform submarket it also stands in is a real
+                // move to a different parcel.
+                int have = Auction.DoorOf(pl);
                 if (want == have && have >= 0) continue;         // renewed in place
+                // Telemetry for the tenure-security question an owner's ask
+                // raises: a household that does not own the parcel it lives in
+                // leaving an owner-tagged parcel. Tagged, not door-live, so the
+                // count is comparable across the OwnerAskScale arms (at scale 0
+                // the tags stand and no door does).
+                if (pl.OwnerHousehold >= 0 && pl.OwnerHousehold != h.Id) OwnerParcelTenantVacatesTotal++;
                 Allocation.Vacate(W, h);
                 if (want >= 0) movers.Add(h.Id);
             }
@@ -511,6 +533,12 @@ namespace CS2Econ.Core
                 double patience = P.DeclinePatienceTicks
                                   * (0.5 + h.MovingCostDraw / Math.Max(1e-6, P.MovingCostMean));
                 if (h.DeclineTicks < patience) continue;
+                // Telemetry for the item-#41 self-pricing bound: an owner
+                // declining its own city is the case the ask's known
+                // distortion could inflate (by at most ask − S when nobody
+                // else queues); the counter makes the before/after measurable.
+                if (h.HomeParcel >= 0 && W.Parcels[h.HomeParcel].OwnerHousehold == h.Id)
+                    OwnerDeclineExitsTotal++;
                 if (h.HomeParcel >= 0) Allocation.Vacate(W, h);
                 if (h.Stage == InsolvencyStage.Sheltered)
                     ShelterOccupied = Math.Max(0, ShelterOccupied - 1);
@@ -554,17 +582,70 @@ namespace CS2Econ.Core
                 }
                 else Auction.Assignment[hid] = -1;
             }
+
+            // Next solve's asks, from THIS solve's frozen public state — the
+            // one price-forming input written between solves, read exactly
+            // once per solve in BuildSubmarkets, with every repair round
+            // re-clearing from it (task #36's atomicity, extended: nothing may
+            // update an ask mid-solve, and no mechanism between rounds).
+            PostOwnerAsks();
+        }
+
+        /// <summary>Write each owner's ask for its own parcel's units:
+        ///
+        ///     A = min(OwnerAskScale · OwnerAskShare · R, R),
+        ///     R = max(0, ValueOf(owner, its door) − OutsideOf(owner))
+        ///
+        /// R is the owner's own reservation for its place — its valuation
+        /// (level uplift, access premium, its own taste, its home bonus) net
+        /// of its own outside option; money per unit per tick, a rent's
+        /// units. The min-clamp makes A ≤ R an invariant under any swept
+        /// OwnerAskScale, so no owner is ever priced out of its own door by
+        /// its own ask.
+        ///
+        /// THE NO-RATCHET RULE (the ask-level mirror of §3): this must not
+        /// read Price/Admitted at the owner's own door. The ask derives from
+        /// the owner's VALUATION, never from the market's answer at its
+        /// parcel — otherwise ask chases price chases nothing. The first
+        /// solve of a run has no frozen state, so asks are 0 and every door
+        /// floors at structure cost, exactly the pre-item semantics; asks
+        /// appear from the second refresh.</summary>
+        private void PostOwnerAsks()
+        {
+            if (!Flags.OwnerDoors) return;
+            foreach (var pl in W.Parcels)
+            {
+                int oh = pl.OwnerHousehold;
+                if (oh < 0) continue;
+                if ((uint)oh >= (uint)Auction.Assignment.Length) continue;  // arrived after the solve
+                int door = Auction.DoorOf(pl);
+                if (door < 0) { pl.OwnerAskPerUnit = 0; continue; }
+                double r = Math.Max(0, Auction.ValueOf(oh, door, P) - Auction.OutsideOf(oh));
+                pl.OwnerAskPerUnit = Math.Min(P.OwnerAskScale * W.Households[oh].OwnerAskShare * r, r);
+            }
         }
 
         private int FirstVacantIn(int sub)
         {
+            // An owner door names its parcel: the won slot lands there and
+            // nowhere else.
+            int ownerParcel = Auction.OwnerParcelOf(sub);
+            if (ownerParcel >= 0)
+            {
+                var opl = W.Parcels[ownerParcel];
+                return !opl.Warehousing && opl.Vacant > 0 ? ownerParcel : -1;
+            }
             int kc = HousingAuction.KcOf(sub), lvl = HousingAuction.LevelOf(sub);
             int k = kc / Access.C, c = kc - k * Access.C;
             var kind = k == 1 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
             foreach (int pi in Allocation.VacantByCluster[c])
             {
                 var pl = W.Parcels[pi];
-                if (pl.Use == kind && pl.Level == lvl && !pl.Warehousing && pl.Vacant > 0) return pi;
+                // A parcel whose units sit at its own live door must not
+                // satisfy a uniform-submarket win — its rooms are behind its
+                // own reserve, not the pooled price.
+                if (pl.Use == kind && pl.Level == lvl && !pl.Warehousing && pl.Vacant > 0
+                    && Auction.OwnerParcelOf(Auction.DoorOf(pl)) < 0) return pi;
             }
             return -1;
         }
@@ -1396,6 +1477,17 @@ namespace CS2Econ.Core
         /// Prospects.Step and in HousingAuction.Why.</summary>
         public Prospects.Result LastProspects;
         public int DeclineExitsThisTick;
+        /// <summary>Cumulative decline exits by households that owned the
+        /// parcel they left — the item-#41 self-pricing-distortion telemetry
+        /// (read by the harness probes; asserted nowhere).</summary>
+        public int OwnerDeclineExitsTotal;
+        /// <summary>Cumulative MARKET moves out of an owner-tagged parcel by a
+        /// household that did not own it (the solve's move loop only — not
+        /// decline or insolvency exits): the tenant side of the same item, an
+        /// ask can push out a sitting tenant with no competing bid, and this
+        /// is how much of that there is (probe telemetry, asserted
+        /// nowhere).</summary>
+        public int OwnerParcelTenantVacatesTotal;
 
         private void MigrationStep()
         {
@@ -1462,15 +1554,18 @@ namespace CS2Econ.Core
                 {
                     double savings = Math.Max(5, P.ArrivalSavingsMean + P.ArrivalSavingsSd * (W.Rng.NextDouble() * 2 - 1));
                     var seg = Segment.All[s];
-                    bool owner = seg.Life == Lifecycle.Family && W.Rng.NextDouble() < 0.35;
                     var h = new Household
                     {
                         Id = W.Households.Count, Segment = s, Money = savings,
                         ArrivedTick = W.Tick,
-                        MovingCostDraw = P.MovingCostMean * (0.4 + 1.2 * W.Rng.NextDouble())
-                                         * (owner ? P.OwnerMovingCostMult : 1.0),
                     };
-                    h.DrawAtBirth(seg);
+                    // Owner disposition is a birth draw now (DrawAtBirth,
+                    // OwnerMindedShare) rather than this loop's own roll, so
+                    // the auction path's arrivals carry it too; the moving
+                    // margin keys off the same draw, value unchanged.
+                    h.DrawAtBirth(seg, P);
+                    h.MovingCostDraw = P.MovingCostMean * (0.4 + 1.2 * W.Rng.NextDouble())
+                                       * (h.OwnerMinded ? P.OwnerMovingCostMult : 1.0);
                     W.Households.Add(h);
                     W.Ledger.Transfer(Account.OutsideWorld, Account.Households, savings);
                 }

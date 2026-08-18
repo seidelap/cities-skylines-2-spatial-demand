@@ -404,7 +404,11 @@ namespace CS2Econ.Harness
                 int before = Results.Count;
                 Console.WriteLine($"--- seed {seed}");
                 AuctionEquilibrium(seed);
-                bool ok = Results.Count > before && Results[Results.Count - 1].pass;
+                // The fixture emits one result per leg (the equilibrium check
+                // and the owner-door legs, item #41); a seed passes only if
+                // every leg does — same rule as the other sweeps.
+                bool ok = Results.Count > before;
+                for (int k = before; k < Results.Count; k++) ok &= Results[k].pass;
                 if (!ok) failed.Add(seed);
             }
             Console.WriteLine($"canary: {seeds.Count - failed.Count}/{seeds.Count} seeds pass "
@@ -2236,6 +2240,13 @@ namespace CS2Econ.Harness
             // widened selection buffer in BuildHouseholds exists for.
             var px = new EconParams { AuctionShortlist = 512 };
             var ax = new HousingAuction();
+            // "Shown everything" includes the owner doors (item #41): they are
+            // deliberately absent from the price-free opening walk (their
+            // price-free value duplicates their base key's) and normally reach
+            // shortlists via home listing and the repair scan — but this arm
+            // asserts RepairRounds == 0, so discovery-by-repair is not
+            // available to it and the keys must be listed up front.
+            ax.ListOwnerDoors = true;
             ax.Solve(w, sim.Engine.Access, px);
 
             int over = 0;
@@ -2544,6 +2555,56 @@ namespace CS2Econ.Harness
                 }
             }
 
+            // ---- OWNER-DOOR LEGS (item #41), part 1: what only the ENGINE's
+            // last applied assignment can witness. Both read `a` as the run
+            // left it, so they must run before this fixture's own re-solves.
+            //
+            // (O-move) DOOR↔PARCEL INTEGRITY: a household holding an owner
+            // door lives at THAT parcel — the engine's FirstVacantIn resolves
+            // an owner door to its parcel and nothing else. (The renewal half
+            // — re-winning your own parcel-door produces no Vacate/MoveIn
+            // pair — is structural: `have` is DoorOf(home) and want == have
+            // short-circuits the move.)
+            int ownerMoveBad = 0, ownerHeld = 0;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
+                int mine = a.Assignment[h.Id];
+                if (mine < 0 || h.HomeParcel < 0) continue;
+                int opl = a.OwnerParcelOf(mine);
+                if (opl < 0) continue;
+                ownerHeld++;
+                if (h.HomeParcel != opl) ownerMoveBad++;
+            }
+
+            // (O-ratchet) NO-RATCHET: every standing ask IS the owner's own
+            // valuation formula — A = min(OwnerAskScale · OwnerAskShare · R, R)
+            // with R = max(0, ValueOf(owner, door) − OutsideOf(owner)) —
+            // re-derived against the SAME frozen solve state PostOwnerAsks
+            // wrote it from (untouched until this fixture's first re-solve
+            // below; a just-claimed owner's ask is 0 until the next refresh
+            // and is skipped). The exact identity, not just the A ≤ R bound:
+            // an ask that reads the market's answer at its own door can hide
+            // from the bound behind owner turnover — the exploded ask prices
+            // its own owner out, the owner leaves, Vacate clears the ask, and
+            // the survivors at any instant are all young (measured with the
+            // 1.1×Price mutant at the item commit: bound-only leg 0 bad, the
+            // identity leg 74 bad on the same seed-1 run).
+            int ratchetBad = 0, asksLive = 0; double worstRatchet = 0;
+            foreach (var pl in w.Parcels)
+            {
+                int oh = pl.OwnerHousehold;
+                if (oh < 0 || pl.OwnerAskPerUnit <= 0) continue;
+                if ((uint)oh >= (uint)a.Assignment.Length) continue;
+                int door = a.DoorOf(pl);
+                if (door < 0) continue;
+                asksLive++;
+                double r = Math.Max(0, a.ValueOf(oh, door, p) - a.OutsideOf(oh));
+                double expectAsk = Math.Min(p.OwnerAskScale * w.Households[oh].OwnerAskShare * r, r);
+                double off = Math.Abs(pl.OwnerAskPerUnit - expectAsk);
+                if (off > 1e-9 * Math.Max(1, r)) { ratchetBad++; worstRatchet = Math.Max(worstRatchet, off); }
+            }
+
             // (8) DETERMINISM of the solve itself: two solves of the SAME world
             // must agree exactly. The solve is a pure function of (world,
             // access, params) — nothing in it touches the world RNG — and this
@@ -2579,6 +2640,146 @@ namespace CS2Econ.Harness
                   + (envy > 0 ? $"\n      worst envy: {worstWhy}" : "")
                   + (unsoldOverpriced > 0 ? $"\n      unsold: {unsoldWhy}" : "")
                   + (swaps > 0 ? $"\n      swap: {swapWhy}" : ""));
+
+            // ---- OWNER-DOOR LEGS (item #41), part 2: state identities on the
+            // fresh solve the determinism leg just left standing (a solve of
+            // the CURRENT world, so the parcel-side of each identity is read
+            // from the same state the auction built its doors from).
+            int lvls = HousingAuction.Levels;
+            int uniN = 2 * sim.Engine.Access.C * lvls;
+            int C2 = sim.Engine.Access.C;
+
+            // (O-partition) Capacity[uniform] + Σ Capacity[owner doors there]
+            // == lettable units of built, non-warehoused residential parcels
+            // at each (density, cluster, level). The partition moves units, it
+            // never mints or drops them.
+            var lett = new int[uniN];
+            foreach (var pl in w.Parcels)
+            {
+                if ((uint)pl.Cluster >= (uint)C2) continue;
+                if (pl.State != ParcelState.Built || !pl.IsResidential || pl.Warehousing) continue;
+                lett[a.SubOf(pl.Cluster, pl.Use, pl.Level)] += pl.Units;
+            }
+            var got = new int[uniN];
+            for (int s = 0; s < a.Capacity.Length; s++)
+            {
+                if (a.Capacity[s] <= 0) continue;
+                int opl = a.OwnerParcelOf(s);
+                int uni = opl < 0 ? s
+                    : a.SubOf(w.Parcels[opl].Cluster, w.Parcels[opl].Use, HousingAuction.LevelOf(s));
+                got[uni] += a.Capacity[s];
+            }
+            int partitionBad = 0;
+            for (int s = 0; s < uniN; s++) if (got[s] != lett[s]) partitionBad++;
+
+            // (O-reserve) Reserve identity, bitwise: every live owner door
+            // floors at max(its OWN parcel's condition floor, its owner's
+            // ask) — the per-parcel condition floor replacing the pooled
+            // average is half the point. (Bitwise is safe: res-low units are
+            // 2, so the built average (cond·2)/2 is exact.) And the fold rule
+            // coheres both ways: a door exists iff its ask binds above its
+            // own floor.
+            int reserveBad = 0, foldBad = 0, liveDoors = 0, ownerTagged = 0, floorBad = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.OwnerHousehold < 0) continue;
+                ownerTagged++;
+                if ((uint)pl.Cluster >= (uint)C2 || pl.State != ParcelState.Built
+                    || pl.Use != ZoneKind.ResidentialLow) continue;
+                int plvl = Math.Min(lvls, Math.Max(1, pl.Level));
+                double floor0 = LandAccounting.SPerUnit(plvl, pl.Condition, p);
+                bool binding = pl.OwnerAskPerUnit > floor0;
+                int door = a.DoorOf(pl);
+                bool isOwnDoor = a.OwnerParcelOf(door) == pl.Id;
+                if (binding != isOwnDoor) { foldBad++; continue; }
+                if (!isOwnDoor) continue;
+                liveDoors++;
+                if (a.Reserve[door] != Math.Max(floor0, pl.OwnerAskPerUnit)) reserveBad++;
+                // (O-floor) the atomicity converse, CHK-7: a non-full owner
+                // door RESTS at its floor — leg 6a bounds Price ≤ Reserve +
+                // hair for it, this leg pins the equality so the pair cannot
+                // be satisfied by a Reserve that drifted mid-solve.
+                if (a.Filled[door] < a.Capacity[door]
+                    && Math.Abs(a.Price[door] - a.Reserve[door]) > Math.Max(1e-9, 1e-9 * a.Reserve[door]))
+                    floorBad++;
+            }
+
+            // (O-IR) OWNER IR / displacement only by strictly better: an owner
+            // NOT holding its own live door does not strictly prefer it beyond
+            // the band — with the case the global envy sweep cannot see:
+            // an owner the solve left UNASSIGNED (the envy sweep skips the
+            // unhoused). The ask clamp guarantees an owner is never priced
+            // out of its own door by its own ask (value − ask ≥ outside).
+            int ownerIrBad = 0; double worstOwnerIr = 0;
+            for (int s = 0; s < a.Capacity.Length; s++)
+            {
+                int opl = a.OwnerParcelOf(s);
+                if (opl < 0 || a.Capacity[s] <= 0) continue;
+                int oh = w.Parcels[opl].OwnerHousehold;
+                if (oh < 0 || (uint)oh >= (uint)a.Assignment.Length) continue;
+                int mine = a.Assignment[oh];
+                if (mine == s) continue;
+                double vOwn = a.ValueOf(oh, s, p);
+                double cur = mine >= 0 ? a.ValueOf(oh, mine, p) - a.Price[mine] : a.OutsideOf(oh);
+                double myEps2 = Math.Max(p.AuctionEpsilon,
+                    p.AuctionEpsilonRel * Math.Abs(mine >= 0 ? a.ValueOf(oh, mine, p) : a.OutsideOf(oh)));
+                double band = myEps2 + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vOwn));
+                double gain = (vOwn - a.EntryPrice(s)) - cur;
+                if (gain > band) { ownerIrBad++; worstOwnerIr = Math.Max(worstOwnerIr, gain); }
+            }
+
+            // (O-engineered) The fold rule and the reserve are exercised even
+            // on a seed where no ask happens to bind: set one owner parcel's
+            // ask above its own floor, re-solve (Solve is pure), and the door
+            // must unfold with the ask as its reserve and its units out of
+            // the pooled door; restore, re-solve.
+            bool engRan = false, engOk = false; string engWhy = "no eligible owner parcel";
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.OwnerHousehold < 0 && pl.OccupantHouseholds.Count == 0) continue;
+                if ((uint)pl.Cluster >= (uint)C2 || pl.State != ParcelState.Built
+                    || pl.Use != ZoneKind.ResidentialLow || pl.Warehousing) continue;
+                int plvl = Math.Min(lvls, Math.Max(1, pl.Level));
+                double savedAsk = pl.OwnerAskPerUnit; int savedOwner = pl.OwnerHousehold;
+                if (savedOwner < 0) pl.OwnerHousehold = pl.OccupantHouseholds[0];
+                double engAsk = LandAccounting.SPerUnit(plvl, pl.Condition, p) * 1.5 + 1.0;
+                pl.OwnerAskPerUnit = engAsk;
+                a.Solve(w, sim.Engine.Access, p);
+                int door = a.DoorOf(pl);
+                int uniSub = a.SubOf(pl.Cluster, pl.Use, plvl);
+                int lettHere = 0;
+                foreach (var q2 in w.Parcels)
+                    if ((uint)q2.Cluster < (uint)C2 && q2.State == ParcelState.Built && q2.IsResidential
+                        && !q2.Warehousing && a.SubOf(q2.Cluster, q2.Use, q2.Level) == uniSub
+                        && a.OwnerParcelOf(a.DoorOf(q2)) < 0)
+                        lettHere += q2.Units;
+                engRan = true;
+                engOk = a.OwnerParcelOf(door) == pl.Id
+                        && a.Reserve[door] == engAsk
+                        && a.Capacity[door] == pl.Units
+                        && a.Capacity[uniSub] == lettHere;
+                if (!engOk)
+                    engWhy = $"parcel {pl.Id}: door {door} (own? {a.OwnerParcelOf(door) == pl.Id}), "
+                           + $"reserve {a.Reserve[door]:F4} vs ask {engAsk:F4}, "
+                           + $"door cap {a.Capacity[door]} vs units {pl.Units}, "
+                           + $"uniform cap {a.Capacity[uniSub]} vs pooled {lettHere}";
+                else engWhy = $"parcel {pl.Id} unfolded at ask {engAsk:F3}";
+                pl.OwnerAskPerUnit = savedAsk; pl.OwnerHousehold = savedOwner;
+                a.Solve(w, sim.Engine.Access, p);
+                break;
+            }
+
+            bool ownerOk = partitionBad == 0 && reserveBad == 0 && foldBad == 0 && floorBad == 0
+                           && ownerIrBad == 0 && ownerMoveBad == 0 && ratchetBad == 0
+                           && engRan && engOk;
+            Check("owner doors: partition, reserve=max(floor, ask), fold rule, owner IR, door↔parcel, no-ratchet",
+                  ownerOk,
+                  $"{ownerTagged} owner-tagged parcels, {liveDoors} live doors, {asksLive} standing asks, "
+                  + $"{ownerHeld} owner-door tenants: partition {partitionBad} bad cells, "
+                  + $"reserve {reserveBad} bad, fold {foldBad} incoherent, resting-price {floorBad} off floor, "
+                  + $"owner-IR {ownerIrBad} (worst {worstOwnerIr:F3}), door↔parcel {ownerMoveBad} astray, "
+                  + $"ratchet {ratchetBad} asks off the write identity (worst {worstRatchet:E1}); "
+                  + $"engineered arm: {engWhy}");
         }
 
         /// <summary>The labor-auction fixture: the auction-arm city with the
@@ -3197,6 +3398,50 @@ namespace CS2Econ.Harness
                   + $"equal the raw-read oracle ({gfConsumed} capitalize a queued bid, worst rel {worstGf:E1})"
                   + (probeWhy.Length > 0 ? $"\n      S2 {probeWhy}" : "")
                   + (gfWhy.Length > 0 ? $"\n      S3 {gfWhy}" : ""));
+
+            // ---- (A) ASK-INVARIANCE OF ASSESSMENT (item #41's thesis) -----
+            // The §3 guard, stated at the ask: a parcel's own OwnerAskPerUnit
+            // must never move its own assessment. Each probed owner parcel's
+            // ask is multiplied ×10 (zero asks get a nonzero perturbation, so
+            // the leg cannot go vacuous) and Assess is re-run ON THE SAME
+            // auction state — no re-solve, which isolates the accounting path
+            // from the legitimate market path (a high ask withholding a unit
+            // moves assessments one refresh later through MARKET bids at the
+            // uniform door, and that channel is negative and blessed). Every
+            // published field must come back bit-identical. This red/green
+            // pair is the refutation of the "per-parcel ownership creates
+            // self-assessment" folklore, in the suite.
+            int askScope = 0, askBad = 0; double worstAskMove = 0; string askWhy = "";
+            foreach (var pl in w.Parcels)
+            {
+                if (askScope >= 24) break;
+                if (pl.OwnerHousehold < 0 || pl.State != ParcelState.Built) continue;
+                double savedAsk = pl.OwnerAskPerUnit;
+                double lr0 = pl.AssessedLR, wedge0 = pl.Wedge, resid0 = pl.CurrentResidual;
+                int tl0 = pl.TargetLevel; var tu0 = pl.TargetUse; bool ts0 = pl.TargetIsScrape;
+                pl.OwnerAskPerUnit = Math.Max(savedAsk, 1.0) * 10.0;
+                LandAccounting.Assess(w, acc, sim.Engine.Trade, pl, presence, p);
+                askScope++;
+                bool same = pl.AssessedLR == lr0 && pl.Wedge == wedge0
+                            && pl.CurrentResidual == resid0 && pl.TargetLevel == tl0
+                            && pl.TargetUse == tu0 && pl.TargetIsScrape == ts0;
+                if (!same)
+                {
+                    double d = Math.Abs(pl.AssessedLR - lr0);
+                    if (askBad == 0)
+                        askWhy = $"first: parcel {pl.Id} ask {savedAsk:F4}→{pl.OwnerAskPerUnit:F4} "
+                               + $"moved AssessedLR {lr0:F6}→{pl.AssessedLR:F6}, "
+                               + $"wedge {wedge0:F6}→{pl.Wedge:F6}, ℓ* {tl0}→{pl.TargetLevel}";
+                    askBad++; worstAskMove = Math.Max(worstAskMove, d);
+                }
+                pl.OwnerAskPerUnit = savedAsk;
+                LandAccounting.Assess(w, acc, sim.Engine.Trade, pl, presence, p);   // restore (deterministic)
+            }
+            Check("assessment is ask-invariant: a parcel's own ask never reaches its own assessment (§3, item #41)",
+                  askScope > 0 && askBad == 0,
+                  $"{askScope - askBad}/{askScope} probed owner parcels bit-identical under ask ×10 "
+                  + $"(worst |ΔLR| {worstAskMove:E1})"
+                  + (askWhy.Length > 0 ? $"\n      {askWhy}" : ""));
 
             // ---- (L2) CO-MOVEMENT under a shock ---------------------------
             // Double every living household's own rent share, re-solve, reassess.

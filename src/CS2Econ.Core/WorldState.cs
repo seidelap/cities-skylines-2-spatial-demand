@@ -40,7 +40,26 @@ namespace CS2Econ.Core
         public int Level;               // discrete 1–5 (vanilla interop, design §3)
         public double Condition;        // 0..1; V = Condition × RC
         public int Units;               // households or firm job slots the structure holds
-        public bool OwnerOccupied;      // owner tag (§4.4): consent gate on redevelopment
+        /// <summary>The household that OWNS this parcel (res-low only), −1 =
+        /// none. The owner tag with an agent behind it: set at seeding (the
+        /// household seeded into owner-rolled stock) or when an OwnerMinded
+        /// household moves into an unowned res-low parcel; cleared — with the
+        /// ask — whenever that household stops living here (Allocation.Vacate,
+        /// plus the engine's pre-solve sweep for exits that bypass it).
+        /// OwnerEligibleSeed (−2) marks stock rolled owner-occupied at world
+        /// build, before any household exists to claim it.</summary>
+        public int OwnerHousehold = -1;
+        public const int OwnerEligibleSeed = -2;
+        /// <summary>The owner's own ask per unit per tick — the reserve its
+        /// parcel-door floors at, written by EconomyEngine.PostOwnerAsks
+        /// BETWEEN solves from the owner's own valuation (never from the
+        /// market's answer at this parcel — the no-ratchet rule). It allocates
+        /// and is paid to nobody; no assessment may read it (§3 guard).</summary>
+        public double OwnerAskPerUnit;
+        /// <summary>Owner tag (§4.4): consent gate on redevelopment. Derived —
+        /// OwnerHousehold is the one source of truth; a parcel with no owning
+        /// household is not owner-occupied whatever it was rolled at build.</summary>
+        public bool OwnerOccupied => OwnerHousehold >= 0;
         public bool Warehousing;        // scrape pending: vacated units stop re-letting
 
         // Land accounting (assessed, never from own realized rent — §3 circularity guard)
@@ -131,7 +150,7 @@ namespace CS2Econ.Core
         /// attribute never silently re-rolls: re-drawing per tick would make
         /// the "individual" a sampling artifact of a distribution, which is
         /// exactly the aggregate-first modelling this architecture rejects.</summary>
-        public void DrawAtBirth(CS2Econ.Core.Segment seg)
+        public void DrawAtBirth(CS2Econ.Core.Segment seg, EconParams p)
         {
             double u = SplitMix64.Hash01((ulong)Id * 2654435761UL + 11UL);
             double v = SplitMix64.Hash01((ulong)Id * 2654435761UL + 29UL);
@@ -154,7 +173,30 @@ namespace CS2Econ.Core
             // border, and are voluntarily unemployed.
             double q = SplitMix64.Hash01((ulong)Id * 2654435761UL + 53UL);
             WorkReservationShare = 0.5 * q * q;
+            // Owner disposition: whether this household would claim the parcel
+            // it settles in (Family lifecycle only — §4.4 scope), and how much
+            // of its own reservation it would hold its spare units at. Drawn
+            // from the id hash so prospects get both too: on the auction path
+            // arrivals can become owners again, where the old engine-side roll
+            // reached only posted-path arrivals.
+            double om = SplitMix64.Hash01((ulong)Id * 2654435761UL + 61UL);
+            OwnerMinded = seg.Life == Lifecycle.Family && om < p.OwnerMindedShare;
+            // u² skews low (median 0.25): most asks fold into the pooled door
+            // and only the high tail produces tenure geography — see the fold
+            // rule in HousingAuction.BuildSubmarkets.
+            double oa = SplitMix64.Hash01((ulong)Id * 2654435761UL + 67UL);
+            OwnerAskShare = oa * oa;
         }
+
+        /// <summary>Would this household claim ownership of the res-low parcel
+        /// it settles in? Drawn at birth (id hash, Family lifecycle ×
+        /// EconParams.OwnerMindedShare); recomputable from the id, so nothing
+        /// to persist.</summary>
+        public bool OwnerMinded;
+        /// <summary>The share of its own reservation this household asks for
+        /// its spare units when it owns (u² draw at birth, ∈ [0,1]). A
+        /// preference at the charter-blessed entry point, not a parameter.</summary>
+        public double OwnerAskShare;
 
         /// <summary>Outside option as a fraction of this household's own housing
         /// budget, drawn at birth. Held as a SHARE rather than a level so it

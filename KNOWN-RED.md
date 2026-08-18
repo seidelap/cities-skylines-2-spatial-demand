@@ -11,7 +11,7 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (37 checks)
+## verify (39 checks)
 
 29 at the per-cluster prospect-odds commit (28 plus prospect-local-odds;
 seeds 0–7 and 25 measured 29/29 there, canary 39/39) plus the three
@@ -102,6 +102,57 @@ completion depths (min 1, p25 1–2, median 2–3, p90 4–5, max 6–8 —
 bring-up and fix-round sweeps agree on the distribution;
 EconParams.CalibClusterShrinkN0).
 
+The 38th is the owner-door leg of the auction-equilibrium fixture (item
+#41: per-parcel owner doors — partition, reserve = max(own condition
+floor, ask) bitwise, fold-rule coherence both ways, owner IR including the
+unhoused case the envy sweep skips, door↔parcel move integrity, and the
+no-ratchet EXACT WRITE IDENTITY A = min(scale·share·R, R) re-derived
+against the same frozen solve state PostOwnerAsks wrote from; plus an
+engineered-ask arm so no seed is vacuous). The canary now gates EVERY
+result the fixture emits (previously only the last), so this leg sweeps
+the same 39 seeds. Source mutants, every one run red and reverted at the
+item commit (runs named in the impl summary): capacity added to BOTH
+doors → partition 36/35 bad cells on seeds 1–2; the ask dropped from the
+reserve max → reserve 63/49 bad; the fold rule dropped so every standing
+ask opens a door → fold 48/46 incoherent; a between-round reserve
+repricing → reserve 44/40 bad; FirstVacantIn's owner branch returning any
+cluster-mate → door↔parcel 2 astray on seed 3 (seeds 1–2 land on the
+right parcel by accident of list order, so that mutant is caught per
+sweep, not per seed); PostOwnerAsks writing 1.1×Price[own door] → 74/70
+asks off the identity. And the exhaustive-shortlist fixture's owner-key
+listing (its arm forbids repair rounds, so it must be SHOWN the doors)
+has its own: withholding the listing leaves the every-door arm needing 3
+repair rounds → that check red.
+
+TWO MEASURED FACTS behind this leg's shape, stated rather than hidden.
+(a) The A ≤ R BOUND form of the no-ratchet leg measures ZERO violations
+under the same 1.1×Price mutant — which is why the leg asserts the write
+identity instead: an exploded ask prices its own owner out, the owner
+leaves, Vacate clears the ask, and the asks standing at any instant are
+all young. (b) Eviction-rule weakenings are ABSORBED by the full re-clear
+and re-bid loop — `bid > weak − ε` and even `bid > 0.9·weak` leave canary
+seeds 1–3 green on every leg — so a weakened-eviction mutant does not
+falsify owner IR; what does is severing BOTH incumbency channels at once
+(home-door listing for owner keys AND repair discovery): owner-IR 24
+violations, worst 2.94, on seed 1 and 29, worst 2.56, on seed 2. Either
+channel alone heals the other, which is itself a measured property of the
+mechanism. The exact-tie eviction case (`>` vs `>=` at the eviction site)
+is carried by code shape plus the leg's band — a bit-exact tie on doubles
+is measure-zero here and no canary seed produced one; an honest limit.
+
+The 39th is the ask-invariance leg of the assessment-tracks-price fixture
+(item #41's thesis, the §3 guard at the ask): each probed owner parcel's
+OwnerAskPerUnit ×10, Assess re-run on the SAME auction state, every
+published field bit-identical, restore. Zero asks get a nonzero
+perturbation so the leg cannot go vacuous. Mutants at the item commit,
+both run red and reverted: the folklore's feared bug planted as Assess's
+currentResidual leg reading the parcel's own ask — 0/24 probes come back
+identical, worst |ΔLR| 1.9E+002; and the same file's Price[DoorOf(parcel)]
+form, which is INERT on this leg by construction (the check freezes the
+auction state precisely to isolate the accounting path, and a frozen
+posted price cannot move with the ask) and is caught instead by the L1
+relation leg of the same fixture, red there at 410 of 421 parcels.
+
 **THE DEFAULT FLIPPED at the flip commit**: `FeatureFlags.HousingAuction`
 ships TRUE — migration as prospects, housing as the assignment market. The
 decision was made on a full measured inventory of both arms (all raw runs in
@@ -118,9 +169,9 @@ reachable via `--posted` and covered by the pinned arms while it ships.
 
 | Seed | Check | Status | Attribution |
 |---|---|---|---|
-| 13 | Weber: extraction follows geology; recipes follow input sourcing | red | New with the DEFAULT FLIP: on the auction-default world, 6 of 13 single-input industrials sit on the cheapest-sourced recipe (46% vs the ≥55% bar; the margin is 2 firms) while the extraction leg is clean at 100% and the sector is bigger and more diverse than required (13 firms, 4 outputs). At the FLIP commit it was seed-13-specific — the same check read 100% on flip seeds 0-1 and passed 2, 3, 9, 25 (posted-arm seed 13 green); that cohort statement is DATED: at the outside-anchor commit the extraction leg is red on seeds 0, 9 and 25 (fix-round measurement — class row below). Precedent: Weber was the red on auction-arm seed 0 at `c0c584d` — auction-world Weber fragility moves seeds, it is not new. Wants its own investigation: which 7 firms, their delivered-cost gaps, and whether entry timing under prospect-driven population growth outruns trade-price settling. Unowned. AT THE OUTSIDE-ANCHOR COMMIT (#42) the same row stays red with different numbers — recipes 14% of 14 industrials, extraction still 100% — the anchored outside re-equilibrates the whole default world (baseline churn, population, entry timing), and Weber's verdict re-rolls with it. AT THE PER-CLUSTER-MEMORY COMMIT (#34) seed 13 is GREEN (extraction 100%, recipes 85% of 13) — the tie-driven admission re-roll moves the verdict again, in Weber's documented seed-moving way; the class row below carries the standing red. |
-| 0, 9, 25 | Weber: extraction follows geology; recipes follow input sourcing (extraction leg) | red | NEW at the outside-anchor commit (#42), on the EXTRACTION leg — seed 9 registered at that commit; seeds 0 and 25 found red at the SAME commit by the refuter's wider sweep (finding F1) and registered at the fix round, which reproduced them (fix-round verify runs, seeds 0 and 25; both are FULLY GREEN at base 554b56a, extraction 100%). Numbers at the fix commit: seed 9 — 7 of 10 extractors on the best raw (70% vs the ≥90% bar), recipe leg passes at 80%; seed 0 — 8 of 9 extractors (89%), the margin one extractor, recipes pass at 82% of 11; seed 25 — 7 of 8 extractors (88%), recipes pass at 82% of 17. Seeds 2 and 5 pass in full. Tally across the seeds measured in the two sessions (0, 1, 2, 5, 9, 13, 25): Weber red on 4 of 7 — 0, 9, 25 on extraction, 13 on recipes — against 1 of 7 at base; the owed Weber investigation is that much bigger than a single-seed row suggested. Same fragility class as the seed-13 row — the anchored outside option changes the default world every fixture equilibrates in (churn, entry timing, trade-price settling), and Weber's seed-dependent verdict moves seeds with it, exactly as it moved 0 → 13 at the flip. No pricing/recipe rule is touched by #42 (the diff is Prospects/HousingAuction/Access outside-door legs only; posted fingerprint lanes are hash-identical). Belongs to the same owed Weber investigation as the row above. Unowned. AT THE PER-CLUSTER-MEMORY COMMIT (#34) the class re-rolls again: seeds 0 and 9 GREEN (extraction 100% both, recipes 90%/78%), seed 25 red and DEEPER — extraction 44% of 9 extractors (4 on best raw) vs the ≥90% bar, recipes pass at 81% of 16 (#34 gate runs, verify seeds 0, 9, 25). Tally on the measured cohort {0, 1, 9, 13, 25}: 1 of 5 red at #34 against 4 of 7 at #42. The owed investigation is unchanged in shape and now owns seed 25's deep extraction miss. |
-| 9 | occupancy channel: realized vacancy softens rent (price responds on a cleared submarket) | red | PINNED POSTED at the flip commit (the check tests the posted path's own transmission; its world and verdicts are unchanged by the flip). Predates `2eeefc3`; fails identically at `2eeefc3`, `7dcaf08`, `ffd9a03`, `6104275`, `694fbd3`, HEAD. Not an auction-era regression. Unowned. THE CHECK WAS REWRITTEN at the check-debt commit — dead fallback arm and never-firing vacancy disjunct deleted, cleared-submarket selection made a required leg — and the rewrite changed no verdict: per-seed verdicts identical on all 57 occsweep seeds (0–49, 138, 208, 271, 327, 549, 910, 6550), 54 pass, with 9, 910 red as before and 41 red under both forms (newly observed by that sweep, not newly caused; failure mode on all three: the first-cleared cluster's bid does not move ≥ 5 % when its FillEma is dropped 1.0 → 0.2, while later clusters on the same seeds respond strongly — a selection-composition question, not a channel-severed one). |
+| 13 | Weber: extraction follows geology; recipes follow input sourcing | red | New with the DEFAULT FLIP: on the auction-default world, 6 of 13 single-input industrials sit on the cheapest-sourced recipe (46% vs the ≥55% bar; the margin is 2 firms) while the extraction leg is clean at 100% and the sector is bigger and more diverse than required (13 firms, 4 outputs). At the FLIP commit it was seed-13-specific — the same check read 100% on flip seeds 0-1 and passed 2, 3, 9, 25 (posted-arm seed 13 green); that cohort statement is DATED: at the outside-anchor commit the extraction leg is red on seeds 0, 9 and 25 (fix-round measurement — class row below). Precedent: Weber was the red on auction-arm seed 0 at `c0c584d` — auction-world Weber fragility moves seeds, it is not new. Wants its own investigation: which 7 firms, their delivered-cost gaps, and whether entry timing under prospect-driven population growth outruns trade-price settling. Unowned. AT THE OUTSIDE-ANCHOR COMMIT (#42) the same row stays red with different numbers — recipes 14% of 14 industrials, extraction still 100% — the anchored outside re-equilibrates the whole default world (baseline churn, population, entry timing), and Weber's verdict re-rolls with it. AT THE PER-CLUSTER-MEMORY COMMIT (#34) seed 13 is GREEN (extraction 100%, recipes 85% of 13) — the tie-driven admission re-roll moves the verdict again, in Weber's documented seed-moving way; the class row below carries the standing red. AT THE OWNER-DOOR COMMIT (#41) seed 13 is RED again, and on the fixture's POPULATION PRECONDITION rather than on any alignment: 4 extractors against the `extract >= 5` minimum, with extraction 100% on best raw and recipes passing at 69% of 13. Measured against the branch tip in the same session (tip 209e232: 6 extractors, 100%, recipes 85% of 13, GREEN). #41 touches no pricing, recipe or siting rule — its diff is the housing auction, the owner tag and the checks; LandAccounting changes only its header comment and Trade is untouched — so this is the same re-equilibration channel #42 and #34 moved the verdict through, now reaching the industrial sector's SIZE. |
+| 0, 9, 25 | Weber: extraction follows geology; recipes follow input sourcing (extraction leg) | red | NEW at the outside-anchor commit (#42), on the EXTRACTION leg — seed 9 registered at that commit; seeds 0 and 25 found red at the SAME commit by the refuter's wider sweep (finding F1) and registered at the fix round, which reproduced them (fix-round verify runs, seeds 0 and 25; both are FULLY GREEN at base 554b56a, extraction 100%). Numbers at the fix commit: seed 9 — 7 of 10 extractors on the best raw (70% vs the ≥90% bar), recipe leg passes at 80%; seed 0 — 8 of 9 extractors (89%), the margin one extractor, recipes pass at 82% of 11; seed 25 — 7 of 8 extractors (88%), recipes pass at 82% of 17. Seeds 2 and 5 pass in full. Tally across the seeds measured in the two sessions (0, 1, 2, 5, 9, 13, 25): Weber red on 4 of 7 — 0, 9, 25 on extraction, 13 on recipes — against 1 of 7 at base; the owed Weber investigation is that much bigger than a single-seed row suggested. Same fragility class as the seed-13 row — the anchored outside option changes the default world every fixture equilibrates in (churn, entry timing, trade-price settling), and Weber's seed-dependent verdict moves seeds with it, exactly as it moved 0 → 13 at the flip. No pricing/recipe rule is touched by #42 (the diff is Prospects/HousingAuction/Access outside-door legs only; posted fingerprint lanes are hash-identical). Belongs to the same owed Weber investigation as the row above. Unowned. AT THE PER-CLUSTER-MEMORY COMMIT (#34) the class re-rolls again: seeds 0 and 9 GREEN (extraction 100% both, recipes 90%/78%), seed 25 red and DEEPER — extraction 44% of 9 extractors (4 on best raw) vs the ≥90% bar, recipes pass at 81% of 16 (#34 gate runs, verify seeds 0, 9, 25). Tally on the measured cohort {0, 1, 9, 13, 25}: 1 of 5 red at #34 against 4 of 7 at #42. The owed investigation is unchanged in shape and now owns seed 25's deep extraction miss. AT THE OWNER-DOOR COMMIT (#41) seed 9 is RED again on this leg — 6 of 7 extractors on the best raw (86% vs the ≥90% bar, the margin one extractor), recipes passing at 80% of 10 — against a tip-209e232 run in the same session that reads 9 extractors, 100%, GREEN. Same channel as the rows above: the auction-default world re-equilibrates and Weber's verdict re-rolls with it; #41 touches no pricing or recipe rule. |
+| 23, 41, 43, 46, 48 (was 9, 41, 910) | occupancy channel: realized vacancy softens rent (price responds on a cleared submarket) | red | PINNED POSTED at the flip commit (the check tests the posted path's own transmission; its world and verdicts are unchanged by the flip). Predates `2eeefc3`; fails identically at `2eeefc3`, `7dcaf08`, `ffd9a03`, `6104275`, `694fbd3`, HEAD. Not an auction-era regression. Unowned. THE CHECK WAS REWRITTEN at the check-debt commit — dead fallback arm and never-firing vacancy disjunct deleted, cleared-submarket selection made a required leg — and the rewrite changed no verdict: per-seed verdicts identical on all 57 occsweep seeds (0–49, 138, 208, 271, 327, 549, 910, 6550), 54 pass, with 9, 910 red as before and 41 red under both forms (newly observed by that sweep, not newly caused; failure mode on all three: the first-cleared cluster's bid does not move ≥ 5 % when its FillEma is dropped 1.0 → 0.2, while later clusters on the same seeds respond strongly — a selection-composition question, not a channel-severed one). AT THE OWNER-DOOR COMMIT (#41) THE RED SET MOVES, in both directions: `occsweep --seeds 50` reads 54/57 red {9, 41, 910} at tip 209e232 and 52/57 red {23, 41, 43, 46, 48} at #41 (both sweeps run in the same session, tip worktree and item worktree). This row's own seed 9 goes GREEN — bid 1.653 at full occupancy, responding, and `verify --seed 9` agrees — while four seeds that passed at tip go red; 41 stays red throughout. Neither direction is a channel fix or a channel break: #41 draws every household's owner disposition at birth from the id hash instead of the posted arrival loop's own RNG roll, so the posted world re-rolls and the cluster the check's first-cleared selection lands on re-rolls with it — the same selection-composition fragility the rewrite paragraph describes, now measured on a wider set. Count 3 → 5 of 57. Still unowned, still unexplained. |
 
 ## Measured dead ends — do not retry blind
 

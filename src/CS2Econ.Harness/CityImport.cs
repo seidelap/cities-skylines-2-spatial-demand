@@ -557,7 +557,10 @@ namespace CS2Econ.Harness
                         pl.Level = 1 + w.Rng.NextInt(2);
                         pl.Condition = 0.75 + 0.25 * w.Rng.NextDouble();
                         pl.Units = LandAccounting.UnitsFor(kind);
-                        pl.OwnerOccupied = kind == ZoneKind.ResidentialLow && w.Rng.NextDouble() < 0.5;
+                        // Same owner-eligibility roll as SyntheticCity: the
+                        // first household seeded into the parcel claims it.
+                        pl.OwnerHousehold = kind == ZoneKind.ResidentialLow && w.Rng.NextDouble() < 0.5
+                            ? Parcel.OwnerEligibleSeed : -1;
                     }
                     w.Parcels.Add(pl);
                 }

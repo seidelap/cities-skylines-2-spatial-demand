@@ -40,13 +40,16 @@ namespace CS2Econ.Mod
     /// component bytes before any schema bump ships.</summary>
     public static class EconSchema
     {
-        public const uint Version = 1;
+        public const uint Version = 2;   // v2: owner tag with an agent (item #41)
     }
 
     // ---------------------------------------------------------------------
     // Per-parcel state (attached to the building/parcel entity).
-    // Mirrors Parcel.{Escrow, TargetLevel, TargetUse, ScrapePressure} — the
-    // §4.3/§4.4 redevelopment ledger that has no vanilla home.
+    // Mirrors Parcel.{Escrow, TargetLevel, TargetUse, ScrapePressure,
+    // OwnerHousehold, OwnerAskPerUnit} — the §4.3/§4.4 redevelopment ledger
+    // and the item-#41 owner tag/ask, none of which has a vanilla home.
+    // (Household.OwnerMinded/OwnerAskShare are recomputed from the id hash on
+    // load — nothing to persist.)
     // ---------------------------------------------------------------------
     public struct ParcelEconState
 #if !OUT_OF_GAME_BUILD
@@ -58,6 +61,8 @@ namespace CS2Econ.Mod
         public byte TargetLevel;      // ℓ* of the winning configuration
         public byte TargetUse;        // (byte)ZoneKind of the winning configuration
         public short ScrapePressure;  // consecutive ticks the scrape gap held
+        public int OwnerHousehold;    // owning household id, −1 none (item #41)
+        public float OwnerAskPerUnit; // the owner's reserve floor for its own door
 
 #if !OUT_OF_GAME_BUILD
         public void Serialize<TWriter>(TWriter writer) where TWriter : IWriter
@@ -67,6 +72,8 @@ namespace CS2Econ.Mod
             writer.Write(TargetLevel);
             writer.Write(TargetUse);
             writer.Write(ScrapePressure);
+            writer.Write(OwnerHousehold);
+            writer.Write(OwnerAskPerUnit);
         }
 
         public void Deserialize<TReader>(TReader reader) where TReader : IReader
@@ -79,7 +86,13 @@ namespace CS2Econ.Mod
                 reader.Read(out TargetUse);
                 reader.Read(out ScrapePressure);
             }
-            // if (Version >= 2) reader.Read(out NewField);   // append-only
+            if (Version >= 2)
+            {
+                reader.Read(out OwnerHousehold);
+                reader.Read(out OwnerAskPerUnit);
+            }
+            else OwnerHousehold = -1;    // pre-#41 save: no owner, no ask
+            // if (Version >= 3) reader.Read(out NewField);   // append-only
         }
 #endif
     }
@@ -198,6 +211,10 @@ namespace CS2Econ.Mod
             TargetLevel = (byte)Math.Min(Math.Max(p.TargetLevel, 0), byte.MaxValue),
             TargetUse = (byte)p.TargetUse,
             ScrapePressure = (short)Math.Min(p.ScrapePressure, short.MaxValue),
+            // The unclaimed-eligible sentinel (−2) is seed-time-only state and
+            // is deliberately flattened to "no owner" on capture.
+            OwnerHousehold = Math.Max(p.OwnerHousehold, -1),
+            OwnerAskPerUnit = (float)p.OwnerAskPerUnit,
         };
 
         public static void Restore(in ParcelEconState s, Parcel p)
@@ -206,6 +223,8 @@ namespace CS2Econ.Mod
             p.TargetLevel = s.TargetLevel;
             p.TargetUse = (ZoneKind)s.TargetUse;
             p.ScrapePressure = s.ScrapePressure;
+            p.OwnerHousehold = Math.Max(s.OwnerHousehold, -1);
+            p.OwnerAskPerUnit = Math.Max(0, s.OwnerAskPerUnit);
         }
 
         public static ExitEconState Capture(TradeExit e) => new ExitEconState

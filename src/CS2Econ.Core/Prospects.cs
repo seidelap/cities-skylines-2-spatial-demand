@@ -231,7 +231,7 @@ namespace CS2Econ.Core
                     JobLevel = jobLevel,
                     MovingCostDraw = p.MovingCostMean * (0.4 + 1.2 * SplitMix64.Hash01(key * 104729UL)),
                 };
-                hh.DrawAtBirth(seg);
+                hh.DrawAtBirth(seg, p);
                 w.Households.Add(hh);
                 // The savings it brings are the outside world's money crossing
                 // the border. Omitting this transfer mints currency, and no
@@ -242,7 +242,10 @@ namespace CS2Econ.Core
                 {
                     // One more remembered arrival at the cluster it chose —
                     // the stock the NEXT batches' tie draws are proportional to.
-                    int chosen = HousingAuction.KcOf(bestSub) % acc.C;
+                    // Through ClusterOf, not key arithmetic: the chosen door
+                    // may be an owner parcel's, whose pseudo-key carries no
+                    // cluster in its digits.
+                    int chosen = a.ClusterOf(bestSub);
                     admitsByCluster[chosen] += 1.0;
                     AdmitTelemetry?.Add(((int)seg.Labor, chosen,
                                          acc.ProspectLocalOdds((int)seg.Labor, chosen, p),

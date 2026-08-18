@@ -426,6 +426,34 @@ namespace CS2Econ.Core
         public double BaseConsumptionShare = 0.80; // of after-housing income, spent at commercial
         public double MovingCostMean = 25.0;
         public double OwnerMovingCostMult = 2.2;   // owner-tagged margins are larger (§4.4)
+        /// <summary>Probability a Family-lifecycle household is OwnerMinded
+        /// (drawn at birth, Household.DrawAtBirth). The 0.35 that lived as a
+        /// literal in the engine's posted-path arrival loop, promoted to a
+        /// name so the auction path's arrivals draw it too. Value unchanged.</summary>
+        public double OwnerMindedShare = 0.35;
+        /// <summary>Scale on the owner's ask (item #41). Exists for
+        /// measurement, not taste; 1 is the shipped behavior.
+        ///
+        /// WHAT 0 IS, EXACTLY: with the fold rule (a door exists where an ask
+        /// bids), a zero ask never clears its own structure floor, so at 0 NO
+        /// owner door unfolds and the auction's index space is the pre-item
+        /// one. The 0 arm therefore isolates the tag/disposition bookkeeping
+        /// — the owner tag naming a household, the birth-drawn disposition,
+        /// the seeding claim — and NOT the door structure. There is no
+        /// "doors without asks" arm because there is no such configuration:
+        /// an unbinding ask prices its door within its own floor of the
+        /// pooled one, which is exactly what folding says. Attribution runs
+        /// both ways round that: tip → scale 0 is the bookkeeping, scale 0 →
+        /// scale 1 is the doors and their asks together (auctionprobe
+        /// --ticks 300 --seed 20260806, both arms, at the item commit).
+        ///
+        /// Values above 1 stay inside the min(·, R_i) clamp in PostOwnerAsks
+        /// — an owner can always afford to match its own floor — with one
+        /// boundary case a sweep should expect: at share ≥ 1/scale the clamp
+        /// binds, A = R exactly, and an owner whose own door is its best
+        /// option holds surplus exactly equal to its outside option — which
+        /// the solve declines (`bestSur <= _outside[i]`, RunAuction).</summary>
+        public double OwnerAskScale = 1.0;
         public double OutsideShopMinutes = 40.0;   // outside option in the shopping logit
         public double OutsideShopMass = 60.0;      // (uncaptured spending leaks outward)
 
@@ -570,10 +598,21 @@ namespace CS2Econ.Core
         /// Raised 12 -> 16 with the full-re-clear repair rounds: each round now
         /// rebuilds the whole market, so a solve needs as many rounds as its
         /// longest column-generation chain, and seed 22 measurably hit the cap
-        /// at 12 (converged False, clean False) while 16 cleared it. No
+        /// at 12 (converged False, clean False) while 16 cleared it.
+        ///
+        /// Raised 16 -> 20 with owner doors (item #41): owner doors are
+        /// discovered by the repair scan on purpose (they never enter the
+        /// price-free opening walk), which lengthens the longest chains. The
+        /// whole canary distribution shifts — max rounds over the 39 seeds
+        /// 11 -> 16 — and seed 16 is the binding one, measured three ways at
+        /// the item commit: 9 rounds clean before the doors, 16 rounds with
+        /// them and its 17th scan clean (the cap-20 canary), and converged
+        /// False at cap 16 with envy already 0 (`canary --from 16 --seeds 17`
+        /// on a cap-16 build — pure cap binding, not a defect). So 16 bound
+        /// by one; 20 carries the same +4 the 12 -> 16 raise did, and no
         /// headroom beyond that is claimed; Converged is the arbiter and the
         /// canary sweeps it.</summary>
-        public int AuctionRepairRounds = 16;
+        public int AuctionRepairRounds = 20;
         // ---- labor assignment market (LaborAuction; Flags.LaborAuction) ------
         /// <summary>Money per generalized commute minute per earner per tick —
         /// what a worker's own commute from its own home subtracts from a
@@ -762,6 +801,17 @@ namespace CS2Econ.Core
         public bool TierC2_Leveling = true;      // ℓ*, renovation clock, decay
         public bool TierD_Trade = true;          // finite-depth exits, parity bands
         public bool ConstructionRewire = true;   // residual-driven site selection
+        /// <summary>Owner parcels are their own auction doors (item #41): an
+        /// owner-tagged res-low parcel whose ask exceeds its own structure
+        /// floor holds its units at a per-parcel door whose reserve is
+        /// max(own condition floor, its owner's ask), instead of pooling into
+        /// the (density, cluster, level) submarket. OFF returns the auction to
+        /// pooled doors exactly — partition, reserve, home-key binding and the
+        /// ask hook all branch on it — but NOT to the pre-item world: the owner
+        /// tag names a household and is drawn at birth whatever this flag says,
+        /// which is what the tag needed to stop decaying. Posted arms never
+        /// construct an auction and see only that tag change.</summary>
+        public bool OwnerDoors = true;
         public bool ShadowAccountingOnly = false;// stage 3: assess + log, levy nothing
         /// <summary>Route each household's consumption to the ONE shop it chose,
         /// instead of pooling all consumption citywide and handing it back out

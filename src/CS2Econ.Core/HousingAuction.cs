@@ -53,8 +53,40 @@ namespace CS2Econ.Core
 
         public int C;
         /// <summary>Submarket = (density kind, cluster, level). Index is
-        /// ((k*C)+c)*Levels + (level−1).</summary>
-        public int S => 2 * C * Levels;
+        /// ((k*C)+c)*Levels + (level−1). Owner doors (item #41) extend the key
+        /// space past the 2C uniform keys: live owner door j carries pseudo-key
+        /// 2C + j with the same Sub/KcOf/LevelOf arithmetic, four of its five
+        /// level slots dead (capacity 0) — exactly the sparsity the live-key
+        /// machinery already skips. Owner-key numbering is PER SOLVE (stable
+        /// parcel-id order), which is why the warm start must never seed one.</summary>
+        public int S => (2 * C + OwnerDoorCount) * Levels;
+
+        // ---- owner doors (item #41) ----------------------------------------
+        /// <summary>Live (unfolded) owner doors this solve. A door exists where
+        /// an ask bids: an owner-tagged, built res-low parcel whose
+        /// OwnerAskPerUnit exceeds its OWN structure floor. A non-binding ask
+        /// would price within ε of the pooled door and be pure index growth,
+        /// so it FOLDS into the uniform submarket — which bounds door count by
+        /// the asks that carry economic content.</summary>
+        public int OwnerDoorCount;
+        /// <summary>Engine-wired mirror of FeatureFlags.OwnerDoors. Off =
+        /// today's pooling bit-for-bit. A field rather than a param because
+        /// the auction never sees FeatureFlags; fixtures that build their own
+        /// auction get the shipped default.</summary>
+        public bool OwnerDoorsEnabled = true;
+        /// <summary>Exhaustive-arm aid (harness only): append every live owner
+        /// key to every household's shortlist in BuildHouseholds, so a solve
+        /// whose charter is "shown everything" is shown the owner doors too —
+        /// the price-free opening walk covers only the 2C base keys, and the
+        /// exhaustive fixture asserts RepairRounds == 0, so discovery-by-repair
+        /// is not available to it.</summary>
+        public bool ListOwnerDoors;
+        private int[] _ownerParcel = Array.Empty<int>();  // j -> parcel id
+        private int[] _ownerK = Array.Empty<int>();       // j -> density kind of the underlying
+        private int[] _ownerC = Array.Empty<int>();       // j -> cluster of the underlying
+        private double[] _ownerAsk = Array.Empty<double>();// j -> the ask the reserve floors at
+        /// <summary>parcel id -> owner-door submarket index, live doors only.</summary>
+        private readonly Dictionary<int, int> _doorOfParcel = new Dictionary<int, int>();
 
         // ---- per submarket -------------------------------------------------
         public int[] Capacity = Array.Empty<int>();     // lettable units standing
@@ -189,12 +221,9 @@ namespace CS2Econ.Core
         /// _dCluster/_dStart are the per-KEY half, parallel to _liveKc.
         ///
         /// PER SCAN, NOT PER SOLVE, and that is a correctness condition rather
-        /// than a detail. CutVacancies writes Price[s] and runs immediately
-        /// BEFORE the scan, precisely so that a household sees the post-cut
-        /// price (see the comment at the call site — the other order left 885
-        /// households envious of doors nobody had been told about). A table
-        /// built per solve would advertise the stale, higher price and lose
-        /// exactly the household the cut was made for.
+        /// than a detail: every repair round is a full re-clear, so the prices
+        /// standing at scan time are that round's — a table built per solve
+        /// would advertise the opening build's numbers to every later scan.
         ///
         /// A snapshot taken at the top of the scan is exact for the whole scan.
         /// EntryPrice reads Capacity, _slots.Count, Admitted and Price; every
@@ -289,6 +318,10 @@ namespace CS2Econ.Core
         {
             SolveCalls++;
             C = acc.C;
+            // The fold decision is a pure function of solve inputs (each ask
+            // against its own structure floor), so the door set — and with it
+            // the whole index space — is deterministic per solve.
+            BuildOwnerDoors(w, p);
             int nSub = S;
             EnsureArrays(w, nSub);
             EnsureLevelFactors(p);
@@ -395,6 +428,53 @@ namespace CS2Econ.Core
             }
         }
 
+        /// <summary>Enumerate the live owner doors (see OwnerDoorCount). Order
+        /// is parcel-id order, which is stable within a solve and across the
+        /// determinism check's re-solves of one world; it is NOT stable across
+        /// worlds, which is why owner keys never enter the warm start.</summary>
+        private void BuildOwnerDoors(WorldState w, EconParams p)
+        {
+            _doorOfParcel.Clear();
+            OwnerDoorCount = 0;
+            if (!OwnerDoorsEnabled) return;
+            int n = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if ((uint)pl.Cluster >= (uint)C) continue;
+                if (pl.State != ParcelState.Built || pl.Use != ZoneKind.ResidentialLow) continue;
+                if (pl.OwnerHousehold < 0 || pl.OwnerAskPerUnit <= 0) continue;
+                int lvl = Math.Min(Levels, Math.Max(1, pl.Level));
+                // The fold rule: only an ask that BINDS above the parcel's own
+                // structure floor opens a door. Warehousing does not fold the
+                // door — it zeroes its capacity below, same as a pooled parcel.
+                if (pl.OwnerAskPerUnit <= LandAccounting.SPerUnit(lvl, pl.Condition, p)) continue;
+                if (_ownerParcel.Length <= n)
+                {
+                    int cap = Math.Max(16, _ownerParcel.Length * 2);
+                    Array.Resize(ref _ownerParcel, cap); Array.Resize(ref _ownerK, cap);
+                    Array.Resize(ref _ownerC, cap); Array.Resize(ref _ownerAsk, cap);
+                }
+                _ownerParcel[n] = pl.Id;
+                _ownerK[n] = pl.Use == ZoneKind.ResidentialHigh ? 1 : 0;
+                _ownerC[n] = pl.Cluster;
+                _ownerAsk[n] = pl.OwnerAskPerUnit;
+                _doorOfParcel[pl.Id] = Sub(2 * C + n, lvl, C);
+                n++;
+            }
+            OwnerDoorCount = n;
+        }
+
+        /// <summary>The (density kind, cluster) under a key — table lookup for
+        /// owner pseudo-keys, the exact `kc/C` arithmetic for base keys. Every
+        /// site that used to divide by C goes through this, so an owner door
+        /// values, tastes and premiums as the PLACE it stands in.</summary>
+        private (int k, int c) DensityClusterOf(int kc)
+        {
+            if (kc < 2 * C) { int k = kc / C; return (k, kc - k * C); }
+            int j = kc - 2 * C;
+            return (_ownerK[j], _ownerC[j]);
+        }
+
         private void BuildSubmarkets(WorldState w, EconParams p, int nSub)
         {
             Array.Clear(Capacity, 0, nSub);
@@ -414,15 +494,22 @@ namespace CS2Econ.Core
                     // the scrape decision compares its residual to the
                     // alternative. Zero capacity with live bids is exactly how
                     // an auction says "there is demand here and no supply".
-                    int k = pl.Use == ZoneKind.ResidentialHigh ? 1 : 0;
+                    //
+                    // THE PARTITION: a parcel with a live owner door contributes
+                    // its units to its OWN door and NOTHING to the uniform one
+                    // (its condition prices its own door — a decayed duplex is
+                    // cheap to enter at ITS door, not at its neighbors'
+                    // average). Everything else pools exactly as before.
                     int lvl = Math.Min(Levels, Math.Max(1, pl.Level));
-                    int sub = Sub(Key(k, pl.Cluster, C), lvl, C);
+                    int sub = _doorOfParcel.TryGetValue(pl.Id, out int ownDoor)
+                        ? ownDoor
+                        : Sub(Key(pl.Use == ZoneKind.ResidentialHigh ? 1 : 0, pl.Cluster, C), lvl, C);
                     if (!pl.Warehousing) Capacity[sub] += pl.Units;
                     condSum[sub] += pl.Condition * pl.Units; condCnt[sub] += pl.Units;
                 }
             }
             _liveKc.Clear(); _liveKcStart.Clear(); _liveLevels.Clear();
-            for (int kc = 0; kc < 2 * C; kc++)
+            for (int kc = 0; kc < 2 * C + OwnerDoorCount; kc++)
             {
                 int start = _liveLevels.Count;
                 for (int l = 1; l <= Levels; l++)
@@ -436,8 +523,17 @@ namespace CS2Econ.Core
                 double cond = condCnt[s] > 0 ? condSum[s] / condCnt[s] : 1.0;
                 // The owner's floor. Below S the structure is not worth
                 // operating and the unit is warehoused rather than let, so no
-                // price in this market may fall under it.
+                // price in this market may fall under it. At an owner door the
+                // floor is joined by the owner's own ask: a challenger cannot
+                // enter the parcel's units below max(S, ask), and a unit
+                // nobody clears that for stays vacant at the owner's choosing
+                // and the owner's cost (unpaid S decays condition; vacancy
+                // drains escrow — the existing teeth, no new brake).
                 Reserve[s] = LandAccounting.SPerUnit(LevelOf(s), cond, p);
+                int kcOf = KcOf(s);
+                if (kcOf >= 2 * C && _ownerAsk[kcOf - 2 * C] > Reserve[s]
+                    && (condCnt[s] > 0 || Capacity[s] > 0))
+                    Reserve[s] = _ownerAsk[kcOf - 2 * C];
                 Price[s] = Reserve[s];
                 Admitted[s] = double.PositiveInfinity;
             }
@@ -541,9 +637,14 @@ namespace CS2Econ.Core
                 // income can carry.
                 _cap[i] = p.MaxRentOfIncome * income;
                 _outside[i] = h.Reservation(budget) * outsidePrem;
+                // The home key is the home DOOR: a household living at a live
+                // owner door (the owner and its tenants alike) carries the
+                // bonus at, and always shortlists, that door; everyone else
+                // keeps the base (density, cluster) key. Re-winning your own
+                // parcel-door is renewing in place, and a move across parcels
+                // within a submarket is, for these households, a real move.
                 _homeKC[i] = h.HomeParcel >= 0 && (uint)w.Parcels[h.HomeParcel].Cluster < (uint)C
-                    ? Key(w.Parcels[h.HomeParcel].Use == ZoneKind.ResidentialHigh ? 1 : 0,
-                          w.Parcels[h.HomeParcel].Cluster, C)
+                    ? HomeKeyOf(w.Parcels[h.HomeParcel])
                     : -1;
                 // Moving cost as a per-tick flow, so it is commensurate with a
                 // rent: the lump this household would pay to move, spread over
@@ -639,6 +740,23 @@ namespace CS2Econ.Core
                         else _shortItems[_shortStart[i] + _stride - 1] = _homeKC[i];
                     }
                 }
+                // The exhaustive arm's charter is "shown everything", and owner
+                // doors are deliberately absent from the price-free walk above
+                // (their price-free value EQUALS their base key's — listing
+                // them would stuff shortlists with value-duplicate clones and
+                // crowd out variety; challengers reach them through the repair
+                // scan, which is the economically right discovery order since
+                // an owner door's entry price is weakly higher than its pooled
+                // sibling's). Only the fixture that forbids repair rounds
+                // needs them listed up front.
+                if (ListOwnerDoors)
+                    for (int j = 0; j < OwnerDoorCount && outp < _stride; j++)
+                    {
+                        int okc = 2 * C + j;
+                        bool dupO = false;
+                        for (int r = 0; r < outp; r++) if (_shortItems[_shortStart[i] + r] == okc) { dupO = true; break; }
+                        if (!dupO) _shortItems[_shortStart[i] + outp++] = okc;
+                    }
                 _shortCount[i] = outp;
 
                 // Freeze the level-independent half of every listed valuation.
@@ -659,10 +777,15 @@ namespace CS2Econ.Core
         {
             int slot = _shortStart[i] + q;
             int kc = _shortItems[slot];
-            int kk = kc / C, cc = kc - kk * C;
+            var (kk, cc) = DensityClusterOf(kc);
             double bs = kk == 1 ? _base1[i] : _base0[i];
             _slotPrem[slot] = bs * _premium[_seg[i]][cc];
-            _slotTaste[slot] = Taste(i, kc, bs, p) + (kc == _homeKC[i] ? _homeBonus[i] : 0);
+            // Taste is hashed on the BASE key: an owner door is the same place
+            // as its (density, cluster), differing by price, reserve and
+            // condition — never by an extra taste roll. The home bonus binds
+            // to the home DOOR key (an owner-door resident carries it at, and
+            // only at, its parcel's own door).
+            _slotTaste[slot] = Taste(i, Key(kk, cc, C), bs, p) + (kc == _homeKC[i] ? _homeBonus[i] : 0);
         }
 
         /// <summary>Build the level-uplift table, if the parameter it is a
@@ -718,11 +841,11 @@ namespace CS2Econ.Core
         private double ValueAt(int i, int sub, EconParams p)
         {
             int kc = KcOf(sub);
-            int k = kc / C, c = kc - k * C;
+            var (k, c) = DensityClusterOf(kc);
             double bse = k == 1 ? _base1[i] : _base0[i];
             if (bse <= 0) return 0;
             double v = bse * _premium[_seg[i]][c] * _qf[LevelOf(sub)]
-                       + Taste(i, kc, bse, p);
+                       + Taste(i, Key(k, c, C), bse, p);
             if (kc == _homeKC[i]) v += _homeBonus[i];
             return SoftCap(v, _cap[i]);
         }
@@ -1078,6 +1201,38 @@ namespace CS2Econ.Core
                     }
                 }
             }
+            // Prospects see what residents see: the live owner doors, valued
+            // exactly as the underlying (density, cluster, level) — same
+            // premium, same level uplift, THE SAME taste draw (base key) —
+            // at their own reserve-floored entry price. Without this a
+            // cluster whose only stock is owner doors would quote as having
+            // nothing, suppressing arrivals that pooling used to admit.
+            for (int j = 0; j < OwnerDoorCount; j++)
+            {
+                int k = _ownerK[j], c = _ownerC[j];
+                double appeal = k == 1
+                    ? Segment.DensityFloor + (1 - Segment.DensityFloor) * MathUtil.Clamp(densityTol, 0, 1)
+                    : 1.0;
+                double b = budgetByCluster != null && (uint)c < (uint)budgetByCluster.Length
+                    ? budgetByCluster[c] : budget;
+                double bse = b * appeal;
+                if (bse <= 0) continue;
+                double cap = p.MaxRentOfIncome * b / Math.Max(1e-6, p.ProspectRentShareForCap);
+                int kcBase = Key(k, c, C);
+                double prem = bse * _premium[segment][c];
+                double taste = p.AuctionTasteScale * bse * Gumbel01(tasteKey * 1000003UL + (ulong)kcBase * 31UL + 5);
+                if (c == tieCluster) taste += tieBonusScale * bse;
+                for (int l = 1; l <= Levels; l++)
+                {
+                    int sub = Sub(2 * C + j, l, C);
+                    if (Capacity[sub] <= 0) continue;
+                    double val = SoftCap(prem * _qf[l] + taste, cap);
+                    double sur = val - EntryPrice(sub);
+                    if (sur <= 0) continue;
+                    anyAttainable = true;
+                    if (sur > bestSurplus) { bestSurplus = sur; best = sub; }
+                }
+            }
             // The outside door wins: something here was attainable, none of it
             // beat staying outside. Returning −1 with anyAttainable true is
             // exactly the "declining a city" case the summary promises.
@@ -1146,6 +1301,11 @@ namespace CS2Econ.Core
         public double OutsideOf(int hid)
             => (uint)hid < (uint)_outside.Length ? _outside[hid] : 0;
 
+        /// <summary>Resolve a (cluster, kind, level) to its UNIFORM submarket.
+        /// CONTRACT (the §3 guard's API form): this can never return an owner
+        /// door — its arithmetic never produces kc ≥ 2C — so every assessment
+        /// read keyed through here prices from the submarket's market bids,
+        /// never from a parcel's own door. It must stay that way.</summary>
         public int SubOf(int cluster, ZoneKind kind, int level)
         {
             if (C <= 0 || (uint)cluster >= (uint)C) return -1;
@@ -1153,6 +1313,37 @@ namespace CS2Econ.Core
             int sub = Sub(Key(kind == ZoneKind.ResidentialHigh ? 1 : 0, cluster, C),
                           Math.Min(Levels, Math.Max(1, level)), C);
             return (uint)sub < (uint)Price.Length ? sub : -1;
+        }
+
+        /// <summary>The door this parcel's units let through: the parcel's own
+        /// owner door when one is live this solve, the uniform (cluster, kind,
+        /// level) submarket otherwise. Callers are HousingAuction internals,
+        /// the engine's move/renewal logic, PostOwnerAsks, and checks — NEVER
+        /// LandAccounting, Construction, or Overlays: assessment reads the
+        /// submarket through SubOf, and a parcel's own door is exactly what §3
+        /// forbids it to see.</summary>
+        public int DoorOf(Parcel pl)
+            => _doorOfParcel.TryGetValue(pl.Id, out int door)
+                ? door : SubOf(pl.Cluster, pl.Use, pl.Level);
+
+        /// <summary>DoorOf in key (kc) form — the home-binding key.</summary>
+        private int HomeKeyOf(Parcel pl)
+            => _doorOfParcel.TryGetValue(pl.Id, out int door)
+                ? KcOf(door)
+                : Key(pl.Use == ZoneKind.ResidentialHigh ? 1 : 0, pl.Cluster, C);
+
+        /// <summary>The cluster a submarket stands in — table lookup for owner
+        /// doors, key arithmetic for uniform ones. For callers (Prospects) that
+        /// used to compute `KcOf(sub) % C`, which owner pseudo-keys break.</summary>
+        public int ClusterOf(int sub) => DensityClusterOf(KcOf(sub)).c;
+
+        /// <summary>The parcel behind an owner-door submarket, −1 for uniform
+        /// submarkets. How the engine's move step lands a won owner door on
+        /// THAT parcel rather than any cluster-mate.</summary>
+        public int OwnerParcelOf(int sub)
+        {
+            int kc = KcOf(sub);
+            return kc >= 2 * C && kc < 2 * C + OwnerDoorCount ? _ownerParcel[kc - 2 * C] : -1;
         }
 
         // ---- the queue behind the door ------------------------------------
@@ -1213,9 +1404,9 @@ namespace CS2Econ.Core
                 for (int q = 0; q < _scanStride; q++)
                 {
                     int kc = _liveKc[q];
-                    int k = kc / C;
+                    var (k, c) = DensityClusterOf(kc);
                     double bse = k == 1 ? _base1[i] : _base0[i];
-                    _scanTaste[at + q] = (float)(Taste(i, kc, bse, p)
+                    _scanTaste[at + q] = (float)(Taste(i, Key(k, c, C), bse, p)
                                                  + (kc == _homeKC[i] ? _homeBonus[i] : 0));
                 }
             }
@@ -1224,8 +1415,9 @@ namespace CS2Econ.Core
         /// <summary>Snapshot the live doors for one scan: the flat arrays the
         /// scan cell reads instead of a divide, two List<int> indexer calls
         /// and EntryPrice's capacity/slot-count/pointer chase. Called from the
-        /// top of AddEnviedColumns, AFTER CutVacancies has written its prices —
-        /// see the field comment for why that ordering is load bearing.</summary>
+        /// top of AddEnviedColumns; the snapshot is exact for the whole scan
+        /// because nothing reachable from the scan writes prices — see the
+        /// field comment.</summary>
         private void BuildDoorTable()
         {
             int nk = _liveKc.Count, nd = _liveLevels.Count;
@@ -1237,8 +1429,8 @@ namespace CS2Econ.Core
             for (int q = 0; q < nk; q++)
             {
                 int kc = _liveKc[q];
-                int k = kc / C;
-                _dKc[q] = kc; _dHigh[q] = k == 1; _dCluster[q] = kc - k * C;
+                var (k, c) = DensityClusterOf(kc);
+                _dKc[q] = kc; _dHigh[q] = k == 1; _dCluster[q] = c;
                 _dStart[q] = _liveKcStart[q];
                 for (int t = _liveKcStart[q]; t < _liveKcStart[q + 1]; t++)
                 {
@@ -1262,7 +1454,7 @@ namespace CS2Econ.Core
             for (int q = 0; q < _liveKc.Count; q++)
             {
                 int kc = _liveKc[q];
-                int k = kc / C, c = kc - k * C;
+                var (k, c) = DensityClusterOf(kc);
                 double bse = k == 1 ? _base1[i] : _base0[i];
                 if (bse <= 0) continue;
                 double prem = bse * _premium[_seg[i]][c];
@@ -1502,6 +1694,15 @@ namespace CS2Econ.Core
                     {
                         int sub = Sub(_shortItems[st + q], l, C);
                         if (Assignment[i] == sub) continue;    // already housed there
+                        // Owner doors hold no shadow queue: Shadow/ShadowAt/
+                        // QueueAbove stay "the queue of market bids behind the
+                        // (cluster, kind, level) door", which is what the
+                        // construction signal and the assessment counterfactual
+                        // read. (An owner-door RESIDENT's bids for other doors
+                        // still enter those doors' queues — market-access bids
+                        // of members of the population, exactly what §3
+                        // blesses.)
+                        if (KcOf(sub) >= 2 * C) continue;
                         double alt = Math.Max(sub == bestSub ? second : best, _outside[i]);
                         double bid = ValueAt(i, sub, p) - alt;
                         if (bid <= Reserve[sub]) continue;     // would not cover the owner's floor

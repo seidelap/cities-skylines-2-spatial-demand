@@ -22,7 +22,20 @@ namespace CS2Econ.Core
     /// self-ramping wedge). Assessments derive ONLY from market-access bids over
     /// the population/firm distribution — never from the parcel's own realized
     /// rents. That is the §3 circularity guard and it is structural: nothing in
-    /// this file reads Parcel.OccupantHouseholds' payments or any realized rent.</summary>
+    /// this file reads Parcel.OccupantHouseholds' payments or any realized rent.
+    ///
+    /// Item #41 sharpens the guard's statement and its enforcement: assessment
+    /// reads the SUBMARKET's market bids — never the parcel's own ask, own
+    /// door price, or own realized rent. Every auction read here is keyed by
+    /// (cluster, kind, level) through HousingAuction.SubOf, whose arithmetic
+    /// can never resolve to an owner parcel's own door, and the pricing API
+    /// (BidPerUnit and down) takes no parcel and no door index — per-parcel
+    /// assessment pricing is unrepresentable in it, and the signature must not
+    /// widen. HousingAuction.DoorOf is never called from this file (nor from
+    /// Construction or Overlays); with owner parcels' units OUT of the uniform
+    /// capacity, a lone owner parcel's assessment prices from its submarket's
+    /// comparables or the shadow queue, closing the singleton self-assessment
+    /// that pooled granularity used to permit.</summary>
     public static class LandAccounting
     {
         public static int UnitsFor(ZoneKind use) => use switch
