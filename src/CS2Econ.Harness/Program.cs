@@ -73,6 +73,11 @@ namespace CS2Econ.Harness
                 // intent probe stops comparing against what each household
                 // already settled for, so the counted signal stops saturating.
                 if (args[i] == "--mutant-intent-unsaturated") { AccessState.MutantIntentUnsaturated = true; continue; }
+                // MUTANT SWITCH (see TestRunner.MutantSpareProbedCluster):
+                // restores the collapse leg's exemption for the probed
+                // cluster's own residents, so the leg's non-degeneracy floor
+                // can be shown to fail. Never a shipping mode.
+                if (args[i] == "--mutant-spare-probed-cluster") { TestRunner.MutantSpareProbedCluster = true; continue; }
                 if (i + 1 >= args.Length) continue;
                 if (args[i] == "--seed") seed = ulong.Parse(args[i + 1]);
                 if (args[i] == "--only") only = args[i + 1];
@@ -136,6 +141,17 @@ namespace CS2Econ.Harness
                     foreach (ulong s in new ulong[] { 138, 208, 271, 327, 549, 910, 6550 })
                         if (!set.Contains(s)) set.Add(s);
                     return TestRunner.OccupancySweep(set);
+                }
+                case "clearsweep":  // clearing-price check alone across seeds (see TestRunner.ClearSweep)
+                {
+                    int n = 32;
+                    for (int i = 1; i + 1 < args.Length; i++)
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    var set = new List<ulong>();
+                    for (ulong s = 0; s < (ulong)n; s++) set.Add(s);
+                    foreach (ulong s in new ulong[] { 1, 9, 13 })   // the verify-gate seeds ride along
+                        if (!set.Contains(s)) set.Add(s);
+                    return TestRunner.ClearSweep(set);
                 }
                 case "webersweep":  // Weber check alone across seeds (see TestRunner.WeberSweep)
                 {
@@ -332,6 +348,56 @@ namespace CS2Econ.Harness
                         if (args[i] == "--owner-ask") ownerAsk = double.Parse(args[i + 1]);
                     }
                     return Debugging.AuctionProbe(seed, ticks, ownerAsk);
+                }
+                case "collapseprobe":
+                {
+                    // T3a instrument (see Debugging.CollapseProbe): the
+                    // clearing-price check's population-collapse leg alone,
+                    // decomposed. `--owner-ask 0` is the item-#41 arm;
+                    // `--mutant-citywide-goods` the item-#30 one.
+                    double ownerAsk = 1.0; bool spareC0 = true;
+                    for (int i = 1; i + 1 < args.Length; i++)
+                    {
+                        if (args[i] == "--owner-ask") ownerAsk = double.Parse(args[i + 1],
+                            System.Globalization.CultureInfo.InvariantCulture);
+                        if (args[i] == "--spare-c0") spareC0 = args[i + 1] != "0";
+                    }
+                    return Debugging.CollapseProbe(seed, ownerAsk, spareC0);
+                }
+                case "laborprobe":
+                {
+                    // T3c instrument (see Debugging.LaborProbe): the outside
+                    // share against door capacity, the border commute and the
+                    // parameters that set the outside level. Defaults are the
+                    // fingerprint's pinned labor fixture.
+                    int cols = 8, rows = 8, hh = 1500, ticks = 120;
+                    double mult = -1, cost = -1;
+                    for (int i = 1; i + 1 < args.Length; i++)
+                    {
+                        if (args[i] == "--cols") cols = int.Parse(args[i + 1]);
+                        if (args[i] == "--rows") rows = int.Parse(args[i + 1]);
+                        if (args[i] == "--households") hh = int.Parse(args[i + 1]);
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                        if (args[i] == "--outside-mult") mult = double.Parse(args[i + 1],
+                            System.Globalization.CultureInfo.InvariantCulture);
+                        if (args[i] == "--commute-cost") cost = double.Parse(args[i + 1],
+                            System.Globalization.CultureInfo.InvariantCulture);
+                    }
+                    return Debugging.LaborProbe(seed, cols, rows, hh, ticks, mult, cost);
+                }
+                case "weberprobe":
+                {
+                    // T3b instrument (see Debugging.WeberProbe): the distinct
+                    // industrial output census and the entrant's own argmax at
+                    // every cluster. --seed is the START of the sweep.
+                    ulong start = 0; int n = 26, hh = 6000;
+                    for (int i = 1; i + 1 < args.Length; i++)
+                    {
+                        if (args[i] == "--seed") start = ulong.Parse(args[i + 1]);
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                        if (args[i] == "--households") hh = int.Parse(args[i + 1]);
+                    }
+                    return Debugging.WeberProbe(start, n, hh);
                 }
                 case "scanoracle":
                 {
