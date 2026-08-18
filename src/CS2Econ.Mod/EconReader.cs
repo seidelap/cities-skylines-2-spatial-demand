@@ -438,7 +438,7 @@ namespace CS2Econ.Mod
             // OWN stable per-citizen idiosyncratic seed (research notes §3) and
             // is the better key here — swap it in once the field's accessor is
             // confirmed, so our taste draws line up with the game's own.
-            h.DrawAtBirth(Segment.All[h.Segment]);
+            h.DrawAtBirth(Segment.All[h.Segment], p);
             if (em.HasComponent<Game.Citizens.HomelessHousehold>(e))                   // §3: m_TempHome
                 h.Stage = InsolvencyStage.Sheltered;
             if (em.HasComponent<Game.Buildings.PropertyRenter>(e))

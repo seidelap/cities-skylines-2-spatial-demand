@@ -557,7 +557,17 @@ namespace CS2Econ.Harness
             foreach (var c in sim.W.Clusters) c.Amenity += 0.9;
             double boomIn = ArrivalsOver(120);
             foreach (var c in sim.W.Clusters) c.Amenity -= 1.8;
-            baseOut = 0; // measured inside next window against ~zero baseline
+            // baseOut = 0 is an ASSUMPTION, not a measurement, and since the
+            // outside-anchor commit it is measured false: this fixture's
+            // baseline is a churn equilibrium (base-window decline exits 456
+            // vs bust-window 434 at the shipping OutsideAccessValue — the
+            // bust does not lift decline exits above baseline at all;
+            // item-#42 anatomy run). The asserted asymmetry therefore
+            // compares a DIFFERENCED inflow margin against an UNdifferenced
+            // outflow. Left as-is on purpose — the honest restatement of this
+            // scenario's margins is recorded in KNOWN-RED's boombust row and
+            // is a separate change from the mechanism work measured here.
+            baseOut = 0;
             double bustOut = DeparturesOver(120);
             foreach (var c in sim.W.Clusters) c.Amenity += 0.9;
 

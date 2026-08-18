@@ -118,6 +118,13 @@ namespace CS2Econ.Core
         {
             var pl = w.Parcels[parcelId];
             pl.OccupantHouseholds.Add(h.Id);
+            // An OwnerMinded household settling in an unowned res-low parcel
+            // claims it (§4.4 scope: owner tags are res-low only; no absentee
+            // owners — the tag requires living here and clears in Vacate).
+            // Its ask starts at 0 and is written by the engine's post-solve
+            // hook from its own valuation.
+            if (pl.Use == ZoneKind.ResidentialLow && pl.OwnerHousehold < 0 && h.OwnerMinded)
+                pl.OwnerHousehold = h.Id;
             h.HomeParcel = parcelId;
             h.TenureStart = w.Tick;
             h.ChargedAssessment = LandAccounting.UnitAssessment(pl, p);
@@ -131,6 +138,10 @@ namespace CS2Econ.Core
             var pl = w.Parcels[h.HomeParcel];
             pl.OccupantHouseholds.Remove(h.Id);
             w.HouseholdCountByCluster[pl.Cluster]--;
+            // Ownership does not survive leaving: the tag names a resident
+            // agent or nobody, and a cleared tag zeroes the ask with it (a
+            // reserve with no one behind it would be a landlord-shaped rule).
+            if (pl.OwnerHousehold == h.Id) { pl.OwnerHousehold = -1; pl.OwnerAskPerUnit = 0; }
             h.HomeParcel = -1;
             // Every unit actually freed passes through here — the measured
             // turnover flow the migration absorption budget reads (an EMA in

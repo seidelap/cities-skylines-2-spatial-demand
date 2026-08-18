@@ -415,9 +415,12 @@ namespace CS2Econ.Harness
         /// distribution, and the two equilibrium conditions that matter:
         /// capacity is never oversubscribed, and no household would rather have
         /// somebody else's place at the posted price (no envy).</summary>
-        public static int AuctionProbe(ulong seed, int ticks)
+        public static int AuctionProbe(ulong seed, int ticks, double ownerAskScale = 1.0)
         {
-            var p = new EconParams();
+            // ownerAskScale: the item-#41 cost/attribution A/B — 0 folds every
+            // owner door (asks never bind), 1 is shipped behavior; both runs
+            // belong in any claim about what the doors cost.
+            var p = new EconParams { OwnerAskScale = ownerAskScale };
             var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
             var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
             sim.Run(ticks);
@@ -443,6 +446,21 @@ namespace CS2Econ.Harness
                 + $"unassigned={a.Unassigned}");
             Console.WriteLine($"world: pop={pop} housed={housed} lettable units={stock:F0} "
                 + $"({housed / Math.Max(1.0, stock):P0} of stock)");
+
+            // Owner doors (item #41): the door count is printed, not inferred
+            // — it is what the scan-cost budget scales with — alongside the
+            // decline-exit telemetry the self-pricing bound is measured by.
+            int ownerTagged = 0, bindingAsks = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.OwnerHousehold < 0) continue;
+                ownerTagged++;
+                if (pl.OwnerAskPerUnit > 0) bindingAsks++;
+            }
+            Console.WriteLine($"owners: tagged={ownerTagged} standingAsks={bindingAsks} "
+                + $"liveDoors={a.OwnerDoorCount} ownerDeclineExits={sim.Engine.OwnerDeclineExitsTotal} "
+                + $"tenantVacatesAtOwnerParcels={sim.Engine.OwnerParcelTenantVacatesTotal} "
+                + $"(OwnerAskScale={p.OwnerAskScale})");
 
             // Price distribution over submarkets that hold stock.
             var live = new List<int>();

@@ -232,7 +232,11 @@ namespace CS2Econ.Harness
                         pl.Level = 1 + w.Rng.NextInt(2);
                         pl.Condition = 0.75 + 0.25 * w.Rng.NextDouble();
                         pl.Units = LandAccounting.UnitsFor(kind);
-                        pl.OwnerOccupied = kind == ZoneKind.ResidentialLow && w.Rng.NextDouble() < 0.5;
+                        // Owner-occupied stock roll: the tag itself now names a
+                        // household, so the roll marks the parcel ELIGIBLE and
+                        // the first household seeded into it claims (Seeding).
+                        pl.OwnerHousehold = kind == ZoneKind.ResidentialLow && w.Rng.NextDouble() < 0.5
+                            ? Parcel.OwnerEligibleSeed : -1;
                     }
                     w.Parcels.Add(pl);
                 }
@@ -389,14 +393,21 @@ namespace CS2Econ.Harness
                 for (int s = 0; s < segShare.Length; s++) { acc2 += segShare[s]; if (roll < acc2) { seg = s; break; } }
                 int parcelId = vacancies[i];
                 var pl = w.Parcels[parcelId];
+                // The household seeded into owner-rolled stock BECOMES its
+                // owner (first one in; the tag names an agent now). The owner
+                // margin follows the claim: only the claimant carries the
+                // ×OwnerMovingCostMult moving margin, where the parcel-tag
+                // form gave it to every co-seeded household.
+                bool claims = pl.OwnerHousehold == Parcel.OwnerEligibleSeed;
                 var h = new Household
                 {
                     Id = w.Households.Count, Segment = seg, Money = 40 + 40 * w.Rng.NextDouble(),
                     HomeParcel = parcelId, TenureStart = 0,
                     MovingCostDraw = p.MovingCostMean * (0.4 + 1.2 * w.Rng.NextDouble())
-                                     * (pl.OwnerOccupied ? p.OwnerMovingCostMult : 1.0),
+                                     * (claims ? p.OwnerMovingCostMult : 1.0),
                 };
-                h.DrawAtBirth(Segment.All[seg]);
+                h.DrawAtBirth(Segment.All[seg], p);
+                if (claims) pl.OwnerHousehold = h.Id;
                 pl.OccupantHouseholds.Add(h.Id);
                 w.Households.Add(h);
                 hhMoney += h.Money;

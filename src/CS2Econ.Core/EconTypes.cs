@@ -354,6 +354,37 @@ namespace CS2Econ.Core
         public double ProminenceScale = 60_000;   // city size at which field widening doubles
         public double NetworkMemoryDecay = 0.995;
         public double NetworkMemoryGain = 0.08;
+        /// <summary>Per-offer-batch decay of the per-cluster chain-migration
+        /// stock (MigrationState.NetworkTies): each Prospects.Step call — one
+        /// per tick on the engine path — multiplies the whole stock by this
+        /// before the batch's admits are added, so one remembered arrival
+        /// fades on a ~34-tick half-life and the standing stock is ~50× the
+        /// per-tick admit flow (≈550 on the settled 10×10/3000 fixture, where
+        /// admits run ~11/tick — bring-up runs). Links go stale as the people
+        /// who hold them move on.</summary>
+        public double NetworkTieDecay = 0.98;
+        /// <summary>Familiarity bonus for a prospect's tie cluster, as a
+        /// fraction of its own bid base at that door (the same money unit the
+        /// taste term uses — AuctionTasteScale scales a Gumbel draw by bse;
+        /// this scales a constant). An individual's taste for the one place
+        /// its predecessors landed — individually legitimate, like taste.
+        /// Swept on the tie-channel fixture (`tiesweep --seeds 4 --tie-bonus
+        /// X`, seeds 0–3 + 9, 13, item-#34 bring-up) at {0.05, 0.10, 0.15,
+        /// 0.20}: tie-landing lift over the independence baseline reads
+        /// +0.008..+0.019 / +0.024..+0.032 / +0.032..+0.052 / +0.059..+0.074
+        /// by dose, zero-bonus mutant arm 0.000..+0.006 at every dose. 0.15
+        /// is the largest swept value not exceeding AuctionTasteScale — one
+        /// Gumbel sd of idiosyncratic taste (~0.19·bse) still outweighs the
+        /// tie, so familiarity tilts a close call rather than beating a
+        /// genuinely better door — and its worst-seed lift clears the 0.015
+        /// check bar with ~2x margin (0.10's worst seed left only 1.6x).</summary>
+        public double NetworkTieBonusScale = 0.15;
+        /// <summary>MUTANT SWITCH, harness-only (see the tie-channel verify
+        /// check): zeroes the familiarity bonus while the tie draw and the
+        /// stock keep running, so admits land independently of their tie
+        /// cluster. Exists so that check stays falsifiable; never a shipping
+        /// mode.</summary>
+        public bool MutantZeroTieBonus = false;
         public double FirmEntryElasticity = 0.004;
 
         // ---- trade (design §4.5) --------------------------------------------
@@ -391,6 +422,18 @@ namespace CS2Econ.Core
         public int MaxStartsPerTick = 6;          // construction industry capacity
         public double AbandonMarginFactor = 0.25; // abandon if E[flow] < factor·h·remainingCost
         public double CalibShrinkN0 = 12.0;       // shrinkage prior weight for correction factors
+        /// <summary>n0 in CalibrationState.Factor(use, cluster): the prior
+        /// weight (in completions observed) at which a cluster's own
+        /// realized-vs-predicted record counts as much as the use-wide factor.
+        /// Picked from the MEASURED per-cell completion counts on the
+        /// reference fixture (10×10, 3000 households, 400 ticks —
+        /// `calibsweep --seeds 4`, seeds 0–3 + 9, 13, item-#34 bring-up):
+        /// occupied (use, cluster) cells hold n_c min 1, p25 1–2, median 2–3,
+        /// p90 4–5, max 6–8 over 71–86 cells and 184–238 completions per
+        /// seed. n0 = 2 sits at the p25–median: a single-completion cell is
+        /// 1/3 its own record, a median cell an even split, and the deepest
+        /// cells (6–8) are 75–80% their own.</summary>
+        public double CalibClusterShrinkN0 = 2.0;
 
         // ---- condition / decay ----------------------------------------------
         public double ConditionDecayScale = 8.0;  // multiplies δ when S unpaid: vacant stock cheapens in ~sim-months, not years
@@ -406,6 +449,34 @@ namespace CS2Econ.Core
         public double BaseConsumptionShare = 0.80; // of after-housing income, spent at commercial
         public double MovingCostMean = 25.0;
         public double OwnerMovingCostMult = 2.2;   // owner-tagged margins are larger (§4.4)
+        /// <summary>Probability a Family-lifecycle household is OwnerMinded
+        /// (drawn at birth, Household.DrawAtBirth). The 0.35 that lived as a
+        /// literal in the engine's posted-path arrival loop, promoted to a
+        /// name so the auction path's arrivals draw it too. Value unchanged.</summary>
+        public double OwnerMindedShare = 0.35;
+        /// <summary>Scale on the owner's ask (item #41). Exists for
+        /// measurement, not taste; 1 is the shipped behavior.
+        ///
+        /// WHAT 0 IS, EXACTLY: with the fold rule (a door exists where an ask
+        /// bids), a zero ask never clears its own structure floor, so at 0 NO
+        /// owner door unfolds and the auction's index space is the pre-item
+        /// one. The 0 arm therefore isolates the tag/disposition bookkeeping
+        /// — the owner tag naming a household, the birth-drawn disposition,
+        /// the seeding claim — and NOT the door structure. There is no
+        /// "doors without asks" arm because there is no such configuration:
+        /// an unbinding ask prices its door within its own floor of the
+        /// pooled one, which is exactly what folding says. Attribution runs
+        /// both ways round that: tip → scale 0 is the bookkeeping, scale 0 →
+        /// scale 1 is the doors and their asks together (auctionprobe
+        /// --ticks 300 --seed 20260806, both arms, at the item commit).
+        ///
+        /// Values above 1 stay inside the min(·, R_i) clamp in PostOwnerAsks
+        /// — an owner can always afford to match its own floor — with one
+        /// boundary case a sweep should expect: at share ≥ 1/scale the clamp
+        /// binds, A = R exactly, and an owner whose own door is its best
+        /// option holds surplus exactly equal to its outside option — which
+        /// the solve declines (`bestSur <= _outside[i]`, RunAuction).</summary>
+        public double OwnerAskScale = 1.0;
         public double OutsideShopMinutes = 40.0;   // outside option in the shopping logit
         public double OutsideShopMass = 60.0;      // (uncaptured spending leaks outward)
 
@@ -503,6 +574,35 @@ namespace CS2Econ.Core
         /// (0.08, vanilla's m_NeutralUnemployment): the region at its neutral
         /// unemployment rate.</summary>
         public double OutsideEmploymentOdds = 0.92;
+        /// <summary>The OUTSIDE region's access level, in the same units as
+        /// AccessState.AccessValue — the third demotion of a citywide read to a
+        /// property of the outside world, after the outside wage
+        /// (OutsideWageMult) and OutsideEmploymentOdds. The outside option is
+        /// ONE MORE DOOR priced by the same premium rule every city door uses
+        /// (AccessState.OutsidePremium), so a uniformly better city raises
+        /// MeanAccess, the outside door's relative premium falls, and the
+        /// come/stay margin responds — while within-city allocation is
+        /// untouched (the MeanAccess normalizer is shared by all city doors and
+        /// cancels across them).
+        ///
+        /// Value: settled fixtures measure MeanAccess in a narrow band —
+        /// 18.4–20.6 across the boombust (14×14/6000, t=300), canary
+        /// (10×10/3000, seeds 0/1/9/13/25, t=160) and 8×8/2000 fixtures
+        /// (item-#42 probe run, seed 20260806) — so 20 puts the outside region
+        /// at the access level of a settled reference city (relative premium
+        /// ≈ 1 on the reference fixtures, the middle of the clamp's responsive
+        /// band). Swept over the boombust fixture at {14, 17, 20, 23, 26}
+        /// (item-#42 sweep run; inflow-margin response by value recorded in
+        /// KNOWN-RED's boombust row); outside that fixture the value is
+        /// unswept.</summary>
+        public double OutsideAccessValue = 20.0;
+        /// <summary>MUTANT SWITCH, harness-only (see the uniform-pulse verify
+        /// check): restores the defect item #42 removed — the outside door's
+        /// access anchored on the city's OWN MeanAccess, so its relative
+        /// premium is a constant and a spatially uniform improvement is
+        /// structurally invisible to the come/stay margin. Exists so that
+        /// check stays falsifiable; never a shipping mode.</summary>
+        public bool MutantRelativeOutsideAccess = false;
         /// <summary>How long a household that would rather be elsewhere waits
         /// before actually going. Its own patience, scaled by its own moving
         /// cost at the use site.</summary>
@@ -521,10 +621,21 @@ namespace CS2Econ.Core
         /// Raised 12 -> 16 with the full-re-clear repair rounds: each round now
         /// rebuilds the whole market, so a solve needs as many rounds as its
         /// longest column-generation chain, and seed 22 measurably hit the cap
-        /// at 12 (converged False, clean False) while 16 cleared it. No
+        /// at 12 (converged False, clean False) while 16 cleared it.
+        ///
+        /// Raised 16 -> 20 with owner doors (item #41): owner doors are
+        /// discovered by the repair scan on purpose (they never enter the
+        /// price-free opening walk), which lengthens the longest chains. The
+        /// whole canary distribution shifts — max rounds over the 39 seeds
+        /// 11 -> 16 — and seed 16 is the binding one, measured three ways at
+        /// the item commit: 9 rounds clean before the doors, 16 rounds with
+        /// them and its 17th scan clean (the cap-20 canary), and converged
+        /// False at cap 16 with envy already 0 (`canary --from 16 --seeds 17`
+        /// on a cap-16 build — pure cap binding, not a defect). So 16 bound
+        /// by one; 20 carries the same +4 the 12 -> 16 raise did, and no
         /// headroom beyond that is claimed; Converged is the arbiter and the
         /// canary sweeps it.</summary>
-        public int AuctionRepairRounds = 16;
+        public int AuctionRepairRounds = 20;
         // ---- labor assignment market (LaborAuction; Flags.LaborAuction) ------
         /// <summary>Money per generalized commute minute per earner per tick —
         /// what a worker's own commute from its own home subtracts from a
@@ -713,6 +824,17 @@ namespace CS2Econ.Core
         public bool TierC2_Leveling = true;      // ℓ*, renovation clock, decay
         public bool TierD_Trade = true;          // finite-depth exits, parity bands
         public bool ConstructionRewire = true;   // residual-driven site selection
+        /// <summary>Owner parcels are their own auction doors (item #41): an
+        /// owner-tagged res-low parcel whose ask exceeds its own structure
+        /// floor holds its units at a per-parcel door whose reserve is
+        /// max(own condition floor, its owner's ask), instead of pooling into
+        /// the (density, cluster, level) submarket. OFF returns the auction to
+        /// pooled doors exactly — partition, reserve, home-key binding and the
+        /// ask hook all branch on it — but NOT to the pre-item world: the owner
+        /// tag names a household and is drawn at birth whatever this flag says,
+        /// which is what the tag needed to stop decaying. Posted arms never
+        /// construct an auction and see only that tag change.</summary>
+        public bool OwnerDoors = true;
         public bool ShadowAccountingOnly = false;// stage 3: assess + log, levy nothing
         /// <summary>Route each household's consumption to the ONE shop it chose,
         /// instead of pooling all consumption citywide and handing it back out

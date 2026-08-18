@@ -40,7 +40,26 @@ namespace CS2Econ.Core
         public int Level;               // discrete 1–5 (vanilla interop, design §3)
         public double Condition;        // 0..1; V = Condition × RC
         public int Units;               // households or firm job slots the structure holds
-        public bool OwnerOccupied;      // owner tag (§4.4): consent gate on redevelopment
+        /// <summary>The household that OWNS this parcel (res-low only), −1 =
+        /// none. The owner tag with an agent behind it: set at seeding (the
+        /// household seeded into owner-rolled stock) or when an OwnerMinded
+        /// household moves into an unowned res-low parcel; cleared — with the
+        /// ask — whenever that household stops living here (Allocation.Vacate,
+        /// plus the engine's pre-solve sweep for exits that bypass it).
+        /// OwnerEligibleSeed (−2) marks stock rolled owner-occupied at world
+        /// build, before any household exists to claim it.</summary>
+        public int OwnerHousehold = -1;
+        public const int OwnerEligibleSeed = -2;
+        /// <summary>The owner's own ask per unit per tick — the reserve its
+        /// parcel-door floors at, written by EconomyEngine.PostOwnerAsks
+        /// BETWEEN solves from the owner's own valuation (never from the
+        /// market's answer at this parcel — the no-ratchet rule). It allocates
+        /// and is paid to nobody; no assessment may read it (§3 guard).</summary>
+        public double OwnerAskPerUnit;
+        /// <summary>Owner tag (§4.4): consent gate on redevelopment. Derived —
+        /// OwnerHousehold is the one source of truth; a parcel with no owning
+        /// household is not owner-occupied whatever it was rolled at build.</summary>
+        public bool OwnerOccupied => OwnerHousehold >= 0;
         public bool Warehousing;        // scrape pending: vacated units stop re-letting
 
         // Land accounting (assessed, never from own realized rent — §3 circularity guard)
@@ -131,7 +150,7 @@ namespace CS2Econ.Core
         /// attribute never silently re-rolls: re-drawing per tick would make
         /// the "individual" a sampling artifact of a distribution, which is
         /// exactly the aggregate-first modelling this architecture rejects.</summary>
-        public void DrawAtBirth(CS2Econ.Core.Segment seg)
+        public void DrawAtBirth(CS2Econ.Core.Segment seg, EconParams p)
         {
             double u = SplitMix64.Hash01((ulong)Id * 2654435761UL + 11UL);
             double v = SplitMix64.Hash01((ulong)Id * 2654435761UL + 29UL);
@@ -154,7 +173,30 @@ namespace CS2Econ.Core
             // border, and are voluntarily unemployed.
             double q = SplitMix64.Hash01((ulong)Id * 2654435761UL + 53UL);
             WorkReservationShare = 0.5 * q * q;
+            // Owner disposition: whether this household would claim the parcel
+            // it settles in (Family lifecycle only — §4.4 scope), and how much
+            // of its own reservation it would hold its spare units at. Drawn
+            // from the id hash so prospects get both too: on the auction path
+            // arrivals can become owners again, where the old engine-side roll
+            // reached only posted-path arrivals.
+            double om = SplitMix64.Hash01((ulong)Id * 2654435761UL + 61UL);
+            OwnerMinded = seg.Life == Lifecycle.Family && om < p.OwnerMindedShare;
+            // u² skews low (median 0.25): most asks fold into the pooled door
+            // and only the high tail produces tenure geography — see the fold
+            // rule in HousingAuction.BuildSubmarkets.
+            double oa = SplitMix64.Hash01((ulong)Id * 2654435761UL + 67UL);
+            OwnerAskShare = oa * oa;
         }
+
+        /// <summary>Would this household claim ownership of the res-low parcel
+        /// it settles in? Drawn at birth (id hash, Family lifecycle ×
+        /// EconParams.OwnerMindedShare); recomputable from the id, so nothing
+        /// to persist.</summary>
+        public bool OwnerMinded;
+        /// <summary>The share of its own reservation this household asks for
+        /// its spare units when it owns (u² draw at birth, ∈ [0,1]). A
+        /// preference at the charter-blessed entry point, not a parameter.</summary>
+        public double OwnerAskShare;
 
         /// <summary>Outside option as a fraction of this household's own housing
         /// budget, drawn at birth. Held as a SHARE rather than a level so it
@@ -284,7 +326,24 @@ namespace CS2Econ.Core
     {
         public double[] ReservationThreshold = new double[Segment.Count]; // rises with cumulative net inflow
         public double[] OutSignalEma = new double[Segment.Count];         // lagged out-migration signal
-        public double NetworkMemory;                                      // chain-migration stock
+        /// <summary>Chain-migration stock, POSTED-LEGACY: one citywide scalar,
+        /// read only by Migration.Step. The auction path keeps the per-cluster
+        /// stock below — people follow people to NEIGHBORHOODS, not to a
+        /// city-shaped average.</summary>
+        public double NetworkMemory;
+        /// <summary>Per-cluster chain-migration stock (auction path): a decaying
+        /// EMA of ADMITTED prospects by the cluster each one chose, maintained
+        /// by Prospects.Step (decay p.NetworkTieDecay per offer batch, +1 at
+        /// the chosen cluster per admit). Each unit is one remembered past
+        /// arrival — a link somebody outside has to a specific neighborhood.
+        ///
+        /// ANTI-SMUGGLING GUARD: this stock is a COUNT of past arrivals, never
+        /// a quality read. It may enter exactly two places — a prospect's own
+        /// tie-cluster familiarity bonus (Prospects.Step → QuoteOutsider's
+        /// tieCluster arg) and the total-stock term of prominence (offer count
+        /// only). It must never enter door valuation beyond that bonus, never
+        /// prices, assessment, or the firm side.</summary>
+        public double[] NetworkTies = Array.Empty<double>();
         public double CumulativeNetInflow;
         public double[] SegmentAttractEma = new double[Segment.Count];    // telemetry
     }
@@ -322,18 +381,46 @@ namespace CS2Econ.Core
     public sealed class CalibrationState
     {
         public sealed class PerUse { public double SumRatio; public double N; public double Factor = 1.0; }
+        public sealed class Cell { public double SumRatio; public double N; }
         public readonly Dictionary<ZoneKind, PerUse> ByUse = new Dictionary<ZoneKind, PerUse>();
+        /// <summary>Per-(use, cluster) realized-vs-predicted history: a
+        /// developer's own record of how its forecasts did AT A PLACE. The
+        /// routing doc's calibration is per-corridor; the citywide PerUse
+        /// factor above is kept as the shrinkage anchor (and the posted-path
+        /// telemetry read), not as the decision input.</summary>
+        public readonly Dictionary<(ZoneKind use, int cluster), Cell> ByCell
+            = new Dictionary<(ZoneKind, int), Cell>();
 
         public double Factor(ZoneKind use) => ByUse.TryGetValue(use, out var s) ? s.Factor : 1.0;
 
-        public void Observe(ZoneKind use, double realizedOverPredicted, double shrinkN0)
+        /// <summary>The correction factor a construction forecast at (use,
+        /// cluster) trusts: the cluster's own mean realized/predicted ratio,
+        /// shrunk toward the use-level factor by its own observation count —
+        ///     factor_c = clamp(useFactor + n_c/(n_c + n0) · (mean_c − useFactor))
+        /// — the same shrinkage form ProspectLocalOdds uses (n0 =
+        /// p.CalibClusterShrinkN0). A cluster with one completion is mostly
+        /// the use-wide record; a cluster with many is mostly its own.</summary>
+        public double Factor(ZoneKind use, int cluster, double clusterN0)
         {
+            double useF = Factor(use);
+            if (!ByCell.TryGetValue((use, cluster), out var c) || c.N <= 0) return useF;
+            double mean = c.SumRatio / c.N;
+            double w = c.N / (c.N + Math.Max(1e-9, clusterN0));
+            return MathUtil.Clamp(useF + w * (mean - useF), 0.4, 2.5);
+        }
+
+        public void Observe(ZoneKind use, int cluster, double realizedOverPredicted, double shrinkN0)
+        {
+            double clamped = MathUtil.Clamp(realizedOverPredicted, 0.1, 4.0);
             if (!ByUse.TryGetValue(use, out var s)) ByUse[use] = s = new PerUse();
-            s.SumRatio += MathUtil.Clamp(realizedOverPredicted, 0.1, 4.0);
+            s.SumRatio += clamped;
             s.N += 1;
             double mean = s.SumRatio / s.N;
             double w = s.N / (s.N + shrinkN0);          // shrink toward 1.0 on few observations
             s.Factor = MathUtil.Clamp(1.0 + w * (mean - 1.0), 0.4, 2.5);
+            if (!ByCell.TryGetValue((use, cluster), out var c)) ByCell[(use, cluster)] = c = new Cell();
+            c.SumRatio += clamped;
+            c.N += 1;
         }
     }
 

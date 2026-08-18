@@ -81,7 +81,14 @@ Ordered by architectural risk; each gate changes the plan if it fails.
 1. **Save round-trip spike** (§7, §9 item 1) — before any tier persists state.
    The wiring already exists: `EconStatePersistence.Capture` (called by the
    bridge every `CaptureEveryTicks` engine ticks, **only when levying** — shadow
-   sessions leave zero footprint in a save) stamps `ParcelEconState` components,
+   sessions leave zero footprint in a save) stamps `ParcelEconState` components
+   (v2 adds the item-#41 owner tag: `OwnerHousehold`, `OwnerAskPerUnit`;
+   `Household.OwnerMinded`/`OwnerAskShare` are recomputed from the id hash on
+   load, nothing to persist — which makes household-id stability across a
+   round trip a REQUIREMENT this spike has to check, not an assumption: a tag
+   pointing at a re-numbered household is cleared by the engine's pre-solve
+   sweep, so the failure mode is a silently un-owned parcel, not a wrong
+   owner),
    per-resource `ExitEconState` buffers, and the `EconGlobalState` singleton;
    `EconStatePersistence.Restore` pulls them back inside
    `EconReader.BuildInitial`. The spike: flip one tier live in a throwaway city,

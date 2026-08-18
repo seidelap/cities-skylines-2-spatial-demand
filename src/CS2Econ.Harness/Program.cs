@@ -42,11 +42,20 @@ namespace CS2Econ.Harness
                     return TestRunner.RunAll(seed, out _);
                 case "canary":
                 {
-                    int n = 32;
+                    int n = 32, from = 0;
                     for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
                         if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                        // `--from K` sweeps [K, n) alone, without the pinned
+                        // extras: the instrument for dissecting one failing
+                        // seed (a full canary pays ~9s a seed; a knife-edge
+                        // dissection needs one).
+                        if (args[i] == "--from") from = int.Parse(args[i + 1]);
+                    }
                     var set = new List<ulong>();
-                    for (ulong s = 0; s < (ulong)n; s++) set.Add(s);
+                    for (ulong s = (ulong)from; s < (ulong)n; s++) set.Add(s);
+                    if (from > 0) return TestRunner.Canary(set);
+
                     foreach (ulong s in new ulong[] { 138, 208, 271, 327, 549, 910, 6550 })
                         if (!set.Contains(s)) set.Add(s);
                     return TestRunner.Canary(set);
@@ -109,6 +118,24 @@ namespace CS2Econ.Harness
                 }
                 case "assesscheck": // assessment-tracks-price fixture alone (see TestRunner.AssessCheck)
                     return TestRunner.AssessCheck(seed);
+                case "pulsesweep": // uniform-pulse check alone across seeds (see TestRunner.PulseSweep)
+                case "tiesweep":   // tie-channel check alone across seeds (see TestRunner.TieSweep)
+                case "calibsweep": // per-cell calibration check alone across seeds (see TestRunner.CalibSweep)
+                {
+                    int n = 8;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                        if (args[i] == "--tie-bonus") TestRunner.TieBonusOverride = double.Parse(args[i + 1]);
+                    }
+                    var set = new List<ulong>();
+                    for (ulong s = 0; s < (ulong)n; s++) set.Add(s);
+                    foreach (ulong s in new ulong[] { 9, 13 })   // the verify-pinned seeds ride along
+                        if (!set.Contains(s)) set.Add(s);
+                    return cmd == "pulsesweep" ? TestRunner.PulseSweep(set)
+                         : cmd == "tiesweep" ? TestRunner.TieSweep(set)
+                         : TestRunner.CalibSweep(set);
+                }
                 case "scenarios":
                     return Scenarios.RunAll(seed, out _, only);
                 case "fingerprint":
@@ -181,9 +208,15 @@ namespace CS2Econ.Harness
                 case "auctionprobe":
                 {
                     int ticks = 300;
+                    double ownerAsk = 1.0;
                     for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
-                    return Debugging.AuctionProbe(seed, ticks);
+                        // The item-#41 A/B: 0 = asks disabled (every owner door
+                        // folds; structure-only arm), 1 = shipped.
+                        if (args[i] == "--owner-ask") ownerAsk = double.Parse(args[i + 1]);
+                    }
+                    return Debugging.AuctionProbe(seed, ticks, ownerAsk);
                 }
                 case "scanoracle":
                 {

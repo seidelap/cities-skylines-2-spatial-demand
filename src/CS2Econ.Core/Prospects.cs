@@ -57,6 +57,12 @@ namespace CS2Econ.Core
         /// in the process.</summary>
         public static List<(int labor, int cluster, double pricedOdds, double benchOdds)>? AdmitTelemetry;
 
+        /// <summary>Harness-only telemetry: when non-null, every ADMITTED
+        /// prospect appends (its drawn tie cluster or −1, the cluster it
+        /// chose). The tie-channel check reads this; nothing in the mechanism
+        /// does. Same leak discipline as AdmitTelemetry.</summary>
+        public static List<(int tie, int chosen)>? TieTelemetry;
+
         /// <summary>Offer the city to a batch of individuals and admit the ones
         /// who choose to come. Returns what happened, for telemetry.</summary>
         public static Result Step(WorldState w, AccessState acc, HousingAuction a, EconParams p)
@@ -67,22 +73,59 @@ namespace CS2Econ.Core
             int cityPop = 0;
             foreach (var h in w.Households) if (h.ExitedTick < 0) cityPop++;
 
+            // The per-cluster chain-migration stock: decay the whole field one
+            // batch's worth before this batch adds to it (see the field's own
+            // anti-smuggling guard in MigrationState).
+            var ties = w.Migration.NetworkTies;
+            if (ties.Length != acc.C)
+            {
+                // The serializer packs only nonzero clusters, so a loaded
+                // array is routinely shorter than C (any save made before the
+                // top-index cluster's first remembered arrival); the resize
+                // must CARRY THE STOCK OVER — a fresh array here silently
+                // zeroed every neighborhood's chain-migration memory on the
+                // first post-load tick (mod load path only; the harness never
+                // round-trips globals, so no check reaches this).
+                var resized = new double[acc.C];
+                Array.Copy(ties, resized, Math.Min(ties.Length, acc.C));
+                ties = w.Migration.NetworkTies = resized;
+            }
+            double tiesTotal = 0;
+            for (int c = 0; c < acc.C; c++) { ties[c] *= p.NetworkTieDecay; tiesTotal += ties[c]; }
+
             // HOW MANY LOOK. Region-side only: a base rate times how visible the
             // city is. Prominence is a property of the city's SIZE, not of
             // whether it is any good — a big city is heard of, a bad big city is
             // still heard of, and the people who hear of it then look and mostly
             // decline. That is the honest split between "who considers you" and
             // "who chooses you", and it is the whole of what stays global here.
-            double prominence = 1.0 + cityPop / Math.Max(1.0, p.ProminenceScale);
+            // The diaspora counts toward being heard of at the same scale as
+            // residents: each unit of the tie stock is one remembered past
+            // arrival — an outside person with a link here. It is a COUNT of
+            // past admits, not a quality read, so offer size stays blind to
+            // how good the city is; a link made in a boom keeps recruiting
+            // lookers through the bust until it decays.
+            double prominence = 1.0 + (cityPop + tiesTotal) / Math.Max(1.0, p.ProminenceScale);
             double offers = p.RegionOfferRate * prominence * p.RefreshInterval;
             int nOffer = (int)offers;
             if (SplitMix64.Hash01((ulong)w.Tick * 6364136223846793005UL + 17UL) < offers - nOffer) nOffer++;
             if (nOffer <= 0) return res;
 
             int nSeg = Segment.Count;
+            // The outside region's door premium — its access level priced by
+            // the same rule as every city door (AccessState.OutsidePremium).
+            // One value for the whole batch: the outside world is the same
+            // place for everyone looking from it.
+            double outsidePrem = acc.OutsidePremium(p);
             // Scratch for the per-cluster evaluation below; one allocation per
             // batch, reused across the batch's prospects.
             var budgetByCluster = new double[acc.C];
+            // This batch's admits by chosen cluster, folded into the tie stock
+            // only after the batch: a batch must not recruit from itself, and
+            // every prospect in it draws from the same pre-batch stock (a live
+            // mutation would skew the cumulative walk toward low-index
+            // clusters, since the draw is scaled by the pre-batch total).
+            var admitsByCluster = new double[acc.C];
             for (int q = 0; q < nOffer; q++)
             {
                 res.Offered++;
@@ -124,17 +167,42 @@ namespace CS2Econ.Core
                     budgetByCluster[c] = rentShare * acc.ProspectIncome(seg, jobLevel, c, p);
                     if (budgetByCluster[c] > maxBudget) maxBudget = budgetByCluster[c];
                 }
-                // The reservation is what NOT coming is worth, so it is priced
-                // at the OUTSIDE region's odds — the default is staying
-                // outside, and no statistic of this city can change what that
-                // is worth. This removes the last citywide read from the
-                // prospect's decision.
+                // The reservation is what NOT coming is worth, so both its
+                // legs are priced at the OUTSIDE region's own levels — income
+                // at the outside employment odds (#31), access at the outside
+                // region's access level (#42, the outsidePrem factor) — the
+                // default is staying outside, and no statistic of this city
+                // can change what the outside is worth. MeanAccess inside
+                // outsidePrem is not a citywide read of the kind that rule
+                // forbids: it is the shared normalizer every city door's
+                // premium carries too, so it is the unit the comparison is
+                // stated in — and it is exactly what lets a uniformly better
+                // city win the comparison at every door at once.
                 double reservation = reservationShare
-                                     * rentShare * acc.ProspectOutsideIncome(seg, jobLevel, p);
+                                     * rentShare * acc.ProspectOutsideIncome(seg, jobLevel, p)
+                                     * outsidePrem;
                 if (maxBudget <= 0) continue;
 
+                // FAMILIARITY. This individual may have ties to one specific
+                // neighborhood — where its own predecessors landed. Which one
+                // is a birth draw ∝ the per-cluster stock (a bigger diaspora
+                // in a cluster means a looker is more likely to know someone
+                // there), and the tie adds a bonus to THAT cluster's value in
+                // this prospect's own evaluation — an individual's taste for
+                // a place it has ties to, like the taste term. The stock
+                // enters the prospect's decision through this one channel and
+                // nowhere else.
+                int tieCluster = -1;
+                if (tiesTotal > 1e-9)
+                {
+                    double draw = SplitMix64.Hash01(key * 2654435761UL + 71UL) * tiesTotal, accum = 0;
+                    for (int c = 0; c < acc.C; c++)
+                    { accum += ties[c]; if (draw < accum) { tieCluster = c; break; } }
+                }
+                double tieBonusScale = p.MutantZeroTieBonus ? 0 : p.NetworkTieBonusScale;
+
                 int bestSub = a.QuoteOutsider(s, maxBudget, budgetByCluster, densTol, reservation,
-                                              key, p,
+                                              key, p, tieCluster, tieBonusScale,
                                               out double bestSurplus, out bool anyAttainable);
                 if (bestSub < 0)
                 {
@@ -163,7 +231,7 @@ namespace CS2Econ.Core
                     JobLevel = jobLevel,
                     MovingCostDraw = p.MovingCostMean * (0.4 + 1.2 * SplitMix64.Hash01(key * 104729UL)),
                 };
-                hh.DrawAtBirth(seg);
+                hh.DrawAtBirth(seg, p);
                 w.Households.Add(hh);
                 // The savings it brings are the outside world's money crossing
                 // the border. Omitting this transfer mints currency, and no
@@ -171,14 +239,21 @@ namespace CS2Econ.Core
                 // flag-off path, where prospects do not exist.
                 w.Ledger.Transfer(Account.OutsideWorld, Account.Households, hh.Money);
                 res.Admitted++;
-                if (AdmitTelemetry != null)
                 {
-                    int chosen = HousingAuction.KcOf(bestSub) % acc.C;
-                    AdmitTelemetry.Add(((int)seg.Labor, chosen,
-                                        acc.ProspectLocalOdds((int)seg.Labor, chosen, p),
-                                        acc.ProspectBenchOdds((int)seg.Labor)));
+                    // One more remembered arrival at the cluster it chose —
+                    // the stock the NEXT batches' tie draws are proportional to.
+                    // Through ClusterOf, not key arithmetic: the chosen door
+                    // may be an owner parcel's, whose pseudo-key carries no
+                    // cluster in its digits.
+                    int chosen = a.ClusterOf(bestSub);
+                    admitsByCluster[chosen] += 1.0;
+                    AdmitTelemetry?.Add(((int)seg.Labor, chosen,
+                                         acc.ProspectLocalOdds((int)seg.Labor, chosen, p),
+                                         acc.ProspectBenchOdds((int)seg.Labor)));
+                    TieTelemetry?.Add((tieCluster, chosen));
                 }
             }
+            for (int c = 0; c < acc.C; c++) ties[c] += admitsByCluster[c];
             return res;
         }
     }

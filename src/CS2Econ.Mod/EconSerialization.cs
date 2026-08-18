@@ -40,13 +40,16 @@ namespace CS2Econ.Mod
     /// component bytes before any schema bump ships.</summary>
     public static class EconSchema
     {
-        public const uint Version = 1;
+        public const uint Version = 2;   // v2: owner tag with an agent (item #41)
     }
 
     // ---------------------------------------------------------------------
     // Per-parcel state (attached to the building/parcel entity).
-    // Mirrors Parcel.{Escrow, TargetLevel, TargetUse, ScrapePressure} — the
-    // §4.3/§4.4 redevelopment ledger that has no vanilla home.
+    // Mirrors Parcel.{Escrow, TargetLevel, TargetUse, ScrapePressure,
+    // OwnerHousehold, OwnerAskPerUnit} — the §4.3/§4.4 redevelopment ledger
+    // and the item-#41 owner tag/ask, none of which has a vanilla home.
+    // (Household.OwnerMinded/OwnerAskShare are recomputed from the id hash on
+    // load — nothing to persist.)
     // ---------------------------------------------------------------------
     public struct ParcelEconState
 #if !OUT_OF_GAME_BUILD
@@ -58,6 +61,8 @@ namespace CS2Econ.Mod
         public byte TargetLevel;      // ℓ* of the winning configuration
         public byte TargetUse;        // (byte)ZoneKind of the winning configuration
         public short ScrapePressure;  // consecutive ticks the scrape gap held
+        public int OwnerHousehold;    // owning household id, −1 none (item #41)
+        public float OwnerAskPerUnit; // the owner's reserve floor for its own door
 
 #if !OUT_OF_GAME_BUILD
         public void Serialize<TWriter>(TWriter writer) where TWriter : IWriter
@@ -67,6 +72,8 @@ namespace CS2Econ.Mod
             writer.Write(TargetLevel);
             writer.Write(TargetUse);
             writer.Write(ScrapePressure);
+            writer.Write(OwnerHousehold);
+            writer.Write(OwnerAskPerUnit);
         }
 
         public void Deserialize<TReader>(TReader reader) where TReader : IReader
@@ -79,7 +86,13 @@ namespace CS2Econ.Mod
                 reader.Read(out TargetUse);
                 reader.Read(out ScrapePressure);
             }
-            // if (Version >= 2) reader.Read(out NewField);   // append-only
+            if (Version >= 2)
+            {
+                reader.Read(out OwnerHousehold);
+                reader.Read(out OwnerAskPerUnit);
+            }
+            else OwnerHousehold = -1;    // pre-#41 save: no owner, no ask
+            // if (Version >= 3) reader.Read(out NewField);   // append-only
         }
 #endif
     }
@@ -128,8 +141,9 @@ namespace CS2Econ.Mod
     // (kind, index, value) entries — a key-value stream, so the set of scalars
     // can grow without a schema break (unknown kinds are ignored on load).
     // Covers: migration scalars per segment (reservation thresholds, out-signal
-    // EMAs, attract EMAs), network memory, cumulative net inflow, and the
-    // per-use calibration factors (§4.6).
+    // EMAs, attract EMAs), network memory (posted scalar and per-cluster tie
+    // stock), cumulative net inflow, and the calibration factors (§4.6),
+    // per-use and per-(use, cluster).
     // ---------------------------------------------------------------------
     public enum EconGlobalKind : byte
     {
@@ -138,9 +152,12 @@ namespace CS2Econ.Mod
         SegmentAttractEma = 3,      // index = segment
         NetworkMemory = 10,         // index = 0
         CumulativeNetInflow = 11,   // index = 0
+        NetworkTies = 12,           // index = cluster (per-cluster chain-migration stock)
         CalibFactor = 20,           // index = (byte)ZoneKind
         CalibSumRatio = 21,         // index = (byte)ZoneKind
         CalibN = 22,                // index = (byte)ZoneKind
+        CalibCellSumRatio = 23,     // index = (byte)ZoneKind << 12 | cluster (cluster < 4096)
+        CalibCellN = 24,            // index = (byte)ZoneKind << 12 | cluster
     }
 
     /// <summary>Buffer element of the EconGlobalState singleton. VERIFY-INGAME:
@@ -194,6 +211,10 @@ namespace CS2Econ.Mod
             TargetLevel = (byte)Math.Min(Math.Max(p.TargetLevel, 0), byte.MaxValue),
             TargetUse = (byte)p.TargetUse,
             ScrapePressure = (short)Math.Min(p.ScrapePressure, short.MaxValue),
+            // The unclaimed-eligible sentinel (−2) is seed-time-only state and
+            // is deliberately flattened to "no owner" on capture.
+            OwnerHousehold = Math.Max(p.OwnerHousehold, -1),
+            OwnerAskPerUnit = (float)p.OwnerAskPerUnit,
         };
 
         public static void Restore(in ParcelEconState s, Parcel p)
@@ -202,6 +223,8 @@ namespace CS2Econ.Mod
             p.TargetLevel = s.TargetLevel;
             p.TargetUse = (ZoneKind)s.TargetUse;
             p.ScrapePressure = s.ScrapePressure;
+            p.OwnerHousehold = Math.Max(s.OwnerHousehold, -1);
+            p.OwnerAskPerUnit = Math.Max(0, s.OwnerAskPerUnit);
         }
 
         public static ExitEconState Capture(TradeExit e) => new ExitEconState
@@ -240,12 +263,22 @@ namespace CS2Econ.Mod
             }
             Add(EconGlobalKind.NetworkMemory, 0, m.NetworkMemory);
             Add(EconGlobalKind.CumulativeNetInflow, 0, m.CumulativeNetInflow);
+            for (int c = 0; c < m.NetworkTies.Length; c++)
+                if (m.NetworkTies[c] > 0)
+                    Add(EconGlobalKind.NetworkTies, c, m.NetworkTies[c]);
 
             foreach (var kv in w.Calibration.ByUse)
             {
                 Add(EconGlobalKind.CalibFactor, (byte)kv.Key, kv.Value.Factor);
                 Add(EconGlobalKind.CalibSumRatio, (byte)kv.Key, kv.Value.SumRatio);
                 Add(EconGlobalKind.CalibN, (byte)kv.Key, kv.Value.N);
+            }
+            foreach (var kv in w.Calibration.ByCell)
+            {
+                if ((uint)kv.Key.cluster >= 4096) continue;   // index encoding limit; see enum
+                int idx = ((byte)kv.Key.use << 12) | kv.Key.cluster;
+                Add(EconGlobalKind.CalibCellSumRatio, idx, kv.Value.SumRatio);
+                Add(EconGlobalKind.CalibCellN, idx, kv.Value.N);
             }
         }
 
@@ -261,6 +294,23 @@ namespace CS2Econ.Mod
                     w.Calibration.ByUse[use] = s = new CalibrationState.PerUse();
                 return s;
             }
+            CalibrationState.Cell CalCell(ushort idx)
+            {
+                var key = ((ZoneKind)(byte)(idx >> 12), idx & 0xFFF);
+                if (!w.Calibration.ByCell.TryGetValue(key, out var c))
+                    w.Calibration.ByCell[key] = c = new CalibrationState.Cell();
+                return c;
+            }
+            void Tie(ushort idx, float value)
+            {
+                if (m.NetworkTies.Length <= idx)
+                {
+                    var grown = new double[idx + 1];
+                    Array.Copy(m.NetworkTies, grown, m.NetworkTies.Length);
+                    m.NetworkTies = grown;
+                }
+                m.NetworkTies[idx] = value;
+            }
             for (int i = 0; i < entries.Count; i++)
             {
                 var e = entries[i];
@@ -274,9 +324,12 @@ namespace CS2Econ.Mod
                         if (e.Index < Segment.Count) m.SegmentAttractEma[e.Index] = e.Value; break;
                     case EconGlobalKind.NetworkMemory: m.NetworkMemory = e.Value; break;
                     case EconGlobalKind.CumulativeNetInflow: m.CumulativeNetInflow = e.Value; break;
+                    case EconGlobalKind.NetworkTies: Tie(e.Index, e.Value); break;
                     case EconGlobalKind.CalibFactor: Cal(e.Index).Factor = e.Value; break;
                     case EconGlobalKind.CalibSumRatio: Cal(e.Index).SumRatio = e.Value; break;
                     case EconGlobalKind.CalibN: Cal(e.Index).N = e.Value; break;
+                    case EconGlobalKind.CalibCellSumRatio: CalCell(e.Index).SumRatio = e.Value; break;
+                    case EconGlobalKind.CalibCellN: CalCell(e.Index).N = e.Value; break;
                     default: break;   // unknown kind from a newer schema: skip
                 }
             }

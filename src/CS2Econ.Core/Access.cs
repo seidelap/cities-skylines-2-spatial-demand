@@ -249,6 +249,33 @@ namespace CS2Econ.Core
         public double ProspectOutsideIncome(Segment seg, byte jobLevel, EconParams p)
             => ProspectIncomeAtOdds(seg, jobLevel, p.OutsideEmploymentOdds, p);
 
+        /// <summary>The location premium of the OUTSIDE region's door — the
+        /// same rule every city door is priced by (HousingAuction._premium:
+        /// clamp((access/MeanAccess)^PremiumExponent) × BidAccessScale),
+        /// evaluated at the outside region's own access level
+        /// (p.OutsideAccessValue, a property of the outside world). Scales the
+        /// two legs that compare a city offer against staying outside: the
+        /// prospect's reservation (Prospects.Step) and a resident's outside
+        /// option (HousingAuction.BuildHouseholds).
+        ///
+        /// MeanAccess enters ONLY as the normalizer that also scales city
+        /// doors: within the city it cancels across doors, which is exactly
+        /// why a uniform improvement was invisible to the come/stay margin
+        /// until the outside door shared it (measured, boombust at the flip
+        /// commit: inflow-margin response +0 against decline-exit response
+        /// +440 under a uniform amenity pulse). No city vacancy, price or
+        /// other statistic may enter here — offer size stays region-side.</summary>
+        public double OutsidePremium(EconParams p)
+        {
+            // The mutant pins the outside door's access to the city's own mean
+            // (relative premium ≡ 1): the restored defect, kept for the
+            // uniform-pulse check's mutant arm.
+            double anchor = p.MutantRelativeOutsideAccess ? MeanAccess : p.OutsideAccessValue;
+            double rel = anchor / MeanAccess;
+            return MathUtil.Clamp(Math.Pow(Math.Max(0.05, rel), p.PremiumExponent), 0.2, 4.0)
+                   * p.BidAccessScale;
+        }
+
         private double ProspectIncomeAtOdds(Segment seg, byte jobLevel, double rate, EconParams p)
         {
             Span<double> lw = stackalloc double[5];

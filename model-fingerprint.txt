@@ -175,6 +175,68 @@ delta: labor.labor =
 sig: 6BB002DC536512CA
 
 === stanza 7
+recorded: 2026-08-17T14:43:31Z
+reason: Item #42: the outside option becomes one more door priced at the OUTSIDE region's access (EconParams.OutsideAccessValue through AccessState.OutsidePremium, the same clamp/exponent/scale rule as city doors) at both come/stay margins - prospect reservations and resident outside options scale by ~1.27-1.49x on settled fixtures, so a uniform city improvement now moves the margin. Baseline shifts to a churn equilibrium (decline exits live at baseline), admissions/prices/money re-equilibrate on the default (auction) arm; labor lanes move because the labor fixture's housing world carries the same outside anchor. Posted lanes untouched (the posted path does not read the anchor).
+lane default.demography hash=C9D07CF6FBF72AA0 pop=1560 housed=1212 sheltered=0
+lane default.built hash=CDA6DA888115D5BF built=423 meanLevel=1.964539007 units=2332
+lane default.price hash=A4A7E7E4A203471A sumLR=19111.89944 sumLR.high=447.4728796 sumLR.low=597.7906368 meanRent=1.822211325
+lane default.money hash=35B2733ABB66C0BA treasury=90559.16407 hhMoney=533221.0646 firmMoney=141399.7032 escrow=139426.4518 phantoms=-828722.1099 drift=1.28580723E-07
+lane posted.demography hash=1B4B114FF4C821BB pop=1026 housed=807 sheltered=2
+lane posted.built hash=05352836E05C3F47 built=322 meanLevel=1.639751553 units=1930
+lane posted.price hash=56863008365C67D7 sumLR=17770.10645 sumLR.high=1670.55774 sumLR.low=1537.155564 meanRent=4.241551433
+lane posted.money hash=509F93700C936F81 treasury=233363.4208 hhMoney=310074.5584 firmMoney=77341.63689 escrow=151591.9786 phantoms=-696487.321 drift=2.252636477E-08
+lane labor.demography hash=3C87632FBB0BDDDA pop=1603 housed=1274 sheltered=0
+lane labor.built hash=20D6EA461A11F86F built=424 meanLevel=2.061320755 units=2412
+lane labor.price hash=BC1F130ABBA089A6 sumLR=26420.83597 sumLR.high=824.2888163 sumLR.low=1013.660638 meanRent=2.350863028
+lane labor.money hash=EC6317E864990647 treasury=374505.9204 hhMoney=344805.9753 firmMoney=363056.224 escrow=432380.1413 phantoms=-1438863.987 drift=2.677552402E-09
+lane labor.labor hash=4665AFC28C36773A empRate=1 outsideShare=0.571589628 unempShare=0 meanT.basic=6.523058484 meanT.skilled=10.49748278 meanT.educated=17.62394423 meanToverCap=0.3505284767 divCompRatio=0.3798685692
+delta: default.demography hash moved; pop 1592 -> 1560 (-2.01%); housed 1254 -> 1212 (-3.35%); sheltered =
+delta: default.built hash moved; built 431 -> 423 (-1.86%); meanLevel 1.9907193 -> 1.964539 (-1.32%); units =
+delta: default.price hash moved; sumLR 18401.322 -> 19111.899 (+3.86%); sumLR.high 560.48279 -> 447.47288 (-20.16%); sumLR.low 645.25974 -> 597.79064 (-7.36%); meanRent 1.960222 -> 1.8222113 (-7.04%)
+delta: default.money hash moved; treasury 99570.344 -> 90559.164 (-9.05%); hhMoney 507788.92 -> 533221.06 (+5.01%); firmMoney 119940.66 -> 141399.7 (+17.89%); escrow 132544.94 -> 139426.45 (+5.19%); phantoms -783960.58 -> -828722.11 (-5.71%); drift 6.5047061E-07 -> 1.2858072E-07 (-80.23%)
+delta: posted.demography =
+delta: posted.built =
+delta: posted.price =
+delta: posted.money =
+delta: labor.demography hash moved; pop 1624 -> 1603 (-1.29%); housed 1248 -> 1274 (+2.08%); sheltered 1 -> 0 (-100.00%)
+delta: labor.built hash moved; built =; meanLevel 2.0731132 -> 2.0613208 (-0.57%); units 2434 -> 2412 (-0.90%)
+delta: labor.price hash moved; sumLR 26706.751 -> 26420.836 (-1.07%); sumLR.high 1186.9387 -> 824.28882 (-30.55%); sumLR.low 1271.532 -> 1013.6606 (-20.28%); meanRent 2.753506 -> 2.350863 (-14.62%)
+delta: labor.money hash moved; treasury 438787.99 -> 374505.92 (-14.65%); hhMoney 357008.38 -> 344805.98 (-3.42%); firmMoney 352572.64 -> 363056.22 (+2.97%); escrow 468945.58 -> 432380.14 (-7.80%); phantoms -1541430.3 -> -1438864 (+6.65%); drift 5.3434633E-08 -> 2.6775524E-09 (-94.99%)
+delta: labor.labor hash moved; empRate =; outsideShare 0.53226728 -> 0.57158963 (+7.39%); unempShare =; meanT.basic 6.5648257 -> 6.5230585 (-0.64%); meanT.skilled 10.543394 -> 10.497483 (-0.44%); meanT.educated 17.715186 -> 17.623944 (-0.52%); meanToverCap 0.3620168 -> 0.35052848 (-3.17%); divCompRatio 0.31719291 -> 0.37986857 (+19.76%)
+sig: 94F7D006C3763090
+
+=== stanza 8
+recorded: 2026-08-17T17:55:50Z
+reason: Item #34: chain migration and construction calibration become per-cluster. Half A - MigrationState.NetworkTies, a decaying per-cluster count of admitted prospects: each prospect draws a tie cluster from the stock and carries a familiarity bonus (0.15 of its own bid base, the taste term's unit) at that one door, and the total stock joins city size in prominence - default lanes move through who looks and where admits land. Half B - CalibrationState.ByCell, per-(use, cluster) realized-vs-predicted shrunk toward the use factor by n_c/(n_c+2): construction forecasts read the corridor's own record, so default AND posted lanes move (ConstructionSystem is shared by both paths; the posted migration scalar NetworkMemory stays untouched). Labor lanes ride the same housing world.
+lane default.demography hash=A09DD3088C3136B1 pop=1565 housed=1222 sheltered=0
+lane default.built hash=E33FF93909EF1B98 built=418 meanLevel=1.961722488 units=2342
+lane default.price hash=9093571D8E0C80FB sumLR=19179.13043 sumLR.high=471.0495964 sumLR.low=560.9366777 meanRent=1.823623466
+lane default.money hash=5ACC5E58B0E4CD25 treasury=92332.9464 hhMoney=532981.6679 firmMoney=140304.7608 escrow=142175.3213 phantoms=-831910.4226 drift=4.032044671E-07
+lane posted.demography hash=9ADBA8C19A17B72D pop=1031 housed=807 sheltered=2
+lane posted.built hash=03FCDC6167112CBF built=322 meanLevel=1.639751553 units=1930
+lane posted.price hash=D515BEA0AB109A3A sumLR=17944.80868 sumLR.high=1672.325285 sumLR.low=1537.057685 meanRent=4.243149735
+lane posted.money hash=4019418A6AC426D2 treasury=233504.6091 hhMoney=310764.0159 firmMoney=77583.94408 escrow=151802.5021 phantoms=-697770.7974 drift=2.857996151E-08
+lane labor.demography hash=F002B3041A685DC3 pop=1605 housed=1234 sheltered=0
+lane labor.built hash=9605ED359B294B8A built=415 meanLevel=2.03373494 units=2380
+lane labor.price hash=696E38BA1CA942F1 sumLR=26469.18927 sumLR.high=958.7773034 sumLR.low=1129.548292 meanRent=2.506858043
+lane labor.money hash=323A2B5C153DEA86 treasury=376229.3699 hhMoney=348142.8522 firmMoney=361965.5592 escrow=433828.1309 phantoms=-1444281.638 drift=7.642665878E-08
+lane labor.labor hash=7588911A6448E58F empRate=1 outsideShare=0.5753811406 unempShare=0 meanT.basic=6.51959527 meanT.skilled=10.52720989 meanT.educated=17.66947675 meanToverCap=0.3489306049 divCompRatio=0.3811526957
+delta: default.demography hash moved; pop 1560 -> 1565 (+0.32%); housed 1212 -> 1222 (+0.83%); sheltered =
+delta: default.built hash moved; built 423 -> 418 (-1.18%); meanLevel 1.964539 -> 1.9617225 (-0.14%); units 2332 -> 2342 (+0.43%)
+delta: default.price hash moved; sumLR 19111.899 -> 19179.13 (+0.35%); sumLR.high 447.47288 -> 471.0496 (+5.27%); sumLR.low 597.79064 -> 560.93668 (-6.17%); meanRent 1.8222113 -> 1.8236235 (+0.08%)
+delta: default.money hash moved; treasury 90559.164 -> 92332.946 (+1.96%); hhMoney 533221.06 -> 532981.67 (-0.04%); firmMoney 141399.7 -> 140304.76 (-0.77%); escrow 139426.45 -> 142175.32 (+1.97%); phantoms -828722.11 -> -831910.42 (-0.38%); drift 1.2858072E-07 -> 4.0320447E-07 (+213.58%)
+delta: posted.demography hash moved; pop 1026 -> 1031 (+0.49%); housed =; sheltered =
+delta: posted.built hash moved; built =; meanLevel =; units =
+delta: posted.price hash moved; sumLR 17770.106 -> 17944.809 (+0.98%); sumLR.high 1670.5577 -> 1672.3253 (+0.11%); sumLR.low 1537.1556 -> 1537.0577 (-0.01%); meanRent 4.2415514 -> 4.2431497 (+0.04%)
+delta: posted.money hash moved; treasury 233363.42 -> 233504.61 (+0.06%); hhMoney 310074.56 -> 310764.02 (+0.22%); firmMoney 77341.637 -> 77583.944 (+0.31%); escrow 151591.98 -> 151802.5 (+0.14%); phantoms -696487.32 -> -697770.8 (-0.18%); drift 2.2526365E-08 -> 2.8579962E-08 (+26.87%)
+delta: labor.demography hash moved; pop 1603 -> 1605 (+0.12%); housed 1274 -> 1234 (-3.14%); sheltered =
+delta: labor.built hash moved; built 424 -> 415 (-2.12%); meanLevel 2.0613208 -> 2.0337349 (-1.34%); units 2412 -> 2380 (-1.33%)
+delta: labor.price hash moved; sumLR 26420.836 -> 26469.189 (+0.18%); sumLR.high 824.28882 -> 958.7773 (+16.32%); sumLR.low 1013.6606 -> 1129.5483 (+11.43%); meanRent 2.350863 -> 2.506858 (+6.64%)
+delta: labor.money hash moved; treasury 374505.92 -> 376229.37 (+0.46%); hhMoney 344805.98 -> 348142.85 (+0.97%); firmMoney 363056.22 -> 361965.56 (-0.30%); escrow 432380.14 -> 433828.13 (+0.33%); phantoms -1438864 -> -1444281.6 (-0.38%); drift 2.6775524E-09 -> 7.6426659E-08 (+2754.35%)
+delta: labor.labor hash moved; empRate =; outsideShare 0.57158963 -> 0.57538114 (+0.66%); unempShare =; meanT.basic 6.5230585 -> 6.5195953 (-0.05%); meanT.skilled 10.497483 -> 10.52721 (+0.28%); meanT.educated 17.623944 -> 17.669477 (+0.26%); meanToverCap 0.35052848 -> 0.3489306 (-0.46%); divCompRatio 0.37986857 -> 0.3811527 (+0.34%)
+sig: AF79613A062113F8
+
+=== stanza 9
 recorded: 2026-08-17T20:04:46Z
 reason: goods prices localized to realized per-cluster transactions; local freight now paid to OutsideWorld
 lane default.demography hash=C4F96727C8022904 pop=1561 housed=1216 sheltered=0
@@ -203,4 +265,66 @@ delta: labor.built hash moved; built 424 -> 433 (+2.12%); meanLevel 2.0731132 ->
 delta: labor.price hash moved; sumLR 26706.751 -> 27728.367 (+3.83%); sumLR.high 1186.9387 -> 992.28463 (-16.40%); sumLR.low 1271.532 -> 1115.2396 (-12.29%); meanRent 2.753506 -> 2.5958512 (-5.73%)
 delta: labor.money hash moved; treasury 438787.99 -> 412467.8 (-6.00%); hhMoney 357008.38 -> 352012.51 (-1.40%); firmMoney 352572.64 -> 356391.38 (+1.08%); escrow 468945.58 -> 446420.2 (-4.80%); phantoms -1541430.3 -> -1491407.6 (+3.25%); drift 5.3434633E-08 -> 2.5203917E-08 (-52.83%)
 delta: labor.labor hash moved; empRate =; outsideShare 0.53226728 -> 0.55964326 (+5.14%); unempShare =; meanT.basic 6.5648257 -> 6.5329371 (-0.49%); meanT.skilled 10.543394 -> 10.568662 (+0.24%); meanT.educated 17.715186 -> 17.707558 (-0.04%); meanToverCap 0.3620168 -> 0.3682532 (+1.72%); divCompRatio 0.31719291 -> 0.34528975 (+8.86%)
-sig: 29B84CE778F101E4
+sig: EB5909B5DFD46996
+
+=== stanza 10
+recorded: 2026-08-18T00:03:19Z
+reason: Item #41: an owner parcel becomes its own auction door. An owner-tagged res-low parcel whose ask binds above its own structure floor holds its units at a per-parcel door reserved at max(own condition floor, owner's ask) instead of pooling into the (density, cluster, level) submarket, so capacity partitions out of the pooled door and a per-parcel condition floor replaces the pooled average there; the ask is written between solves from the owner's own valuation net of its own outside option and is read by no assessment. Default (auction) lanes move for the doors: on the 300-tick reference probe 70 live doors, occupancy 100 to 97 percent with 55 doors resting at their floor. The owner tag now NAMES a household and is drawn at birth, so auction-path arrivals can own again, the seeding moving-cost margin follows the claimant instead of every co-seeded household, and redevelopment consent clears when an owner leaves - which is why posted lanes move too: that path's arrivals take their owner disposition from the birth hash instead of the arrival loop's own RNG roll, and its world re-rolls with it. Repair cap 16 to 20 on seed 16's measured 16-round chain. Canary 39/39, laborcanary 39/39.
+lane default.demography hash=4609F4A38215CA4D pop=1507 housed=1226 sheltered=0
+lane default.built hash=94C5755754093899 built=416 meanLevel=1.961538462 units=2348
+lane default.price hash=063288EF0662C175 sumLR=17624.40623 sumLR.high=479.7054787 sumLR.low=565.6074922 meanRent=1.805885432
+lane default.money hash=FCD2E362AD99BCA4 treasury=107511.2619 hhMoney=516560.817 firmMoney=133177.407 escrow=142965.9424 phantoms=-824331.1545 drift=2.201995812E-07
+lane posted.demography hash=98C707016B155838 pop=1035 housed=791 sheltered=4
+lane posted.built hash=672C0119685B5D81 built=316 meanLevel=1.642405063 units=1918
+lane posted.price hash=FF603BA365662FA5 sumLR=18033.85014 sumLR.high=2094.171163 sumLR.low=1630.30593 meanRent=4.899389302
+lane posted.money hash=BF0C8D437811BBFC treasury=243955.7221 hhMoney=301796.3659 firmMoney=78990.96777 escrow=152941.2438 phantoms=-701800.0256 drift=6.152549759E-08
+lane labor.demography hash=1CB5758DFE72C19C pop=1524 housed=1220 sheltered=0
+lane labor.built hash=3A2CCE20D5060738 built=414 meanLevel=2.070048309 units=2386
+lane labor.price hash=73952F4D321998D2 sumLR=27817.74201 sumLR.high=1343.166371 sumLR.low=1414.606242 meanRent=2.975467193
+lane labor.money hash=82A154180C2651BB treasury=412392.2361 hhMoney=321120.0054 firmMoney=352590.717 escrow=433070.1546 phantoms=-1443288.839 drift=1.388834789E-07
+lane labor.labor hash=90737D31551AC06D empRate=1 outsideShare=0.5714285714 unempShare=0 meanT.basic=6.504796996 meanT.skilled=10.55969361 meanT.educated=17.62320062 meanToverCap=0.3625123343 divCompRatio=0.3583739185
+delta: default.demography hash moved; pop 1565 -> 1507 (-3.71%); housed 1222 -> 1226 (+0.33%); sheltered =
+delta: default.built hash moved; built 418 -> 416 (-0.48%); meanLevel 1.9617225 -> 1.9615385 (-0.01%); units 2342 -> 2348 (+0.26%)
+delta: default.price hash moved; sumLR 19179.13 -> 17624.406 (-8.11%); sumLR.high 471.0496 -> 479.70548 (+1.84%); sumLR.low 560.93668 -> 565.60749 (+0.83%); meanRent 1.8236235 -> 1.8058854 (-0.97%)
+delta: default.money hash moved; treasury 92332.946 -> 107511.26 (+16.44%); hhMoney 532981.67 -> 516560.82 (-3.08%); firmMoney 140304.76 -> 133177.41 (-5.08%); escrow 142175.32 -> 142965.94 (+0.56%); phantoms -831910.42 -> -824331.15 (+0.91%); drift 4.0320447E-07 -> 2.2019958E-07 (-45.39%)
+delta: posted.demography hash moved; pop 1031 -> 1035 (+0.39%); housed 807 -> 791 (-1.98%); sheltered 2 -> 4 (+100.00%)
+delta: posted.built hash moved; built 322 -> 316 (-1.86%); meanLevel 1.6397516 -> 1.6424051 (+0.16%); units 1930 -> 1918 (-0.62%)
+delta: posted.price hash moved; sumLR 17944.809 -> 18033.85 (+0.50%); sumLR.high 1672.3253 -> 2094.1712 (+25.23%); sumLR.low 1537.0577 -> 1630.3059 (+6.07%); meanRent 4.2431497 -> 4.8993893 (+15.47%)
+delta: posted.money hash moved; treasury 233504.61 -> 243955.72 (+4.48%); hhMoney 310764.02 -> 301796.37 (-2.89%); firmMoney 77583.944 -> 78990.968 (+1.81%); escrow 151802.5 -> 152941.24 (+0.75%); phantoms -697770.8 -> -701800.03 (-0.58%); drift 2.8579962E-08 -> 6.1525498E-08 (+115.27%)
+delta: labor.demography hash moved; pop 1605 -> 1524 (-5.05%); housed 1234 -> 1220 (-1.13%); sheltered =
+delta: labor.built hash moved; built 415 -> 414 (-0.24%); meanLevel 2.0337349 -> 2.0700483 (+1.79%); units 2380 -> 2386 (+0.25%)
+delta: labor.price hash moved; sumLR 26469.189 -> 27817.742 (+5.09%); sumLR.high 958.7773 -> 1343.1664 (+40.09%); sumLR.low 1129.5483 -> 1414.6062 (+25.24%); meanRent 2.506858 -> 2.9754672 (+18.69%)
+delta: labor.money hash moved; treasury 376229.37 -> 412392.24 (+9.61%); hhMoney 348142.85 -> 321120.01 (-7.76%); firmMoney 361965.56 -> 352590.72 (-2.59%); escrow 433828.13 -> 433070.15 (-0.17%); phantoms -1444281.6 -> -1443288.8 (+0.07%); drift 7.6426659E-08 -> 1.3888348E-07 (+81.72%)
+delta: labor.labor hash moved; empRate =; outsideShare 0.57538114 -> 0.57142857 (-0.69%); unempShare =; meanT.basic 6.5195953 -> 6.504797 (-0.23%); meanT.skilled 10.52721 -> 10.559694 (+0.31%); meanT.educated 17.669477 -> 17.623201 (-0.26%); meanToverCap 0.3489306 -> 0.36251233 (+3.89%); divCompRatio 0.3811527 -> 0.35837392 (-5.98%)
+sig: 9C39ED6FEE78DE86
+
+=== stanza 11
+recorded: 2026-08-18T01:51:37Z
+reason: The two-track merge: housing (outside-access anchor for the come/stay margin, per-cluster network ties and per-cell construction calibration, per-parcel owner doors) and goods (Weber investigated to its cause, per-cluster delivered goods prices, and that item's check-integrity fix round). Every default lane moves - both tracks change what the default auction world settles into, and the labor arm moves with the goods prices its caps read. Posted lanes move too: the trade tier is shared, so the posted WORLD re-equilibrates even though the posted transmission is untouched (measured: 0 of 57 occsweep detail lines byte-identical, substantive price leg unharmed). Gate at the merge: canary 39/39, laborcanary 39/39, verify 41 checks with seed 9 at 41/41, webersweep 24/26.
+lane default.demography hash=072408A49C35B6FE pop=1499 housed=1194 sheltered=0
+lane default.built hash=872E57ED7F1D8AE0 built=405 meanLevel=1.933333333 units=2316
+lane default.price hash=F136699AE1FE1F48 sumLR=17011.59901 sumLR.high=534.2633506 sumLR.low=596.6857715 meanRent=1.894785073
+lane default.money hash=C3F1269CCA48F219 treasury=100152.0302 hhMoney=511175.5547 firmMoney=137081.8893 escrow=133527.9437 phantoms=-806053.144 drift=2.043670975E-07
+lane posted.demography hash=13C227329F9FEEA0 pop=1001 housed=802 sheltered=1
+lane posted.built hash=54824FD890F251D1 built=318 meanLevel=1.619496855 units=1922
+lane posted.price hash=61A4C73F640A8A34 sumLR=16313.43213 sumLR.high=1802.143998 sumLR.low=1492.023906 meanRent=4.358823045
+lane posted.money hash=EEF6C8B77EB4DD7C treasury=229289.7641 hhMoney=292810.8165 firmMoney=70167.54379 escrow=147435.4605 phantoms=-663819.311 drift=1.065200195E-08
+lane labor.demography hash=E3667102FB4CA16A pop=1489 housed=1186 sheltered=0
+lane labor.built hash=E4B5AA69DD12D819 built=403 meanLevel=2.042183623 units=2306
+lane labor.price hash=D5FC324D33FF1D46 sumLR=26287.26702 sumLR.high=1327.713869 sumLR.low=1425.923487 meanRent=3.019847257
+lane labor.money hash=7462EABA959F3C3C treasury=387127.2885 hhMoney=313476.7666 firmMoney=342898.5835 escrow=421926.9284 phantoms=-1389545.293 drift=3.556488082E-08
+lane labor.labor hash=9E14C3B5DD29DE12 empRate=1 outsideShare=0.589345172 unempShare=0 meanT.basic=6.51666562 meanT.skilled=10.55375063 meanT.educated=17.640157 meanToverCap=0.3660324432 divCompRatio=0.3869305612
+delta: default.demography hash moved; pop 1507 -> 1499 (-0.53%); housed 1226 -> 1194 (-2.61%); sheltered =
+delta: default.built hash moved; built 416 -> 405 (-2.64%); meanLevel 1.9615385 -> 1.9333333 (-1.44%); units 2348 -> 2316 (-1.36%)
+delta: default.price hash moved; sumLR 17624.406 -> 17011.599 (-3.48%); sumLR.high 479.70548 -> 534.26335 (+11.37%); sumLR.low 565.60749 -> 596.68577 (+5.49%); meanRent 1.8058854 -> 1.8947851 (+4.92%)
+delta: default.money hash moved; treasury 107511.26 -> 100152.03 (-6.85%); hhMoney 516560.82 -> 511175.55 (-1.04%); firmMoney 133177.41 -> 137081.89 (+2.93%); escrow 142965.94 -> 133527.94 (-6.60%); phantoms -824331.15 -> -806053.14 (+2.22%); drift 2.2019958E-07 -> 2.043671E-07 (-7.19%)
+delta: posted.demography hash moved; pop 1035 -> 1001 (-3.29%); housed 791 -> 802 (+1.39%); sheltered 4 -> 1 (-75.00%)
+delta: posted.built hash moved; built 316 -> 318 (+0.63%); meanLevel 1.6424051 -> 1.6194969 (-1.39%); units 1918 -> 1922 (+0.21%)
+delta: posted.price hash moved; sumLR 18033.85 -> 16313.432 (-9.54%); sumLR.high 2094.1712 -> 1802.144 (-13.94%); sumLR.low 1630.3059 -> 1492.0239 (-8.48%); meanRent 4.8993893 -> 4.358823 (-11.03%)
+delta: posted.money hash moved; treasury 243955.72 -> 229289.76 (-6.01%); hhMoney 301796.37 -> 292810.82 (-2.98%); firmMoney 78990.968 -> 70167.544 (-11.17%); escrow 152941.24 -> 147435.46 (-3.60%); phantoms -701800.03 -> -663819.31 (+5.41%); drift 6.1525498E-08 -> 1.0652002E-08 (-82.69%)
+delta: labor.demography hash moved; pop 1524 -> 1489 (-2.30%); housed 1220 -> 1186 (-2.79%); sheltered =
+delta: labor.built hash moved; built 414 -> 403 (-2.66%); meanLevel 2.0700483 -> 2.0421836 (-1.35%); units 2386 -> 2306 (-3.35%)
+delta: labor.price hash moved; sumLR 27817.742 -> 26287.267 (-5.50%); sumLR.high 1343.1664 -> 1327.7139 (-1.15%); sumLR.low 1414.6062 -> 1425.9235 (+0.80%); meanRent 2.9754672 -> 3.0198473 (+1.49%)
+delta: labor.money hash moved; treasury 412392.24 -> 387127.29 (-6.13%); hhMoney 321120.01 -> 313476.77 (-2.38%); firmMoney 352590.72 -> 342898.58 (-2.75%); escrow 433070.15 -> 421926.93 (-2.57%); phantoms -1443288.8 -> -1389545.3 (+3.72%); drift 1.3888348E-07 -> 3.5564881E-08 (-74.39%)
+delta: labor.labor hash moved; empRate =; outsideShare 0.57142857 -> 0.58934517 (+3.14%); unempShare =; meanT.basic 6.504797 -> 6.5166656 (+0.18%); meanT.skilled 10.559694 -> 10.553751 (-0.06%); meanT.educated 17.623201 -> 17.640157 (+0.10%); meanToverCap 0.36251233 -> 0.36603244 (+0.97%); divCompRatio 0.35837392 -> 0.38693056 (+7.97%)
+sig: 13E4EB42BFCA8FED

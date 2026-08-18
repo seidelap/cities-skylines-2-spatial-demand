@@ -404,7 +404,11 @@ namespace CS2Econ.Harness
                 int before = Results.Count;
                 Console.WriteLine($"--- seed {seed}");
                 AuctionEquilibrium(seed);
-                bool ok = Results.Count > before && Results[Results.Count - 1].pass;
+                // The fixture emits one result per leg (the equilibrium check
+                // and the owner-door legs, item #41); a seed passes only if
+                // every leg does — same rule as the other sweeps.
+                bool ok = Results.Count > before;
+                for (int k = before; k < Results.Count; k++) ok &= Results[k].pass;
                 if (!ok) failed.Add(seed);
             }
             Console.WriteLine($"canary: {seeds.Count - failed.Count}/{seeds.Count} seeds pass "
@@ -508,6 +512,75 @@ namespace CS2Econ.Harness
             return Math.Min(failed.Count, 100);
         }
 
+        /// <summary>The uniform-pulse check alone across seeds — same
+        /// rationale as <see cref="Canary"/> (cheap fixture, many seeds), and
+        /// the instrument its bars were measured with: both arms' rises print
+        /// per seed, so re-measuring the bands after a change to the prospect
+        /// path or the outside anchor is one command.</summary>
+        public static int PulseSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"uniform-pulse sweep: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                UniformPulseMonotonicity(seed);
+                // The fixture emits one result per leg (prospect margin,
+                // resident margin); a seed passes only if every leg does.
+                bool ok = Results.Count > before;
+                for (int k = before; k < Results.Count; k++) ok &= Results[k].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"pulse sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
+        /// <summary>The tie-channel check alone across seeds — the instrument
+        /// its bars were measured with (same rationale as PulseSweep): both
+        /// arms' lifts print per seed, so re-measuring the bands after a
+        /// change to the tie draw, the bonus, or the stock is one command.</summary>
+        public static int TieSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"tie-channel sweep: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                ProspectTieChannel(seed);
+                bool ok = Results.Count > before;
+                for (int k = before; k < Results.Count; k++) ok &= Results[k].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"tie sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
+        /// <summary>The per-cell calibration check alone across seeds — the
+        /// instrument its floors, gap and n0 thresholds were measured with;
+        /// each seed also prints the cell-depth distribution the n0 comment
+        /// in EconParams cites.</summary>
+        public static int CalibSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"calibration-cell sweep: {seeds.Count} seeds");
+            var failed = new List<ulong>();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                CalibClusterCheck(seed);
+                bool ok = Results.Count > before;
+                for (int k = before; k < Results.Count; k++) ok &= Results[k].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"calib sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
         /// <summary>The assessment-tracks-price fixture alone (both its
         /// checks: the L1–L3 relation and the shadow-queue leg) — ~7 s
         /// against ~120 s for the full suite (measured, seed 1, check-debt
@@ -540,6 +613,9 @@ namespace CS2Econ.Harness
             Timed("occupancy-channel", () => OccupancyChannel(seed));
             Timed("auction-equilibrium", () => AuctionEquilibrium(seed));
             Timed("prospect-local-odds", () => ProspectLocalOddsCheck(seed));
+            Timed("uniform-pulse", () => UniformPulseMonotonicity(seed));
+            Timed("prospect-tie-channel", () => ProspectTieChannel(seed));
+            Timed("calibration-cells", () => CalibClusterCheck(seed));
             Timed("exhaustive-shortlist", () => ExhaustiveShortlist(seed));
             Timed("assignment-oracle", () => {
                 var (lpOk, lpDetail) = AssignmentOracle.Run(seed);
@@ -2070,6 +2146,378 @@ namespace CS2Econ.Harness
                   $"(cross-cluster w-wtd rate sd ≤{maxSd:F3} bounds what tilt could show on this fixture)");
         }
 
+        /// <summary>A UNIFORMLY BETTER CITY MUST ADMIT MORE PROSPECTS. The
+        /// come/stay margin compares a specific city door against the outside
+        /// region's door, and the outside door is priced by the same premium
+        /// rule at the OUTSIDE region's access level (AccessState.
+        /// OutsidePremium). A spatially uniform improvement cancels out of
+        /// every within-city comparison — all city doors share the MeanAccess
+        /// normalizer — so the ONLY place it can land is the outside door's
+        /// relative premium, which is exactly the term that was structurally
+        /// missing when the boombust flip inventory measured inflow-margin
+        /// response +0 against decline-exit response +440.
+        ///
+        /// THE TWO BATCHES ARE PAIRED ON ONE WORLD. Run a fixture, offer one
+        /// prospect batch, then apply a uniform amenity delta and refresh the
+        /// access field WITHOUT re-solving the auction: every posted price,
+        /// entry price and within-city premium the second batch reads is
+        /// bit-identical to what the first batch read (the solve is untouched),
+        /// employment odds are the same realized rates re-served, and the
+        /// batch keys are functions of (tick, q) with the tick unchanged — so
+        /// the second batch is the same people quoting the same doors, and the
+        /// only live difference is the outside door's premium at the new
+        /// MeanAccess. Admitted-SHARE is compared rather than the count
+        /// because the first batch's admissions nudge prominence and hence the
+        /// second batch's offer count by a few heads.
+        ///
+        /// The declined floor keeps the check from passing vacuously: a
+        /// fixture where nobody declines has no live margin for the pulse to
+        /// move (that saturation was precisely the pre-#42 state, when the
+        /// Declined outcome was structurally dead).
+        ///
+        /// MUTANT ARM, wired in like the Ward check's: the same fixture with
+        /// p.MutantRelativeOutsideAccess restoring the removed defect (outside
+        /// door anchored on the city's own MeanAccess, relative premium ≡ 1).
+        /// The pulse must then FAIL to move the admitted share past the bar,
+        /// or the check is vacuous. The clean arm takes the switch at its
+        /// EconParams default rather than pinning it false, so a shipped flip
+        /// of that default runs the clean arm as the mutant and goes red here
+        /// — the switch default is itself under the check, not only under the
+        /// fingerprint gate.
+        ///
+        /// THE RESIDENT MARGIN gets its own leg on the same paired world
+        /// (item-#42 fix round: the prospect legs alone left `_outside[i] *=
+        /// outsidePrem` with no semantic check that could fail — severing it
+        /// flipped nothing but the fingerprint drift alarm, because every
+        /// equilibrium/IR check reads the same `_outside` the solve used and
+        /// is self-consistent under ANY scaling of it). The standing solve ran
+        /// on the pre-pulse field, so each live resident's `_outside` is its
+        /// walk-away value at the old outside premium; re-solving on the
+        /// refreshed field re-derives it through the production path
+        /// (BuildHouseholds) with every per-household input bit-identical —
+        /// no tick advances, and Reservation(budget) reads only birth draws
+        /// and job state (JobLevel, Earners, UnemployedTicks) that nothing
+        /// between the two solves touches — so the per-resident ratio
+        /// after/before isolates exactly the outside door's premium factor.
+        /// The leg asserts the geometric-mean ratio FALLS with the premium;
+        /// a severed resident leg pins it at 1. Ordered after both prospect
+        /// batches so those still read the un-resolved prices the prospect
+        /// pairing requires.</summary>
+        private static void UniformPulseMonotonicity(ulong seed)
+        {
+            (Prospects.Result r1, Prospects.Result r2, double prem0, double prem1,
+             double residRatio, int residN) Arm(bool mutantArm)
+            {
+                var p = new EconParams();
+                if (mutantArm) p.MutantRelativeOutsideAccess = true;
+                var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+                var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+                sim.Run(160);
+                var acc = sim.Engine.Access;
+                var a = sim.Engine.Auction!;
+                // Big probe batches, harness-side only: offer size is a
+                // region-side parameter, and inflating it AFTER the warmup
+                // changes nothing about the world being quoted — it just gives
+                // the paired comparison a sample the share bars can see.
+                p.RegionOfferRate = 250;
+                double prem0 = acc.OutsidePremium(p);
+                var r1 = Prospects.Step(sim.W, acc, a, p);
+                foreach (var c in sim.W.Clusters) c.Amenity += 1.5;
+                acc.Refresh(sim.W, sim.Engine.Costs, p, sim.Flags);
+                double prem1 = acc.OutsidePremium(p);
+                var r2 = Prospects.Step(sim.W, acc, a, p);
+                // Resident leg: pair each live resident's standing outside
+                // option against its re-derivation on the pulsed field.
+                // Households the batches admitted are beyond the standing
+                // solve's arrays (OutsideOf reads 0) and drop out of the pair.
+                int nh = sim.W.Households.Count;
+                var before = new double[nh];
+                for (int i = 0; i < nh; i++)
+                    before[i] = sim.W.Households[i].ExitedTick < 0 ? a.OutsideOf(i) : 0;
+                a.Solve(sim.W, acc, p);
+                double sumLog = 0; int residN = 0;
+                for (int i = 0; i < nh; i++)
+                {
+                    if (before[i] <= 0) continue;
+                    double after = a.OutsideOf(i);
+                    if (after <= 0) continue;
+                    sumLog += Math.Log(after / before[i]); residN++;
+                }
+                double residRatio = residN > 0 ? Math.Exp(sumLog / residN) : 1.0;
+                return (r1, r2, prem0, prem1, residRatio, residN);
+            }
+
+            var clean = Arm(false);
+            var mut = Arm(true);
+            double Share(Prospects.Result r) => r.Offered > 0 ? (double)r.Admitted / r.Offered : 0;
+            double riseClean = Share(clean.r2) - Share(clean.r1);
+            double riseMut = Share(mut.r2) - Share(mut.r1);
+
+            // Bars measured at the item-#42 bring-up sweep (`pulsesweep`,
+            // seeds 0-15, which includes the verify-pinned 9 and 13): clean
+            // rise +0.037 (seed 9) .. +0.070 (seed 5) of offered; mutant arm
+            // -0.006..+0.005 — batch-composition noise around zero, its
+            // outside premium pinned at clamp(1)×BidAccessScale exactly
+            // (prem1 == prem0 to the last bit). The refuter's wider sweep and
+            // the fix-round re-measurement (`pulsesweep --seeds 24`, seeds
+            // 0-23) put the mutant arm at -0.011..+0.009 and the clean rise at
+            // +0.037..+0.071 — so the bar's real margin is ~1.8x over the
+            // worst mutant reading and ~1.8x under the worst clean one, not
+            // the 4x the 16-seed band suggested. Do not tighten the bar
+            // without re-running the 24-seed sweep.
+            const double RiseBar = 0.02;
+            const int MinDeclined = 10;
+            Check("uniform pulse admits more: the outside door prices the pulse the city doors cancel — and the relative-outside mutant flips it red",
+                  clean.r1.Declined >= MinDeclined
+                  && riseClean >= RiseBar && riseMut < RiseBar,
+                  $"clean: admitted share {Share(clean.r1):F3} → {Share(clean.r2):F3} (+{riseClean:F3} vs ≥{RiseBar:F3} bar) "
+                  + $"on {clean.r1.Offered}/{clean.r2.Offered} offered, {clean.r1.Declined} declined at base (floor {MinDeclined}), "
+                  + $"outside premium {clean.prem0:F3} → {clean.prem1:F3}; "
+                  + $"mutant: {riseMut:+0.000;-0.000;0.000} at premium {mut.prem0:F3} → {mut.prem1:F3} (must stay under the bar)");
+
+            // Resident-leg bars, measured at the item-#42 fix round
+            // (`pulsesweep --seeds 24`, seeds 0-23): clean geometric-mean
+            // fall 0.161..0.176, tracking the premium ratio (1 − prem1/prem0)
+            // to three digits on every seed; the mutant arm's premium is
+            // pinned so its fall reads 0.000 exactly on all 24 — no
+            // per-household input moves between the standing solve and the
+            // re-derivation. The bar sits ~4x under the worst clean fall. A
+            // severed resident leg (`_outside[i]` without the premium factor)
+            // reads the mutant's number on the clean arm and goes red.
+            const double ResidFallBar = 0.04;
+            const int MinResidents = 500;
+            double fallClean = 1 - clean.residRatio;
+            double fallMut = 1 - mut.residRatio;
+            Check("resident outside option re-prices with the outside door: re-deriving the solve's own _outside on the pulsed field moves every resident's walk-away value by the premium — and the relative-outside mutant pins it",
+                  clean.residN >= MinResidents
+                  && fallClean >= ResidFallBar && fallMut < ResidFallBar,
+                  $"clean: resident outside options fell {fallClean:F3} geo-mean over {clean.residN} residents "
+                  + $"(≥{ResidFallBar:F3} bar, floor {MinResidents}; premium ratio {clean.prem1 / clean.prem0:F3}); "
+                  + $"mutant: {fallMut:+0.000;-0.000;0.000} over {mut.residN} (must stay under the bar)");
+        }
+
+        /// <summary>TIES CHANGE WHERE ADMITS LAND — the channel, not the
+        /// geography. Each prospect draws a tie cluster ∝ the per-cluster
+        /// chain-migration stock and gets a familiarity bonus at that one
+        /// door (Prospects.Step → QuoteOutsider), so its tie must make it
+        /// MORE likely to land there than the batch's marginal landing
+        /// pattern alone predicts. The statistic is therefore a LIFT over an
+        /// independence baseline computed from the same batch's own
+        /// marginals — Σ_c P(tie=c)·P(chosen=c) — rather than any
+        /// concentration measure: popular clusters both attract admits and
+        /// hold big stocks, so raw tie-landing coincidence is high with the
+        /// bonus severed, and a geography-shaped statistic would pass on a
+        /// dead channel. Lift is exactly the dependence the bonus creates
+        /// and nothing else. (The #31 check's level/tilt split is the
+        /// template: one leg for the level a defect shifts, one for the
+        /// dependence only the live channel produces.)
+        ///
+        /// The probe batch reads the warmed-up world with an inflated offer
+        /// count, harness-side only — offer size is region-side, so a bigger
+        /// batch changes nothing about the world being quoted, it just gives
+        /// the shares a sample (same trick as the uniform-pulse check).
+        ///
+        /// MUTANT ARM, wired in Ward-style: p.MutantZeroTieBonus zeroes the
+        /// bonus while the tie draw and the stock keep running, so the same
+        /// fixture must read lift ≈ 0 — the check is vacuous otherwise. The
+        /// clean arm takes the switch at its EconParams default, so a
+        /// shipped default flip runs the clean arm as the mutant and goes
+        /// red here.
+        ///
+        /// Bars measured at the item-#34 bring-up (`tiesweep --seeds 16`,
+        /// seeds 0–15, the verify-pinned 9 and 13 among them, at the shipped
+        /// bonus 0.15): clean lift +0.027..+0.052 (probe batches admit
+        /// 1000–1150, every one tied), mutant arm −0.004..+0.006. The 0.015
+        /// bar is ~1.8x under the worst clean seed and ~2.5x over the worst
+        /// mutant reading — the same margin class as the uniform-pulse bar;
+        /// re-run the 16-seed sweep before tightening. Against the DRAW
+        /// rather than the bonus the margin is thinner and seed-dependent:
+        /// a UNIFORM tie draw with the bonus alive (the "people follow
+        /// people" proportionality severed) read clean lift +0.012..+0.019
+        /// on seeds 0/9/13 and was caught only at seed 9 (fix-round
+        /// weakening run, reverted; the adversarial round's variant of the
+        /// same weakening read +0.010..+0.012, caught 3/3) — the bonus
+        /// alone manufactures some tie-landing dependence, so this bar
+        /// gates the BONUS channel and only brushes the draw; a draw
+        /// regression is not reliably caught here, and any bar move needs
+        /// that weakening re-run, not just the clean sweep. Dose-response
+        /// of the bonus itself: EconParams.NetworkTieBonusScale.</summary>
+        /// <summary>Sweep instrument only (`tiesweep --tie-bonus X`): overrides
+        /// NetworkTieBonusScale in the tie-channel fixture's arms, so the
+        /// parameter's dose-response is one command per value. Null in every
+        /// other run.</summary>
+        public static double? TieBonusOverride;
+
+        private static void ProspectTieChannel(ulong seed)
+        {
+            (double lift, double match, double indep, int admits, int tied) Arm(bool mutantArm)
+            {
+                var p = new EconParams();
+                if (TieBonusOverride is double tb) p.NetworkTieBonusScale = tb;
+                if (mutantArm) p.MutantZeroTieBonus = true;
+                var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+                var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+                sim.Run(160);
+                p.RegionOfferRate = 250;
+                var tel = new List<(int tie, int chosen)>();
+                Prospects.TieTelemetry = tel;
+                try { Prospects.Step(sim.W, sim.Engine.Access, sim.Engine.Auction!, p); }
+                finally { Prospects.TieTelemetry = null; }
+                int C = sim.Engine.Access.C;
+                var tieCnt = new double[C]; var chosenCnt = new double[C];
+                int admits = 0, matched = 0, tied = 0;
+                foreach (var (tie, chosen) in tel)
+                {
+                    admits++;
+                    chosenCnt[chosen]++;
+                    if (tie < 0) continue;
+                    tied++;
+                    tieCnt[tie]++;
+                    if (tie == chosen) matched++;
+                }
+                double indep = 0;
+                if (tied > 0 && admits > 0)
+                    for (int c = 0; c < C; c++)
+                        indep += (tieCnt[c] / tied) * (chosenCnt[c] / admits);
+                double match = tied > 0 ? (double)matched / tied : 0;
+                return (match - indep, match, indep, admits, tied);
+            }
+
+            var clean = Arm(false);
+            var mut = Arm(true);
+            const double LiftBar = 0.015;
+            const int MinTied = 200;   // healthy probe batches admit ~1000-1100, every one tied (bring-up sweeps)
+            Check("prospect ties steer admits to the tied neighborhood: tie-landing lift over the batch's own independence baseline — and the zero-bonus mutant flips it",
+                  clean.tied >= MinTied && mut.tied >= MinTied
+                  && clean.lift >= LiftBar && mut.lift < LiftBar,
+                  $"clean: {clean.tied} tied admits (of {clean.admits}), landed-in-tie share {clean.match:F3} "
+                  + $"vs independence {clean.indep:F3} (lift +{clean.lift:F3} vs ≥{LiftBar:F3} bar); "
+                  + $"mutant: {mut.lift:+0.000;-0.000;0.000} on {mut.tied} tied (must stay under the bar)");
+        }
+
+        /// <summary>CONSTRUCTION CALIBRATION IS PER-PLACE. A developer's
+        /// forecast correction at (use, cluster) must be the developer's own
+        /// realized-vs-predicted record AT THAT PLACE where the record is
+        /// deep, and the use-wide record where it is thin — the same
+        /// shrinkage shape as ProspectLocalOdds (#31). Three legs on one
+        /// fixture, evaluated over divergent cells (|own mean − use factor|
+        /// ≥ the gap floor, so every leg has something to distinguish):
+        ///
+        ///  (1) CONVERGENCE: cells with n_c ≥ 2·n0 sit strictly closer to
+        ///      their own mean ratio than to the use factor (w ≥ 2/3 there).
+        ///      A restored citywide-only Factor pins every cell at the use
+        ///      factor and flips this leg (source mutant run, below).
+        ///  (2) SHRINKAGE: cells with n_c ≤ n0/2 sit closer to the use
+        ///      factor than to their own mean (w ≤ 1/3). A zeroed prior
+        ///      (n0 → 0) jumps them to their own one-completion mean and
+        ///      flips this leg (source mutant run, below).
+        ///  (3) CALL SITE: the construction forecast itself
+        ///      (ConstructionSystem.ExpectedFlow's predictedRent) equals
+        ///      bid × the PER-CELL factor at the deepest divergent cell —
+        ///      re-derived through LandAccounting.BidPerUnit — and that
+        ///      factor differs from the use factor by the cell's own gap.
+        ///      Reverting the call site to Factor(use) flips this leg while
+        ///      (1)-(2) stay green (the state would still be right, the
+        ///      decision would ignore it — the exact regression this leg
+        ///      exists to catch).
+        ///
+        /// Both source mutants were run and reverted at the item-#34
+        /// bring-up (`calibsweep --seeds 4` mutant runs, seeds 0–3 + 9, 13):
+        /// citywide-only (Factor(use, cluster, n0) → Factor(use)) reds legs
+        /// 1 and 3 on 6/6 seeds (convergence 0/14..0/27, call site "NOT the
+        /// cell" with factor ≡ use factor); zero-prior (w → 1 at the read)
+        /// reds exactly leg 2 on 6/6 (shrinkage 0/14..0/19, legs 1 and 3
+        /// green). Cell depth measured on this fixture (400 ticks, same
+        /// seeds): see EconParams.CalibClusterShrinkN0 for the distribution
+        /// the n0 and the leg thresholds were picked from; divergent-cell
+        /// floors below are from the same runs.</summary>
+        private static void CalibClusterCheck(ulong seed)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = true });
+            sim.Run(400);
+            var cal = sim.W.Calibration;
+            double n0 = p.CalibClusterShrinkN0;
+            const double MinGap = 0.05;
+
+            int bigCells = 0, bigOk = 0, smallCells = 0, smallOk = 0, cells = 0;
+            double totalN = 0;
+            (ZoneKind use, int cluster, double n, double gap) deepest = (ZoneKind.None, -1, 0, 0);
+            foreach (var kv in cal.ByCell)
+            {
+                cells++; totalN += kv.Value.N;
+                double mean = kv.Value.SumRatio / kv.Value.N;
+                double useF = cal.Factor(kv.Key.use);
+                double fc = cal.Factor(kv.Key.use, kv.Key.cluster, n0);
+                double gap = Math.Abs(mean - useF);
+                if (gap < MinGap) continue;
+                if (kv.Value.N >= 2 * n0)
+                {
+                    bigCells++;
+                    if (Math.Abs(fc - mean) < Math.Abs(fc - useF)) bigOk++;
+                    if (kv.Value.N > deepest.n || (kv.Value.N == deepest.n && gap > deepest.gap))
+                        deepest = (kv.Key.use, kv.Key.cluster, kv.Value.N, gap);
+                }
+                else if (kv.Value.N <= 0.5 * n0)
+                {
+                    smallCells++;
+                    if (Math.Abs(fc - useF) < Math.Abs(fc - mean)) smallOk++;
+                }
+            }
+
+            // Leg 3: the forecast at the deepest divergent cell reads the
+            // cell, not the citywide use factor. Any parcel of the cell's
+            // (use, cluster) works — ExpectedFlow prices by cluster and use,
+            // and predictedRent is bid × factor by construction.
+            bool callSite = false; double fcDeep = 0, useFDeep = 0, rel = 1;
+            if (deepest.cluster >= 0)
+            {
+                foreach (var pl in sim.W.Parcels)
+                {
+                    ZoneKind use = pl.State == ParcelState.UnderConstruction ? pl.Use : pl.Zoned;
+                    if (pl.Cluster != deepest.cluster || use != deepest.use) continue;
+                    sim.Engine.Construction.ExpectedFlow(sim.W, sim.Engine.Access, sim.Engine.Trade,
+                                                         sim.Engine.Residuals, sim.Engine.SegmentPresence,
+                                                         pl, Math.Max(1, (int)pl.Level), p,
+                                                         out double predictedRent, out _);
+                    double bid = LandAccounting.BidPerUnit(sim.Engine.Access, sim.Engine.Trade,
+                                                           pl.Cluster, use, Math.Max(1, (int)pl.Level),
+                                                           sim.Engine.SegmentPresence, p,
+                                                           addUnits: LandAccounting.UnitsFor(use));
+                    fcDeep = cal.Factor(deepest.use, deepest.cluster, n0);
+                    useFDeep = cal.Factor(deepest.use);
+                    rel = bid > 1e-9 ? Math.Abs(predictedRent - bid * fcDeep) / Math.Max(1e-9, bid * fcDeep) : 1;
+                    callSite = rel < 1e-9 && Math.Abs(fcDeep - useFDeep) > 1e-6;
+                    break;
+                }
+            }
+
+            // The cell-depth distribution the n0 choice cites (EconParams.
+            // CalibClusterShrinkN0) — printed, not asserted, so re-measuring
+            // it after a fixture change is free.
+            var depths = new List<double>();
+            foreach (var kv in cal.ByCell) depths.Add(kv.Value.N);
+            depths.Sort();
+            double Q(double q) => depths.Count > 0 ? depths[(int)Math.Min(depths.Count - 1, q * depths.Count)] : 0;
+            Console.WriteLine($"  cell depth n_c over {depths.Count} cells: "
+                + $"min {(depths.Count > 0 ? depths[0] : 0):F0} p25 {Q(0.25):F0} median {Q(0.5):F0} "
+                + $"p90 {Q(0.9):F0} max {(depths.Count > 0 ? depths[depths.Count - 1] : 0):F0}");
+
+            const int MinBig = 3, MinSmall = 3;   // measured: seeds 0-3, 9, 13 hold 13-25 deep / 14-21 thin divergent cells (calibsweep --seeds 4, item-#34 bring-up)
+            Check("construction calibration is per-(use, cluster): deep cells track their own realized/predicted record, thin cells shrink to the use factor, and the forecast reads the cell",
+                  bigCells >= MinBig && bigOk == bigCells
+                  && smallCells >= MinSmall && smallOk == smallCells
+                  && callSite,
+                  $"{cells} cells ({totalN:F0} completions observed): convergence {bigOk}/{bigCells} deep divergent cells "
+                  + $"(n_c ≥ {2 * n0:F0}, floor {MinBig}) closer to own mean; shrinkage {smallOk}/{smallCells} thin "
+                  + $"(n_c ≤ {0.5 * n0:F1}, floor {MinSmall}) closer to use factor; "
+                  + (deepest.cluster >= 0
+                      ? $"call site at ({deepest.use}, c{deepest.cluster}, n={deepest.n:F0}): factor {fcDeep:F3} vs use {useFDeep:F3}, "
+                        + $"forecast rel err {rel:E1} ({(callSite ? "reads the cell" : "NOT the cell")})"
+                      : "no divergent deep cell with a parcel — nothing valid to probe, failing"));
+        }
+
         /// <summary>The housing assignment market has to actually BE a
         /// competitive equilibrium, and this is what that means, stated as
         /// things that can fail. It runs whether or not the flag is on — it
@@ -2123,6 +2571,13 @@ namespace CS2Econ.Harness
             // widened selection buffer in BuildHouseholds exists for.
             var px = new EconParams { AuctionShortlist = 512 };
             var ax = new HousingAuction();
+            // "Shown everything" includes the owner doors (item #41): they are
+            // deliberately absent from the price-free opening walk (their
+            // price-free value duplicates their base key's) and normally reach
+            // shortlists via home listing and the repair scan — but this arm
+            // asserts RepairRounds == 0, so discovery-by-repair is not
+            // available to it and the keys must be listed up front.
+            ax.ListOwnerDoors = true;
             ax.Solve(w, sim.Engine.Access, px);
 
             int over = 0;
@@ -2364,11 +2819,41 @@ namespace CS2Econ.Harness
             // test cannot be fooled that way: it never looks at a price.
             //
             // O(housed²) and deliberately exhaustive. This is a test.
+            //
+            // THE BAND COMPOSES THE ENVY SWEEP'S OWN TWO-SIDED ACCOUNTING,
+            // once per side of the trade. The price-free GAIN is not
+            // band-free: identically,
+            //   gain(i,j) = envy_i(sj) + envy_j(si)
+            //             + (Entry(si) − Price(si)) + (Entry(sj) − Price(sj)),
+            // so a pair of households each sitting inside the envy leg's band
+            // can show a positive "swap" up to the SUM of their two envy
+            // bands plus the doors' entry−posted gaps — an ε-residual of the
+            // finite auction, not value the solve left on the table. The old
+            // band (ε of each holder's OWN value only) granted the pair —
+            // two envies — the allowance the envy leg grants ONE envy: the
+            // same under-derived arithmetic the envy leg's band was fixed
+            // for, and it fired on exactly that residual: canary seed 28 at
+            // the per-cluster-memory commit read gain 0.173 against the old
+            // 0.166 band, decomposing as 0.037 (envy_i, its envy band 0.167)
+            // + 0.120 (envy_j, band 0.165) + 0.016 (entry−posted at i's
+            // door) + 0.000 — every term inside the mechanism's own
+            // guarantee (fix-round single-seed canary run, pair
+            // hh285/sub252 ↔ hh1609/sub767). The band is therefore the two
+            // envy bands, each ε of the holder's value plus ε of the value
+            // it is reading — the envy leg's exact derivation. The
+            // entry−posted gaps stay OUT of the band on purpose: with them
+            // in, the leg is a near-consequence of the envy sweep and can no
+            // longer fail on its own; and resting prices far below entry is
+            // how restricted competition (M5) shows, so a band that absorbed
+            // the gaps would re-blind this leg to the failure it exists for.
+            // M5 (repair rounds 0) still reds this leg under the restated
+            // band — see the mutant run recorded in the leg's registry
+            // paragraph (fix-round M5 run, reverted).
             var occ = new List<int>();
             foreach (var h in w.Households)
                 if (h.ExitedTick < 0 && (uint)h.Id < (uint)a.Assignment.Length && a.Assignment[h.Id] >= 0)
                     occ.Add(h.Id);
-            int swaps = 0; double bestSwapGain = 0;
+            int swaps = 0; double bestSwapGain = 0; string swapWhy = "";
             for (int x = 0; x < occ.Count && swaps == 0; x++)
             {
                 int i = occ[x], si = a.Assignment[i];
@@ -2377,14 +2862,78 @@ namespace CS2Econ.Harness
                 {
                     int j = occ[y], sj = a.Assignment[j];
                     if (sj == si) continue;
-                    double gain = (a.ValueOf(i, sj, p) + a.ValueOf(j, si, p)) - (vii + a.ValueOf(j, sj, p));
-                    // Same ε accounting as the envy sweep: a finite auction
-                    // leaves each side within its own ε of its best, so a swap
-                    // has to beat both to count.
+                    double vij = a.ValueOf(i, sj, p), vji = a.ValueOf(j, si, p), vjj = a.ValueOf(j, sj, p);
+                    double gain = (vij + vji) - (vii + vjj);
                     double band = Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vii))
-                                + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(a.ValueOf(j, sj, p)));
-                    if (gain > band) { swaps++; bestSwapGain = gain; break; }
+                                + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vij))
+                                + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vjj))
+                                + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vji));
+                    if (gain > band)
+                    {
+                        swaps++; bestSwapGain = gain;
+                        // Say WHICH pair and how the gain decomposes — the
+                        // identity above turns the raw number into the
+                        // mechanism responsible (envy vs resting price).
+                        double ei = (vij - a.EntryPrice(sj)) - (vii - a.Price[si]);
+                        double ej = (vji - a.EntryPrice(si)) - (vjj - a.Price[sj]);
+                        swapWhy = $"hh{i}@sub{si} ↔ hh{j}@sub{sj}: gain {gain:F3} > band {band:F3}"
+                                + $" = envy_i {ei:F3} + envy_j {ej:F3}"
+                                + $" + gaps {a.EntryPrice(si) - a.Price[si]:F3}/{a.EntryPrice(sj) - a.Price[sj]:F3}"
+                                + $" (i: {vii:F2}→{vij:F2}, j: {vjj:F2}→{vji:F2};"
+                                + $" si {a.Filled[si]}/{a.Capacity[si]}, sj {a.Filled[sj]}/{a.Capacity[sj]})";
+                        break;
+                    }
                 }
+            }
+
+            // ---- OWNER-DOOR LEGS (item #41), part 1: what only the ENGINE's
+            // last applied assignment can witness. Both read `a` as the run
+            // left it, so they must run before this fixture's own re-solves.
+            //
+            // (O-move) DOOR↔PARCEL INTEGRITY: a household holding an owner
+            // door lives at THAT parcel — the engine's FirstVacantIn resolves
+            // an owner door to its parcel and nothing else. (The renewal half
+            // — re-winning your own parcel-door produces no Vacate/MoveIn
+            // pair — is structural: `have` is DoorOf(home) and want == have
+            // short-circuits the move.)
+            int ownerMoveBad = 0, ownerHeld = 0;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
+                int mine = a.Assignment[h.Id];
+                if (mine < 0 || h.HomeParcel < 0) continue;
+                int opl = a.OwnerParcelOf(mine);
+                if (opl < 0) continue;
+                ownerHeld++;
+                if (h.HomeParcel != opl) ownerMoveBad++;
+            }
+
+            // (O-ratchet) NO-RATCHET: every standing ask IS the owner's own
+            // valuation formula — A = min(OwnerAskScale · OwnerAskShare · R, R)
+            // with R = max(0, ValueOf(owner, door) − OutsideOf(owner)) —
+            // re-derived against the SAME frozen solve state PostOwnerAsks
+            // wrote it from (untouched until this fixture's first re-solve
+            // below; a just-claimed owner's ask is 0 until the next refresh
+            // and is skipped). The exact identity, not just the A ≤ R bound:
+            // an ask that reads the market's answer at its own door can hide
+            // from the bound behind owner turnover — the exploded ask prices
+            // its own owner out, the owner leaves, Vacate clears the ask, and
+            // the survivors at any instant are all young (measured with the
+            // 1.1×Price mutant at the item commit: bound-only leg 0 bad, the
+            // identity leg 74 bad on the same seed-1 run).
+            int ratchetBad = 0, asksLive = 0; double worstRatchet = 0;
+            foreach (var pl in w.Parcels)
+            {
+                int oh = pl.OwnerHousehold;
+                if (oh < 0 || pl.OwnerAskPerUnit <= 0) continue;
+                if ((uint)oh >= (uint)a.Assignment.Length) continue;
+                int door = a.DoorOf(pl);
+                if (door < 0) continue;
+                asksLive++;
+                double r = Math.Max(0, a.ValueOf(oh, door, p) - a.OutsideOf(oh));
+                double expectAsk = Math.Min(p.OwnerAskScale * w.Households[oh].OwnerAskShare * r, r);
+                double off = Math.Abs(pl.OwnerAskPerUnit - expectAsk);
+                if (off > 1e-9 * Math.Max(1, r)) { ratchetBad++; worstRatchet = Math.Max(worstRatchet, off); }
             }
 
             // (8) DETERMINISM of the solve itself: two solves of the SAME world
@@ -2420,7 +2969,148 @@ namespace CS2Econ.Harness
                   + $"({a.Bids} bids, {a.Evictions} evictions, "
                   + $"blocked listed {a.BlockedListed} / list-full {a.BlockedFull})"
                   + (envy > 0 ? $"\n      worst envy: {worstWhy}" : "")
-                  + (unsoldOverpriced > 0 ? $"\n      unsold: {unsoldWhy}" : ""));
+                  + (unsoldOverpriced > 0 ? $"\n      unsold: {unsoldWhy}" : "")
+                  + (swaps > 0 ? $"\n      swap: {swapWhy}" : ""));
+
+            // ---- OWNER-DOOR LEGS (item #41), part 2: state identities on the
+            // fresh solve the determinism leg just left standing (a solve of
+            // the CURRENT world, so the parcel-side of each identity is read
+            // from the same state the auction built its doors from).
+            int lvls = HousingAuction.Levels;
+            int uniN = 2 * sim.Engine.Access.C * lvls;
+            int C2 = sim.Engine.Access.C;
+
+            // (O-partition) Capacity[uniform] + Σ Capacity[owner doors there]
+            // == lettable units of built, non-warehoused residential parcels
+            // at each (density, cluster, level). The partition moves units, it
+            // never mints or drops them.
+            var lett = new int[uniN];
+            foreach (var pl in w.Parcels)
+            {
+                if ((uint)pl.Cluster >= (uint)C2) continue;
+                if (pl.State != ParcelState.Built || !pl.IsResidential || pl.Warehousing) continue;
+                lett[a.SubOf(pl.Cluster, pl.Use, pl.Level)] += pl.Units;
+            }
+            var got = new int[uniN];
+            for (int s = 0; s < a.Capacity.Length; s++)
+            {
+                if (a.Capacity[s] <= 0) continue;
+                int opl = a.OwnerParcelOf(s);
+                int uni = opl < 0 ? s
+                    : a.SubOf(w.Parcels[opl].Cluster, w.Parcels[opl].Use, HousingAuction.LevelOf(s));
+                got[uni] += a.Capacity[s];
+            }
+            int partitionBad = 0;
+            for (int s = 0; s < uniN; s++) if (got[s] != lett[s]) partitionBad++;
+
+            // (O-reserve) Reserve identity, bitwise: every live owner door
+            // floors at max(its OWN parcel's condition floor, its owner's
+            // ask) — the per-parcel condition floor replacing the pooled
+            // average is half the point. (Bitwise is safe: res-low units are
+            // 2, so the built average (cond·2)/2 is exact.) And the fold rule
+            // coheres both ways: a door exists iff its ask binds above its
+            // own floor.
+            int reserveBad = 0, foldBad = 0, liveDoors = 0, ownerTagged = 0, floorBad = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.OwnerHousehold < 0) continue;
+                ownerTagged++;
+                if ((uint)pl.Cluster >= (uint)C2 || pl.State != ParcelState.Built
+                    || pl.Use != ZoneKind.ResidentialLow) continue;
+                int plvl = Math.Min(lvls, Math.Max(1, pl.Level));
+                double floor0 = LandAccounting.SPerUnit(plvl, pl.Condition, p);
+                bool binding = pl.OwnerAskPerUnit > floor0;
+                int door = a.DoorOf(pl);
+                bool isOwnDoor = a.OwnerParcelOf(door) == pl.Id;
+                if (binding != isOwnDoor) { foldBad++; continue; }
+                if (!isOwnDoor) continue;
+                liveDoors++;
+                if (a.Reserve[door] != Math.Max(floor0, pl.OwnerAskPerUnit)) reserveBad++;
+                // (O-floor) the atomicity converse, CHK-7: a non-full owner
+                // door RESTS at its floor — leg 6a bounds Price ≤ Reserve +
+                // hair for it, this leg pins the equality so the pair cannot
+                // be satisfied by a Reserve that drifted mid-solve.
+                if (a.Filled[door] < a.Capacity[door]
+                    && Math.Abs(a.Price[door] - a.Reserve[door]) > Math.Max(1e-9, 1e-9 * a.Reserve[door]))
+                    floorBad++;
+            }
+
+            // (O-IR) OWNER IR / displacement only by strictly better: an owner
+            // NOT holding its own live door does not strictly prefer it beyond
+            // the band — with the case the global envy sweep cannot see:
+            // an owner the solve left UNASSIGNED (the envy sweep skips the
+            // unhoused). The ask clamp guarantees an owner is never priced
+            // out of its own door by its own ask (value − ask ≥ outside).
+            int ownerIrBad = 0; double worstOwnerIr = 0;
+            for (int s = 0; s < a.Capacity.Length; s++)
+            {
+                int opl = a.OwnerParcelOf(s);
+                if (opl < 0 || a.Capacity[s] <= 0) continue;
+                int oh = w.Parcels[opl].OwnerHousehold;
+                if (oh < 0 || (uint)oh >= (uint)a.Assignment.Length) continue;
+                int mine = a.Assignment[oh];
+                if (mine == s) continue;
+                double vOwn = a.ValueOf(oh, s, p);
+                double cur = mine >= 0 ? a.ValueOf(oh, mine, p) - a.Price[mine] : a.OutsideOf(oh);
+                double myEps2 = Math.Max(p.AuctionEpsilon,
+                    p.AuctionEpsilonRel * Math.Abs(mine >= 0 ? a.ValueOf(oh, mine, p) : a.OutsideOf(oh)));
+                double band = myEps2 + Math.Max(p.AuctionEpsilon, p.AuctionEpsilonRel * Math.Abs(vOwn));
+                double gain = (vOwn - a.EntryPrice(s)) - cur;
+                if (gain > band) { ownerIrBad++; worstOwnerIr = Math.Max(worstOwnerIr, gain); }
+            }
+
+            // (O-engineered) The fold rule and the reserve are exercised even
+            // on a seed where no ask happens to bind: set one owner parcel's
+            // ask above its own floor, re-solve (Solve is pure), and the door
+            // must unfold with the ask as its reserve and its units out of
+            // the pooled door; restore, re-solve.
+            bool engRan = false, engOk = false; string engWhy = "no eligible owner parcel";
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.OwnerHousehold < 0 && pl.OccupantHouseholds.Count == 0) continue;
+                if ((uint)pl.Cluster >= (uint)C2 || pl.State != ParcelState.Built
+                    || pl.Use != ZoneKind.ResidentialLow || pl.Warehousing) continue;
+                int plvl = Math.Min(lvls, Math.Max(1, pl.Level));
+                double savedAsk = pl.OwnerAskPerUnit; int savedOwner = pl.OwnerHousehold;
+                if (savedOwner < 0) pl.OwnerHousehold = pl.OccupantHouseholds[0];
+                double engAsk = LandAccounting.SPerUnit(plvl, pl.Condition, p) * 1.5 + 1.0;
+                pl.OwnerAskPerUnit = engAsk;
+                a.Solve(w, sim.Engine.Access, p);
+                int door = a.DoorOf(pl);
+                int uniSub = a.SubOf(pl.Cluster, pl.Use, plvl);
+                int lettHere = 0;
+                foreach (var q2 in w.Parcels)
+                    if ((uint)q2.Cluster < (uint)C2 && q2.State == ParcelState.Built && q2.IsResidential
+                        && !q2.Warehousing && a.SubOf(q2.Cluster, q2.Use, q2.Level) == uniSub
+                        && a.OwnerParcelOf(a.DoorOf(q2)) < 0)
+                        lettHere += q2.Units;
+                engRan = true;
+                engOk = a.OwnerParcelOf(door) == pl.Id
+                        && a.Reserve[door] == engAsk
+                        && a.Capacity[door] == pl.Units
+                        && a.Capacity[uniSub] == lettHere;
+                if (!engOk)
+                    engWhy = $"parcel {pl.Id}: door {door} (own? {a.OwnerParcelOf(door) == pl.Id}), "
+                           + $"reserve {a.Reserve[door]:F4} vs ask {engAsk:F4}, "
+                           + $"door cap {a.Capacity[door]} vs units {pl.Units}, "
+                           + $"uniform cap {a.Capacity[uniSub]} vs pooled {lettHere}";
+                else engWhy = $"parcel {pl.Id} unfolded at ask {engAsk:F3}";
+                pl.OwnerAskPerUnit = savedAsk; pl.OwnerHousehold = savedOwner;
+                a.Solve(w, sim.Engine.Access, p);
+                break;
+            }
+
+            bool ownerOk = partitionBad == 0 && reserveBad == 0 && foldBad == 0 && floorBad == 0
+                           && ownerIrBad == 0 && ownerMoveBad == 0 && ratchetBad == 0
+                           && engRan && engOk;
+            Check("owner doors: partition, reserve=max(floor, ask), fold rule, owner IR, door↔parcel, no-ratchet",
+                  ownerOk,
+                  $"{ownerTagged} owner-tagged parcels, {liveDoors} live doors, {asksLive} standing asks, "
+                  + $"{ownerHeld} owner-door tenants: partition {partitionBad} bad cells, "
+                  + $"reserve {reserveBad} bad, fold {foldBad} incoherent, resting-price {floorBad} off floor, "
+                  + $"owner-IR {ownerIrBad} (worst {worstOwnerIr:F3}), door↔parcel {ownerMoveBad} astray, "
+                  + $"ratchet {ratchetBad} asks off the write identity (worst {worstRatchet:E1}); "
+                  + $"engineered arm: {engWhy}");
         }
 
         /// <summary>The labor-auction fixture: the auction-arm city with the
@@ -3039,6 +3729,50 @@ namespace CS2Econ.Harness
                   + $"equal the raw-read oracle ({gfConsumed} capitalize a queued bid, worst rel {worstGf:E1})"
                   + (probeWhy.Length > 0 ? $"\n      S2 {probeWhy}" : "")
                   + (gfWhy.Length > 0 ? $"\n      S3 {gfWhy}" : ""));
+
+            // ---- (A) ASK-INVARIANCE OF ASSESSMENT (item #41's thesis) -----
+            // The §3 guard, stated at the ask: a parcel's own OwnerAskPerUnit
+            // must never move its own assessment. Each probed owner parcel's
+            // ask is multiplied ×10 (zero asks get a nonzero perturbation, so
+            // the leg cannot go vacuous) and Assess is re-run ON THE SAME
+            // auction state — no re-solve, which isolates the accounting path
+            // from the legitimate market path (a high ask withholding a unit
+            // moves assessments one refresh later through MARKET bids at the
+            // uniform door, and that channel is negative and blessed). Every
+            // published field must come back bit-identical. This red/green
+            // pair is the refutation of the "per-parcel ownership creates
+            // self-assessment" folklore, in the suite.
+            int askScope = 0, askBad = 0; double worstAskMove = 0; string askWhy = "";
+            foreach (var pl in w.Parcels)
+            {
+                if (askScope >= 24) break;
+                if (pl.OwnerHousehold < 0 || pl.State != ParcelState.Built) continue;
+                double savedAsk = pl.OwnerAskPerUnit;
+                double lr0 = pl.AssessedLR, wedge0 = pl.Wedge, resid0 = pl.CurrentResidual;
+                int tl0 = pl.TargetLevel; var tu0 = pl.TargetUse; bool ts0 = pl.TargetIsScrape;
+                pl.OwnerAskPerUnit = Math.Max(savedAsk, 1.0) * 10.0;
+                LandAccounting.Assess(w, acc, sim.Engine.Trade, pl, presence, p);
+                askScope++;
+                bool same = pl.AssessedLR == lr0 && pl.Wedge == wedge0
+                            && pl.CurrentResidual == resid0 && pl.TargetLevel == tl0
+                            && pl.TargetUse == tu0 && pl.TargetIsScrape == ts0;
+                if (!same)
+                {
+                    double d = Math.Abs(pl.AssessedLR - lr0);
+                    if (askBad == 0)
+                        askWhy = $"first: parcel {pl.Id} ask {savedAsk:F4}→{pl.OwnerAskPerUnit:F4} "
+                               + $"moved AssessedLR {lr0:F6}→{pl.AssessedLR:F6}, "
+                               + $"wedge {wedge0:F6}→{pl.Wedge:F6}, ℓ* {tl0}→{pl.TargetLevel}";
+                    askBad++; worstAskMove = Math.Max(worstAskMove, d);
+                }
+                pl.OwnerAskPerUnit = savedAsk;
+                LandAccounting.Assess(w, acc, sim.Engine.Trade, pl, presence, p);   // restore (deterministic)
+            }
+            Check("assessment is ask-invariant: a parcel's own ask never reaches its own assessment (§3, item #41)",
+                  askScope > 0 && askBad == 0,
+                  $"{askScope - askBad}/{askScope} probed owner parcels bit-identical under ask ×10 "
+                  + $"(worst |ΔLR| {worstAskMove:E1})"
+                  + (askWhy.Length > 0 ? $"\n      {askWhy}" : ""));
 
             // ---- (L2) CO-MOVEMENT under a shock ---------------------------
             // Double every living household's own rent share, re-solve, reassess.
