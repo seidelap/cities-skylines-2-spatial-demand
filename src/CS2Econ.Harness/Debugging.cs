@@ -1047,6 +1047,196 @@ namespace CS2Econ.Harness
             }
         }
 
+        /// <summary>`harness entrydiag` — the entrant post-mortem. Measured on
+        /// the store-level path, 88% of commercial shops born mid-run died
+        /// within 40 ticks against 0% on the pooled path, and this command is
+        /// what separates the three candidate causes with numbers instead of an
+        /// argument:
+        ///
+        ///  (a) an arithmetic COLD START — the entrant never trades at all, so
+        ///      it dies of a history it could not have had. Measured as the
+        ///      share of dead entrants with zero presented custom over their
+        ///      whole life, and the age at which the first custom arrives;
+        ///  (b) a forecast/realization MISMATCH — the entry decision's own read
+        ///      does not predict the entrant's own catchment. Measured as
+        ///      forecast-at-entry against realized presented over the first 40
+        ///      ticks, per entrant, plus the CO-ENTRY count: how many shops
+        ///      entered the same cluster off the same read before that read was
+        ///      next rebuilt;
+        ///  (c) correct SELECTION — the entrants that die are the ones with no
+        ///      catchment, the survivors are the ones with custom, and the fix
+        ///      is the entry rate. Measured as the realized-custom distribution
+        ///      of dying entrants against surviving ones.
+        ///
+        /// Both arms run, because the pooled arm's zero deaths is a tell rather
+        /// than a target: its field feeds every entrant a share of citywide
+        /// spending whether or not anyone would ever shop there.</summary>
+        public static int EntryDiag(ulong startSeed, int seeds, int ticks)
+        {
+            Console.WriteLine($"entrydiag: seeds {startSeed}..{startSeed + (ulong)seeds - 1}, {ticks} ticks");
+            foreach (bool on in new[] { false, true })
+            {
+                // Per entrant. read6 is what FirmBidPerSlot's commercial leg
+                // actually asks for — the CLUSTER reference mass 6.0, blind to
+                // this parcel's own units and condition. readOwn is the same
+                // field asked at the mass a SHOPPER sees at this parcel
+                // (units x condition x quality), which is the object
+                // ChooseShops scores. Realized is presented custom per tick.
+                var life = new List<(double read6, double readOwn, double fcast, double pres,
+                                     int age, bool dead, int firstCustomAge, int coEntry,
+                                     int liveAt, int vacantAt, double presLife, double cond)>();
+                var vacantCond = new List<double>();
+                for (ulong s = startSeed; s < startSeed + (ulong)seeds; s++)
+                {
+                    var p = new EconParams();
+                    var sim = Sim.Create(new SyntheticCity.Config { Seed = s, SeedHouseholds = 8000 },
+                                         p, new FeatureFlags { StoreLevelSpending = on });
+                    var rec = new Dictionary<int, (double read6, double readOwn, double fcast, long born,
+                                                   int cluster, double pres, int firstCustom, int liveAt,
+                                                   int vacantAt, double presLife, bool dead, int age, double cond)>();
+                    // Entrants per (cluster, refresh window): how many shops were
+                    // sited off ONE read before that read was next rebuilt.
+                    var window = new Dictionary<(int c, long w), int>();
+                    sim.Run(ticks, s2 =>
+                    {
+                        var w2 = s2.W; var acc = s2.Engine.Access;
+                        foreach (var f in w2.Firms)
+                        {
+                            if (f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                            var pl = w2.Parcels[f.Parcel];
+                            if (!f.Dead && f.EnteredTick > 20 && !rec.ContainsKey(f.Id)
+                                && w2.Tick - f.EnteredTick == 1)
+                            {
+                                double quality = p.Quality(pl.Level) / p.Quality(1);
+                                double fe = LandAccounting.FirmFillEstimate(acc, pl.Cluster, ZoneKind.Commercial);
+                                double read6 = acc.CommercialCapture(pl.Cluster, 6.0 * quality);
+                                double ownMass = f.JobSlots * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level);
+                                double readOwn = acc.CommercialCapture(pl.Cluster, ownMass);
+                                // The forecast in the realization's own unit:
+                                // money of custom per tick this shop expects at
+                                // its own roster, formed exactly as
+                                // FirmBidPerSlot forms it.
+                                double perFilled = Math.Min(read6 / Math.Max(1e-9, 6.0 * fe),
+                                                            p.CommercialServicePerSlot * quality);
+                                int liveAt = 0, vacantAt = 0;
+                                foreach (var g in w2.Firms)
+                                    if (!g.Dead && g.Sector == ZoneKind.Commercial && g.Parcel >= 0
+                                        && w2.Parcels[g.Parcel].Cluster == pl.Cluster && g.Id != f.Id) liveAt++;
+                                foreach (var q in w2.Parcels)
+                                    if (q.State == ParcelState.Built && q.Use == ZoneKind.Commercial
+                                        && q.Cluster == pl.Cluster && q.OccupantFirm < 0) vacantAt++;
+                                long win = f.EnteredTick / p.RefreshInterval;
+                                window.TryGetValue((pl.Cluster, win), out int k);
+                                window[(pl.Cluster, win)] = k + 1;
+                                rec[f.Id] = (read6, readOwn, perFilled * f.JobSlots * fe, f.EnteredTick,
+                                             pl.Cluster, 0, -1, liveAt, vacantAt, 0, false, 0, pl.Condition);
+                            }
+                            if (!rec.TryGetValue(f.Id, out var r)) continue;
+                            int age = (int)(w2.Tick - r.born);
+                            if (f.Dead)
+                            {
+                                if (!r.dead)
+                                    rec[f.Id] = (r.read6, r.readOwn, r.fcast, r.born, r.cluster, r.pres,
+                                                 r.firstCustom, r.liveAt, r.vacantAt, r.presLife, true, age,
+                                                 r.cond);
+                                continue;
+                            }
+                            double pres = f.PresentedThisTick;
+                            // The pooled path never fills PresentedThisTick — it
+                            // has no per-shop custom at all — so its realization
+                            // is read from the revenue the pool hands it. Without
+                            // this the pooled column reads 0.000 everywhere and
+                            // says nothing.
+                            if (!on) pres = f.RevenueThisTick;
+                            // Realization window: ticks 6..40 of its life. It
+                            // starts at 6 because ChooseShops runs on refresh
+                            // ticks only, so a shop born at t has no customer
+                            // until the next refresh; counting those ticks would
+                            // measure the refresh grid rather than the catchment.
+                            rec[f.Id] = (r.read6, r.readOwn, r.fcast, r.born, r.cluster,
+                                         age >= 6 && age <= 40 ? r.pres + pres : r.pres,
+                                         r.firstCustom < 0 && pres > 1e-9 ? age : r.firstCustom,
+                                         r.liveAt, r.vacantAt, r.presLife + pres, false,
+                                         Math.Max(r.age, age), r.cond);
+                        }
+                    });
+                    foreach (var pl in sim.W.Parcels)
+                        if (pl.State == ParcelState.Built && pl.Use == ZoneKind.Commercial
+                            && pl.OccupantFirm < 0) vacantCond.Add(pl.Condition);
+                    foreach (var kv in rec)
+                    {
+                        var r = kv.Value;
+                        long win = r.born / p.RefreshInterval;
+                        window.TryGetValue((r.cluster, win), out int co);
+                        int span = Math.Max(1, Math.Min(40, r.age) - 5);
+                        life.Add((r.read6, r.readOwn, r.fcast, r.pres / span, r.age, r.dead,
+                                  r.firstCustom, co, r.liveAt, r.vacantAt, r.presLife, r.cond));
+                    }
+                }
+                string arm = on ? "store-level" : "pooled    ";
+                if (life.Count == 0) { Console.WriteLine($"  {arm}: no mid-run entrants"); continue; }
+                var died40 = life.Where(x => x.dead && x.age <= 40).ToList();
+                var lived = life.Where(x => !x.dead || x.age > 40).ToList();
+                Console.WriteLine($"  {arm}: entrants {life.Count}, died<=40t {died40.Count} "
+                    + $"({(double)died40.Count / life.Count:P0})");
+                int neverTraded = died40.Count(x => x.presLife <= 1e-9);
+                var firstAges = life.Where(x => x.firstCustomAge >= 0)
+                                    .Select(x => (double)x.firstCustomAge).OrderBy(z => z).ToList();
+                Console.WriteLine($"    (a) COLD START: of the {died40.Count} that died young, "
+                    + $"{neverTraded} never took a single customer; first custom at age "
+                    + (firstAges.Count > 0 ? $"p50={Pct(firstAges, .5):F0} p90={Pct(firstAges, .9):F0}" : "n/a")
+                    + $"; {life.Count(x => x.firstCustomAge < 0)} of {life.Count} never saw one");
+                var withF = life.Where(x => x.fcast > 1e-6).ToList();
+                if (withF.Count > 0)
+                {
+                    var r1 = withF.Select(x => x.pres / x.fcast).OrderBy(z => z).ToList();
+                    Console.WriteLine($"    (b) FORECAST: realized presented/tick over ticks 6-40 "
+                        + $"/ the entry decision's own forecast (n={r1.Count}): "
+                        + $"p10={Pct(r1, .10):F3} p50={Pct(r1, .50):F3} p90={Pct(r1, .90):F3}");
+                }
+                var withR = life.Where(x => x.read6 > 1e-6 && x.readOwn > 1e-6).ToList();
+                if (withR.Count > 0)
+                {
+                    // Where the error sits. GRAIN is the read's own mass error:
+                    // the decision asks at the cluster reference mass 6.0, a
+                    // shopper sees units x condition x quality.
+                    var grain = withR.Select(x => x.readOwn / x.read6).OrderBy(z => z).ToList();
+                    var vs6 = withR.Select(x => x.pres / x.read6).OrderBy(z => z).ToList();
+                    var vsOwn = withR.Select(x => x.pres / x.readOwn).OrderBy(z => z).ToList();
+                    Console.WriteLine($"        GRAIN read(own mass)/read(6.0): p10={Pct(grain, .1):F3} "
+                        + $"p50={Pct(grain, .5):F3} p90={Pct(grain, .9):F3}");
+                    Console.WriteLine($"        realized / read(6.0)     : p10={Pct(vs6, .1):F3} "
+                        + $"p50={Pct(vs6, .5):F3} p90={Pct(vs6, .9):F3}");
+                    Console.WriteLine($"        realized / read(own mass): p10={Pct(vsOwn, .1):F3} "
+                        + $"p50={Pct(vsOwn, .5):F3} p90={Pct(vsOwn, .9):F3}");
+                }
+                var co2 = life.Select(x => (double)x.coEntry).OrderBy(z => z).ToList();
+                var vac = life.Select(x => (double)x.vacantAt).OrderBy(z => z).ToList();
+                Console.WriteLine($"        CO-ENTRY off one read: p50={Pct(co2, .5):F0} p90={Pct(co2, .9):F0} "
+                    + $"max={co2[co2.Count - 1]:F0}; {life.Count(x => x.coEntry > 1)}/{life.Count} arrived where "
+                    + $"another entered the same refresh window. Vacant commercial parcels at the cluster "
+                    + $"reading the same value: p50={Pct(vac, .5):F0} p90={Pct(vac, .9):F0}");
+                var econd = life.Select(x => x.cond).OrderBy(z => z).ToList();
+                vacantCond.Sort();
+                Console.WriteLine($"        CONDITION of the building taken: p10={Pct(econd, .1):F2} "
+                    + $"p50={Pct(econd, .5):F2} p90={Pct(econd, .9):F2}; of commercial parcels left VACANT "
+                    + $"at the end (n={vacantCond.Count}): p10={Pct(vacantCond, .1):F2} "
+                    + $"p50={Pct(vacantCond, .5):F2} p90={Pct(vacantCond, .9):F2}");
+                if (died40.Count > 0 && lived.Count > 0)
+                {
+                    var dp = died40.Select(x => x.pres).OrderBy(z => z).ToList();
+                    var lp = lived.Select(x => x.pres).OrderBy(z => z).ToList();
+                    var dl = died40.Select(x => (double)x.liveAt).OrderBy(z => z).ToList();
+                    var ll = lived.Select(x => (double)x.liveAt).OrderBy(z => z).ToList();
+                    Console.WriteLine($"    (c) SELECTION: realized presented/tick — "
+                        + $"died p50={Pct(dp, .5):F1} p90={Pct(dp, .9):F1} | "
+                        + $"survived p50={Pct(lp, .5):F1} p90={Pct(lp, .9):F1}; live shops already at "
+                        + $"the cluster — died p50={Pct(dl, .5):F0}, survived p50={Pct(ll, .5):F0}");
+                }
+            }
+            return 0;
+        }
+
         /// <summary>`harness shopprobe` — the task #20 measurement aid. Every
         /// numeric bound this item ships comes from here, and every bound's
         /// comment names this command and the run.

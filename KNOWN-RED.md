@@ -201,8 +201,9 @@ fixture (capacity bound + its binding floor, the door-cap technology ceiling,
 staffless-shop bidding with its embedded MutantServedCap arm, the defaults rule,
 and store-level money conservation) and five in the counted-shop-intents fixture
 (the commercial-side circularity guard, thin evidence, discrimination against the
-pooled field, the crowding response, and calibration against realized takings),
-added at the real-staffing commit. `shopsweep` runs both fixtures
+pooled field, the crowding response, and — until the entrant-survival commit —
+calibration against realized takings), added at the real-staffing commit.
+`shopsweep` runs both fixtures
 alone across seeds; `shopprobe` is the census every bound in them was set from.
 They are the first assertions in this suite that name the commercial sector at
 all — measured at the start of that item, `grep -c Commercial TestRunner.cs`
@@ -240,6 +241,119 @@ on the ON arm, (5) ledger conservation and per-sector reconciliation exact on
 both arms with a pooled arm added to those checks, (6) the mechanical pins:
 `--pooled`, `vanillaMode`, flags-off smoke, the occupancy pin, a pooled
 fingerprint arm.
+
+**AT THE ENTRANT-SURVIVAL COMMIT the check count is UNCHANGED at 51: one leg
+retired, one added.** Retired: the counted-intents fixture's CALIBRATION leg
+(the counted read at entry against realized takings, band [0.4, 4.0]). It read
+GREEN on all 26 seeds at the #20 commit while 88 % of mid-run entrants were
+dying inside 40 ticks, because its sample accumulates from age 6 and needs five
+ticks of trading — it only ever contained entrants that lived past age 11, in a
+population whose defining feature was that it mostly died. Selection can make a
+leg vacuous exactly as construction can (#30's F1); this is the second instance
+in the file. Added in its place: **entrant survival**, a two-arm Ward leg in the
+same fixture — the clean arm bounds the COUNT of commercial firms born after
+tick 20, observable to age 40, that die inside it; the embedded
+`MutantEntryReferenceMass` arm restores the defect verbatim and must produce the
+mode or the leg asserts nothing. First measured `shopsweep --seeds 6` at this
+commit, both arms 320 ticks: clean **0, 0, 0, 1, 1, 0** on seeds 0-5 against
+mutant **25, 33, 45, 33, 34, 26**; bound 8, floor 12 from that sample. THE FULL
+26-SEED SWEEP BROKE THAT FLOOR — this item's own history precedent (item #20's
+order-dependent rationing hiding its own capacity mutant) applies to a bound as
+much as to a leg: a number set from 6 seeds is untested past its sweep. Seeds
+15 and 18 read mutant deaths of **7** and **9**, below the 6-seed floor of 12.
+RE-MEASURED over the full `shopsweep --seeds 26`: mutant range **7**-**45**
+(worst at seed 15), clean arm never above 1 across the same 26 seeds. Floor
+reset to **5** — below the new worst (7) with margin, still 5× the clean arm's
+worst reading. Same run exposed the SAME thinning in two checks this item does
+not own but whose passing world this item's fix reshapes: `BindFloor` (the
+commercial-staffing fixture's capacity-binds-at-all floor, item #20's own) fell
+from a measured worst of 28 to **15** at seed 21 — fewer entrants sited where
+they cannot be served means fewer capacity-bound firm-ticks on some seeds, a
+direct and expected consequence of fixing the entry forecast, not a new defect
+— reset from 20 to **10**. `ThinFloor` (the counted-intents fixture's evidence
+floor, also item #20's) fell from a measured worst of ≥4 to **3** at seeds 3
+and 15 — different parcels get occupied, which shifts which households' own
+`bestSys` backs which cluster's evidence count at the margin — reset from 4 to
+**3**. All three resets are recorded at their sites in TestRunner.cs with the
+full 26-seed distribution that produced them. Re-measured after the resets:
+`shopsweep --seeds 26` **26/26** (see gate table).
+
+**THE ENTRANT DEATH MODE WAS A DEFECT AND IS FIXED.** Reproduced at the merge
+(`shopprobe --seeds 4`, 300 ticks): **137 of 153** shops born mid-run died
+within 40 ticks on the store-level arm against **0 of 40** pooled.
+`entrydiag --seeds 4` separated the causes on the same run: not a cold start
+(130 of the 132 had taken custom; first custom at age p50 5, which is the
+refresh grid — and the A3 cold-start rules are unreachable in the shipping
+calibration, both living in `LaborAuction.BuildDoors` while `LaborAuction`
+ships false), not crowding (dying and surviving entrants alike arrive at
+clusters with a median of 0 other shops; only 28 of 143 shared a refresh window
+with another entrant), but the FORECAST: the entry decision read the counted
+field at a fixed cluster reference mass — a 6-slot condition-1 shop — while the
+market that generates the catchment scores the building the firm would occupy,
+and entrants take over standing buildings whose condition has decayed. The
+reference read is **1.63×** the own-mass read at the median and never smaller
+(own/reference p10 0.374, p50 0.612, p90 1.000), and over-predicts realized
+custom **3.4×** (p50 0.293) against the own-mass read's **2.05×** (p50 0.488).
+The fix reads the field at this parcel's own mass and divides by this parcel's
+own slots, with condition priced once. Measured on the same command: entrants
+dying inside 40 ticks **137/153 → 7/13**, commercial deaths **77.5 → 42.5**,
+alive **101.5 → 100.2**, vacancy **40 % → 41 %**. `fingerprint --check` before
+the accept: all thirteen pre-existing lanes hash-identical, zero MISMATCH —
+flag-off is untouched.
+
+**WHAT THE FIX EXPOSES, and it is unowned:** a commercial parcel that falls
+vacant is an absorbing state. It pays no S, so `ConditionDecay` walks it to the
+0.05 floor, and the vacancy drain empties the escrow `Leveling` would have
+restored it from — measured at this commit, commercial parcels standing vacant
+have condition p50 **0.05** (`entrydiag`, 192-279 such parcels per run). Under
+the dishonest read those buildings were continuously re-occupied by firms that
+died at age p50 9; under the honest one nobody takes them and they stay vacant.
+That is why the vacancy number does not close, and it is a defect of the
+condition/renovation path rather than of the entry decision. Unowned.
+
+**THE UNBLOCK LIST WAS WORKED TO A DECISION: THE FLAG STAYS FALSE.** Decision
+rule (stated before measuring): flip only if all six items are met AND the ON
+arm's census is no worse than the pooled arm's on BOTH numbers AND no canary
+moves. Per item, this commit:
+1. The two commerce checks green across `shopsweep --seeds 26` on the ON
+   arm — MET (see above; the sweep itself already runs `StoreLevelSpending=
+   true` unconditionally, so this was never gated on the flag's own default).
+2. `webersweep` on the ON arm no worse than the OFF arm's record — **NOT
+   MET**. `webersweep --seeds 26 --store-level`: **21/26**, red {0, 2, 5, 9,
+   21}, against the OFF arm's own record at base, **24/26**, red {0, 5}
+   (independently re-run on seeds 0-9 this commit: 6/10, red {0, 2, 5, 9} —
+   an exact match confirming the full-26 number).
+   WORSE — three seeds fail on this path that do not fail off it. This clause
+   fails on its own, decisively.
+3. The census gap explained per number — MET as explanation, **NOT MET** as
+   the rule's own "no worse than pooled on both numbers" clause: ALIVE 100.2
+   vs pooled 127.0 and VACANCY 41% vs pooled 27% are both worse, not one.
+4. Both canaries 39/39 on the ON arm — MET. `canary --store-level` 39/39
+   (268s); `laborcanary --seeds 32 --store-level` 39/39 (329s), this commit.
+5. Ledger conservation and reconciliation exact on both arms, pooled arm
+   added — MET (`verify --seed 1/9/13`, this commit: three arms — posted,
+   auction, store-level — all inside the 1e-9 bound, unmoved).
+6. The mechanical pins — MET: `--pooled`, `vanillaMode`
+   (`StoreLevelSpending=false`), flags-off smoke (same), the occupancy pin
+   (`OccupancyChannel` explicitly `StoreLevelSpending=false`), and a
+   report-only `storelevel` fingerprint arm alongside the pre-existing
+   `pooled` one (stanza 12; `fingerprint --check`: all lanes match, no
+   accept needed).
+
+Items 1, 4, 5, 6 are met; item 2 and the census-vs-pooled half of item 3 are
+not, and either alone is decisive per the stated rule. **`StoreLevelSpending`
+stays FALSE.** The unblock list is rewritten to exactly what remains:
+1. Close or reverse the `webersweep` ON-arm regression — specifically seeds
+   2, 9 and 21, which pass off the flag and fail on it (0 and 5 were already
+   red off the flag and are not this item's to explain).
+2. Close the census against the POOLED arm, not merely narrow it against its
+   own prior number. The named lever is the absorbing vacant-commercial-parcel
+   state above: no S is paid on a vacant parcel, so `ConditionDecay` walks it
+   to the floor and the vacancy drain empties the escrow `Leveling` would
+   refill it from — plausibly the same land-use-mix change implicated in item
+   1's Weber regression, since a city with more permanently-vacant commercial
+   land feeds a different signal to the industrial/extractor siting decisions
+   Weber checks. Unowned by this item.
 
 **AT THE TWO-TRACK MERGE** (housing: outside-access anchor, per-cluster ties
 and calibration, owner doors; goods: the Weber investigation, per-cluster goods

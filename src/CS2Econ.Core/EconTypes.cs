@@ -976,10 +976,49 @@ namespace CS2Econ.Core
         /// and 26% vacancy. The gap narrowed; it did not close. And it was not
         /// free: commercial deaths rose 44.2 → 77.5, concentrated entirely in
         /// entry — 141 of 161 shops born mid-run die within 40 ticks, against
-        /// 0 of 48 on the pooled path. A discrete market with a staffing bound
-        /// kills speculative entrants faster, and whether that is the mechanism
-        /// working or a defect is the first question the flip inventory has to
-        /// answer.
+        /// 0 of 48 on the pooled path.
+        ///
+        /// THAT ENTRANT DEATH MODE WAS A DEFECT, AND IT IS DIAGNOSED AND FIXED.
+        /// Reproduced at the two-track merge (`shopprobe --seeds 4`, 300
+        /// ticks): 137 of 153, 89.5 %, against 0 of 40 pooled. `entrydiag`
+        /// separated the three candidates on the same run:
+        ///  - NOT a cold start. 130 of the 132 that died young had taken
+        ///    custom, and the first customer lands at age p50 5 — the refresh
+        ///    grid, not a starving shop. (The A3 cold-start rules are not even
+        ///    reachable in the shipping calibration: both live in
+        ///    LaborAuction.BuildDoors, and LaborAuction ships false.)
+        ///  - NOT crowding. Dying and surviving entrants alike arrive at
+        ///    clusters with a median of 0 other shops, and only 28 of 143
+        ///    shared a refresh window with another entrant.
+        ///  - THE FORECAST. The entry decision read the counted field at a
+        ///    fixed CLUSTER reference mass — a 6-slot condition-1 shop — while
+        ///    the market that generates its catchment scores the building it
+        ///    would actually occupy. Entrants take over standing buildings
+        ///    whose condition has decayed, and condition multiplies the mass a
+        ///    shopper sees. Measured: the reference read is 1.63× the same
+        ///    field asked at the entrant's own mass at the median and NEVER
+        ///    smaller (own/reference p10 0.374, p50 0.612, p90 1.000). Against
+        ///    what the entrant actually took over its own first 40 ticks the
+        ///    reference read over-predicts 3.4× (p50 0.293) where the own-mass
+        ///    read over-predicts 2.05× (p50 0.488, p90 1.260) — the residue
+        ///    being the probe's stated taste-blindness.
+        /// The fix is the charter's own answer: make the forecast honest, do
+        /// not subsidise the entrant. LandAccounting.FirmBidPerSlot's
+        /// store-level commercial leg now reads the field at the mass a shopper
+        /// sees at THIS parcel and divides by THIS parcel's slots, with
+        /// condition priced once (the caller's CondFactor is skipped where the
+        /// catchment already carries it). Measured on the same command:
+        /// entrants dying inside 40 ticks 137/153 → 7/13, commercial deaths
+        /// 77.5 → 42.5, with alive 101.5 → 100.2 and vacancy 40 % → 41 %. The
+        /// churn was the entire cost; the standing sector did not pay for it.
+        ///
+        /// WHAT THE FIX EXPOSES, and it is not this item's to fix: a commercial
+        /// parcel that falls vacant is an absorbing state. It pays no S, so
+        /// ConditionDecay walks it to the 0.05 floor, and the vacancy drain
+        /// empties the escrow Leveling would have restored it from. Under the
+        /// dishonest read those buildings were continuously re-occupied by
+        /// firms that died in ~9 ticks; under the honest one nobody takes them
+        /// and they stay vacant. That is why the vacancy number does not close.
         ///
         /// WHY THE FLIP IS STILL NOT DECIDABLE, and this is the measured
         /// blocker rather than caution: a flip inventory needs checks that can
@@ -992,12 +1031,47 @@ namespace CS2Econ.Core
         /// checks, ten legs, each with a mutant run red. The inventory is the
         /// next round's work, and it now has instruments.
         ///
-        /// Harness: `--store-level` on any command turns it on; `shopsweep` runs
-        /// the two commerce checks alone across seeds and `shopprobe` is the
-        /// census. Measured verify over seeds 0–7 BEFORE this item: 7/8 with the
-        /// flag off (seed 3 fails on the clearing-price check, and did so before
-        /// this branch), 5/8 with it on (seeds 0 and 5 additionally fail
-        /// Weber).</summary>
+        /// WHAT THE CENSUS GAP IS, per number, since two numbers moving in
+        /// opposite directions are not one band. Both are the same mechanism
+        /// seen twice, and it is the pooled path's, not this one's:
+        ///  - ALIVE 100.2 against 127.0. The pooled rule hands every live
+        ///    commercial firm a share of citywide spending proportional to
+        ///    JobSlots × CaptureIncumbentPerMass, so a shop nobody would walk
+        ///    into still earns. Its own tell is that 0 of 40 mid-run entrants
+        ///    die there within 40 ticks: the pooled path cannot kill a badly
+        ///    sited shop at ANY parameter setting, which is the same structural
+        ///    property the discrimination leg asserts about its entry field.
+        ///  - VACANCY 41 % against 27 %. The same fact from the parcel side —
+        ///    if any occupant earns, every parcel is worth occupying — plus the
+        ///    absorbing state above.
+        ///
+        /// THE FLIP INVENTORY RAN ON THAT COVERAGE, AND DECIDED: STAYS FALSE.
+        /// Two of the decision rule's own clauses fail on their own numbers,
+        /// either sufficient alone. `webersweep` — the flag's own long-stated
+        /// blocker — is WORSE on the ON arm: 21/26 (red 0, 2, 5, 9, 21) against
+        /// the OFF arm's record on the same seeds, 24/26 (red 0, 5); three seeds
+        /// fail on this path that do not fail off it. And the census fails the
+        /// rule's own "no worse than pooled on BOTH numbers": ALIVE 100.2
+        /// against pooled 127.0, VACANCY 41 % against pooled 27 %, both worse.
+        /// Both canaries DO pass on the ON arm (`canary` 39/39, `laborcanary`
+        /// 39/39, this commit) and the mechanical pins (`--pooled`, vanillaMode,
+        /// flags-off smoke, the occupancy pin, the pooled fingerprint arm) and
+        /// ledger coverage (conservation and reconciliation exact on posted,
+        /// auction AND store-level arms, unmoved) are all in place — so the
+        /// remaining blocker is exactly two items, not the whole list: close or
+        /// reverse the Weber regression, and close the census against the
+        /// POOLED arm specifically (its own prior number narrowed; the pooled
+        /// comparison did not). The absorbing vacant-commercial-parcel state
+        /// this fix exposed (above) is the most likely lever on the second one
+        /// and is unowned by this item.
+        ///
+        /// Harness: `--store-level` on any command turns it on, `--pooled`
+        /// forces the pooled path; `shopsweep` runs the two commerce checks
+        /// alone across seeds, `shopprobe` is the census and `entrydiag` is the
+        /// entrant post-mortem. Measured verify over seeds 0–7 BEFORE task #20:
+        /// 7/8 with the flag off (seed 3 fails on the clearing-price check, and
+        /// did so before this branch), 5/8 with it on (seeds 0 and 5
+        /// additionally fail Weber).</summary>
         public bool StoreLevelSpending = false;
         /// <summary>Solve housing as ONE assignment market (HousingAuction):
         /// prices and who-lives-where come out of the same ascending auction,

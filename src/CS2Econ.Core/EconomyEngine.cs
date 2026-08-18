@@ -1715,9 +1715,28 @@ namespace CS2Econ.Core
             {
                 if (pl.State != ParcelState.Built || pl.IsResidential || pl.OccupantFirm >= 0) continue;
                 if (pl.Use == ZoneKind.None || pl.Warehousing) continue;
+                // A firm deciding whether to take THIS building forecasts from
+                // the building it would occupy. For commercial that matters
+                // twice over, because the entry signal is a demand curve in
+                // SIZE: the mass it must be read at is the one ChooseShops
+                // scores — this parcel's units × its condition × its level
+                // quality — and the per-slot division must be by this parcel's
+                // own slots. Reading the cluster reference instead (a 6-slot
+                // condition-1 shop) over-predicted the entrant's own catchment
+                // 3.4× at the median and killed 92% of mid-run entrants inside
+                // 40 ticks; see LandAccounting.FirmBidPerSlot for the run.
+                // Other sectors pass nothing and keep the reference.
+                double entrantMass = pl.Use == ZoneKind.Commercial
+                    ? pl.Units * Math.Max(0.2, pl.Condition) * P.Quality(pl.Level) : 0;
                 double bid = LandAccounting.FirmBidPerSlot(Access, Trade, pl.Cluster, pl.Use, pl.Level, P,
-                                                           out Res chosen, W.Clusters)
-                             * P.CondFactor(pl.Condition);
+                                                           out Res chosen, W.Clusters, out bool condPriced,
+                                                           entrantMass, entrantMass > 0 ? pl.Units : 0,
+                                                           entrantMass > 0 ? pl.Condition : 0);
+                // The generic condition discount, EXCEPT where the bid already
+                // carries condition through the catchment and the service
+                // ceiling. Charging both prices the same run-down building
+                // twice.
+                if (!condPriced) bid *= P.CondFactor(pl.Condition);
                 double assess = LandAccounting.UnitAssessment(pl, P);
                 double excess = bid - assess;
                 if (excess <= 0) continue;

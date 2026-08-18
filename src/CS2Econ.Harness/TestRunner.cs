@@ -199,6 +199,25 @@ namespace CS2Econ.Harness
     ///          comparing against what each household already has. CAUGHT —
     ///          four legs at once (THIN, DISCRIMINATION, CROWDING, and
     ///          CALIBRATION at a ratio of 0.014 against a [0.4, 4.0] band).
+    ///          CALIBRATION IS RETIRED at the entrant-survival commit (see
+    ///          below); this mutant still reds the other three.
+    ///  MUT-20k `--mutant-entry-reference-mass` (WIRED, and embedded as the
+    ///          entrant-survival leg's own second arm): the store-level
+    ///          commercial entry read goes back to asking the counted field
+    ///          about a 6-slot condition-1 shop whatever building the firm
+    ///          would occupy. CAUGHT — the entrant-survival leg.
+    ///
+    /// --- A LEG THAT WAS GREEN THROUGH ITS OWN DEFECT ---------------------
+    /// CALIBRATION (task #20) related the counted read at entry to what a new
+    /// shop took, and read GREEN on all 26 seeds while 88 % of mid-run
+    /// entrants were dying inside 40 ticks. Its sample accumulated from age 6
+    /// and required five ticks of trading, so it only ever contained entrants
+    /// that lived past age 11 — a statement about survivors, in a population
+    /// whose defining feature was that it mostly died. Retired and replaced by
+    /// the entrant-survival leg, which tests the same question by its outcome
+    /// on the population the ratio was dropping. Selection can make a leg
+    /// vacuous exactly as construction can (#30's F1); this is the second
+    /// instance in this file.
     ///
     /// --- BLIND SPOT 3: the auction is off for almost the whole suite ----
     ///  MUT-D   EconomyEngine.cs, auction move-in: delete the shelter release.
@@ -2042,7 +2061,14 @@ namespace CS2Econ.Harness
             // transmission. The auction path's vacancy→price channel is
             // asserted structurally by the auction-equilibrium check
             // (a non-full door posts its reserve), canary-swept 39/39.
-            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = false });
+            //
+            // PINNED POOLED for the same reason: this leg's verdict is already
+            // decided by which cluster its first-cleared selection lands on
+            // (KNOWN-RED), so its world must be held fixed. A discrete shop
+            // market re-rolls that selection and the verdict with it, which
+            // would be mistaken for a transmission change.
+            var sim = Sim.Create(cfg, p, new FeatureFlags
+                                 { HousingAuction = false, StoreLevelSpending = false });
             sim.Run(120);
             var w = sim.W; var acc = sim.Engine.Access; var pres = sim.Engine.SegmentPresence;
 
@@ -3218,22 +3244,50 @@ namespace CS2Econ.Harness
         // A COUNT of binding firm-ticks, not a share. The share is a nuisance
         // quantity — it divides by however many shops the seed happens to carry
         // — and the claim the floor makes is that the population is NON-EMPTY.
-        // Measured over `shopsweep --seeds 26` at this commit: 28, 71, 149, 163,
-        // 179, 189, 222, 224 ... on the eight thinnest seeds, i.e. every seed
-        // clears 20 and the worst clears it by 1.4×. The margin is thin and is
-        // stated rather than hidden; what makes it safe is that the mutant that
-        // must red this leg (CommercialServicePerSlot → 1e9) drives the count to
-        // exactly 0, not near the floor.
-        private const int BindFloor = 20;               // firm-ticks where the bound actually bound
+        // RE-MEASURED at the entrant-survival commit (`shopsweep --seeds 26`,
+        // full 26-seed run): the entry-reference-mass fix sites entrants where
+        // custom actually exists, which is also fewer entrants standing in a
+        // building too small for their own traffic — the exact population this
+        // leg counts — so the floor's own margin thinned as a direct, measured
+        // consequence of the fix this item makes, not a fluke. Full 26-seed
+        // range: 15 (seed 21, the new worst), 50, 55, 80, 100, 115, 119, 137,
+        // 148, 150, 159, 182, 194, 199, 215, 246, 249, 257, 285, 296, 311, 321,
+        // 370, 370, 441, 470. Floor reset to 10, half the new worst seed and
+        // still zero-vs-nonzero discriminating against the BINDS mutant
+        // (CommercialServicePerSlot → 1e9), which drives the count to exactly 0.
+        private const int BindFloor = 10;               // firm-ticks where the bound actually bound
         private const int CeilingFloor = 10;            // high-traffic door-ticks the ceiling leg needs
         private const int StarveFloor = 5;              // doorless staffless firm-ticks the mutant must make
         private const double GuardLiveFloor = 20;       // clusters with a non-zero read
-        private const int ThinFloor = 4;                // clusters whose read rests on too few households
+        // RE-MEASURED at the entrant-survival commit (`shopsweep --seeds 26`):
+        // the entry-reference-mass fix changes which parcels get occupied and by
+        // whom, which shifts each household's OWN realized bestSys — the
+        // quantity IntentHeads counts backing evidence against — at the margin.
+        // Full 26-seed range: 3 (seeds 3 and 15, the new worst two), then 7, 7,
+        // 8, 8, 8, 8, 9, 9, 9, 10, 10, 11, 11, 12, 12, 12, 13, 14, 14, 14, 15,
+        // 20 across the rest. Floor reset to 3 — still requires several
+        // genuinely thin clusters be found before the leg can assert anything,
+        // and the assertion itself (0 of them return a non-zero read) is
+        // unaffected; every seed still reads 0 there.
+        private const int ThinFloor = 3;                // clusters whose read rests on too few households
         private const int SilentFloor = 3;              // clusters the counted read reports as dead
         private const double CrowdFloor = 0.05;         // counted read's fall under 20× incumbent mass
         private const double LocalityPooledFloor = 0.02;// the pooled field's distant move, same run
-        private const int CalibFloor = 2;               // shops born mid-run with enough trading
-        private const double CalibLo = 0.4, CalibHi = 4.0;
+        // Measured on `shopsweep --seeds 6` at the entrant-survival commit, both
+        // arms of the leg, 320 ticks each: clean 0, 0, 0, 1, 1, 0 young entrant
+        // deaths on seeds 0-5; the same fixture under MutantEntryReferenceMass
+        // 25, 33, 45, 33, 34, 26. That six-seed sample is what the floor was
+        // FIRST set from (12), and the full 26-seed sweep broke it: seeds 15 and
+        // 18 read 7 and 9 mutant deaths, below 12. RE-MEASURED over the full
+        // 26-seed sweep, mutant-arm range: 7, 9, 12, 17, 17, 18, 20, 20, 21, 21,
+        // 24, 25, 25, 26, 27, 28, 31, 33, 33, 34, 35, 35, 37, 38, 42, 45. Clean
+        // arm across the same 26 seeds never exceeds 1. Floor reset to 5 — below
+        // the new worst mutant reading (7) with margin, and still 5× the clean
+        // arm's worst reading, so the leg keeps discriminating a working fix
+        // (clean ≤ 1) from the restored defect (mutant ≥ 7 on every seed
+        // measured) while surviving the seed range that decides this item.
+        private const int EntrantYoungDeathMax = 8;     // clean arm
+        private const int EntrantMutantFloor = 5;       // mutant arm
 
         /// <summary>The task #20 fixture: an auction city with BOTH the labor
         /// auction and store-level spending on. The labor flag is on because
@@ -3658,42 +3712,66 @@ namespace CS2Econ.Harness
         {
             var p = new EconParams();
 
-            // CALIBRATION is recorded during the run: the read a developer would
-            // have had at a shop's cluster the tick it appeared, against what
-            // that shop actually took over its first ticks of trading.
-            var readAtBirth = new Dictionary<int, (double read, long born, double served, int ticks)>();
-            var sim = ShopFixture(seed, p, 320, storeArm: true, laborAuction: false, perTick: s =>
+            // ENTRANT SURVIVAL, tracked over the run. The cohort is shops
+            // born after tick 20 and early enough to be OBSERVABLE to age 40 —
+            // a shop born at tick 300 of a 320-tick run has not survived 40
+            // ticks, it has not been asked yet, and counting it as a survivor
+            // is the selection that would make this leg lie in the safe
+            // direction.
+            const int SurvivalHorizon = 40, FixtureTicks = 320;
+            var entrantAge = new Dictionary<int, (long born, int deathAge)>();
+            var sim = ShopFixture(seed, p, FixtureTicks, storeArm: true, laborAuction: false, perTick: s =>
             {
-                var w = s.W; var acc = s.Engine.Access;
+                var w = s.W;
                 foreach (var f in w.Firms)
                 {
                     if (f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
-                    var pl = w.Parcels[f.Parcel];
-                    double mass = f.JobSlots * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level);
-                    if (!f.Dead && f.EnteredTick > 20 && !readAtBirth.ContainsKey(f.Id)
-                        && w.Tick - f.EnteredTick <= 1)
-                        readAtBirth[f.Id] = (acc.CommercialCapture(pl.Cluster, mass), f.EnteredTick, 0, 0);
-                    // Shops that later died stay in the sample. Dropping them
-                    // would keep only entrants the read got RIGHT, which is the
-                    // selection this leg exists to measure.
-                    if (readAtBirth.TryGetValue(f.Id, out var rec)
-                        && w.Tick - rec.born > 5 && w.Tick - rec.born <= 70 && !f.Dead)
-                        readAtBirth[f.Id] = (rec.read, rec.born, rec.served + f.ServedThisTick, rec.ticks + 1);
+                    if (!f.Dead && f.EnteredTick > 20 && f.EnteredTick <= FixtureTicks - SurvivalHorizon
+                        && !entrantAge.ContainsKey(f.Id) && w.Tick - f.EnteredTick <= 1)
+                        entrantAge[f.Id] = (f.EnteredTick, -1);
+                    if (f.Dead && entrantAge.TryGetValue(f.Id, out var ea) && ea.deathAge < 0)
+                        entrantAge[f.Id] = (ea.born, (int)(w.Tick - ea.born));
                 }
             });
+            int cohort = entrantAge.Count;
+            int youngDead = entrantAge.Values.Count(v => v.deathAge >= 0 && v.deathAge <= SurvivalHorizon);
+            // THE MUTANT ARM, EMBEDDED, for the reason the starvation leg's is:
+            // on a clean build this population is nearly empty BECAUSE the
+            // mechanism works — a firm that reads the field about the building
+            // it would actually occupy mostly declines the derelict stock — so
+            // a clean-only leg would be a small number compared against a bound
+            // with nothing proving the measurement was live. The mutant arm
+            // restores the reference read and MUST produce the death mode, or
+            // this leg is asserting nothing. It runs the SAME window as the
+            // clean arm so the two counts are directly comparable; a shorter
+            // arm was tried and rejected — at 160 ticks it produced 5, 7, 8 and
+            // 1 young deaths on seeds 0-3, and a floor one seed in four cannot
+            // reach is not a floor.
+            const int MutantArmTicks = FixtureTicks;
+            int mutantYoungDead;
+            try
+            {
+                LandAccounting.MutantEntryReferenceMass = true;
+                var mAge = new Dictionary<int, (long born, int deathAge)>();
+                ShopFixture(seed, new EconParams(), MutantArmTicks, storeArm: true, laborAuction: false,
+                            perTick: s =>
+                {
+                    var w = s.W;
+                    foreach (var f in w.Firms)
+                    {
+                        if (f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                        if (!f.Dead && f.EnteredTick > 20 && f.EnteredTick <= MutantArmTicks - SurvivalHorizon
+                            && !mAge.ContainsKey(f.Id) && w.Tick - f.EnteredTick <= 1)
+                            mAge[f.Id] = (f.EnteredTick, -1);
+                        if (f.Dead && mAge.TryGetValue(f.Id, out var ma) && ma.deathAge < 0)
+                            mAge[f.Id] = (ma.born, (int)(w.Tick - ma.born));
+                    }
+                });
+                mutantYoungDead = mAge.Values.Count(v => v.deathAge >= 0 && v.deathAge <= SurvivalHorizon);
+            }
+            finally { LandAccounting.MutantEntryReferenceMass = false; }
             var W = sim.W; var eng = sim.Engine; var acc0 = eng.Access;
             int C = acc0.C;
-
-            var ratios = new List<double>(); var weights = new List<double>();
-            foreach (var kv in readAtBirth)
-            {
-                var (read, _, served, ticks) = kv.Value;
-                if (ticks < 5 || read <= 1e-6) continue;
-                ratios.Add(served / ticks / read); weights.Add(read);
-            }
-            double calib = 0, wsum = 0;
-            for (int i = 0; i < ratios.Count; i++) { calib += ratios[i] * weights[i]; wsum += weights[i]; }
-            calib = wsum > 0 ? calib / wsum : 0;
 
             // Every rebuild below starts from the SAME prior shop choices.
             // ChooseShops is not idempotent — the loyalty bonus follows whatever
@@ -3856,11 +3934,66 @@ namespace CS2Econ.Harness
                   + "information — but it means no locality ORDERING against the pooled field survives "
                   + "measurement, and the design's claim that one would is retired here");
 
-            Check("the counted read at entry predicts what a new shop actually takes",
-                  ratios.Count >= CalibFloor && calib >= CalibLo && calib <= CalibHi,
-                  $"{ratios.Count} shops born mid-run with ≥5 ticks of trading (floor {CalibFloor}): "
-                  + $"evidence-weighted realized-takings ÷ counted-read-at-entry = {calib:F3} "
-                  + $"vs band [{CalibLo:F2}, {CalibHi:F2}]");
+            // CALIBRATION IS RETIRED AND REPLACED BY THE LEG BELOW, and the
+            // reason is measured rather than tidy. It asked whether the counted
+            // read at entry predicts what a new shop takes, evidence-weighted,
+            // over "shops born mid-run with ≥5 ticks of trading". That sample
+            // only ever contained entrants that lived past age 11 — it
+            // accumulates from age 6 and needs five ticks of it — so it was a
+            // statement about SURVIVORS. It read green on all 26 seeds at the
+            // commerce commit while 88 % of mid-run entrants were dying inside
+            // 40 ticks (`shopprobe --seeds 4`: 141 of 161, and 137 of 153 when
+            // re-measured at the two-track merge). A leg that is green through
+            // the defect it looks like it would catch is not coverage, and the
+            // #30-F1 lesson applies to selection as much as to construction.
+            // What replaces it tests the same question by its OUTCOME — do the
+            // firms the read admits survive — on the population the ratio leg
+            // was silently dropping. The ratio itself is still measured and
+            // printed by `entrydiag`.
+
+            // ---- ENTRANT SURVIVAL -------------------------------------------
+            // A firm's entry decision must be ITS OWN forecast from information
+            // it could have, and the test of that is whether the firms it lets
+            // in can trade. Measured at the two-track merge, BEFORE the entry
+            // read was asked at the entrant's own building
+            // (`entrydiag --seeds 4`, 300 ticks): 132 of 143 shops born mid-run
+            // — 92% — died inside 40 ticks, against 0 of 31 on the pooled path.
+            //
+            // The cause was not an arithmetic cold start: 130 of those 132 had
+            // taken custom, and the first customer lands at age p50 5, which is
+            // the refresh grid rather than a starving shop. It was not crowding
+            // at the site: dying and surviving entrants alike arrive at
+            // clusters with a median of 0 other shops. It was the FORECAST. The
+            // entry decision read the counted field at a CLUSTER reference mass
+            // — a 6-slot condition-1 shop — while the market that generates its
+            // catchment scores the building it would actually occupy, and the
+            // buildings on offer are derelict: commercial parcels standing
+            // vacant have condition p50 0.05, so a shopper sees mass
+            // 8×0.2×quality against live shops at 8.78. The reference read was
+            // 1.63× the own-mass read at the median and never smaller, and
+            // over-predicted realized custom 3.4× where the own-mass read
+            // over-predicts 2.05×.
+            //
+            // THE COUNTED NUMBER IS DEATHS, NOT A SHARE, and the arms are two.
+            // A share over a cohort of one or two is noise; and on a clean
+            // build the cohort IS one or two, because the honest read declines
+            // the derelict stock. So the clean arm bounds the COUNT of
+            // young entrant deaths, and the mutant arm — the reference read
+            // restored verbatim — must produce the mode, or the leg is
+            // asserting nothing. That is the starvation leg's own Ward pattern
+            // and it is here for the same measured reason.
+            //
+            // Bounds: see EntrantYoungDeathMax / EntrantMutantFloor, both set
+            // from `shopsweep --seeds 6` at this commit and recorded there.
+            Check("entrants can trade: the entry decision does not fill derelict buildings with shops "
+                  + "that die — and the reference-mass read flips it red",
+                  youngDead <= EntrantYoungDeathMax && mutantYoungDead >= EntrantMutantFloor,
+                  $"clean run: {youngDead} of {cohort} commercial firms born after tick 20 and observable "
+                  + $"to age {SurvivalHorizon} died inside it (bound {EntrantYoungDeathMax}); "
+                  + $"MutantEntryReferenceMass run over {MutantArmTicks} ticks: {mutantYoungDead} "
+                  + $"(must be ≥ {EntrantMutantFloor} or the leg is vacuous — on a clean build this "
+                  + "population is nearly empty because the mechanism works, so the mutant arm is what "
+                  + "makes the leg able to fail)");
         }
 
         private static double[] SnapshotIntents(AccessState acc, int C)
@@ -4789,7 +4922,10 @@ namespace CS2Econ.Harness
             // auction arm (flip inventory: detail lines identical across
             // "posted-curve" and "auction" columns) and the posted path's
             // money coverage would vanish while it still ships via --posted.
-            var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = false });
+            // PINNED POOLED as well: both arms below are the pooled consumption
+            // path, stated rather than inherited from a default that may flip.
+            var sim = Sim.Create(cfg, p, new FeatureFlags
+                                 { HousingAuction = false, StoreLevelSpending = false });
             double maxDrift = 0;
             var audit = new SectorAudit();
             sim.Run(300, s => { maxDrift = Math.Max(maxDrift, Math.Abs(s.W.Ledger.Drift())); audit.Sample(s); });
@@ -4800,14 +4936,32 @@ namespace CS2Econ.Harness
             // auction path — an arrival that minted its savings instead of
             // transferring them would have passed here forever.
             var simA = Sim.Create(new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed },
-                                  new EconParams(), new FeatureFlags { HousingAuction = true });
+                                  new EconParams(),
+                                  new FeatureFlags { HousingAuction = true, StoreLevelSpending = false });
             double maxDriftA = 0;
             var auditA = new SectorAudit();
             simA.Run(300, s => { maxDriftA = Math.Max(maxDriftA, Math.Abs(s.W.Ledger.Drift())); auditA.Sample(s); });
 
+            // A STORE-LEVEL ARM, for the same reason the auction arm exists.
+            // Both arms above run the pooled consumption path, so the discrete
+            // shop market — which debits each household once and credits each
+            // shop from its own customers over several rationing rounds, with
+            // the unserved residual leaking out of town — had no conservation
+            // or reconciliation coverage of its own at all. The commerce
+            // check's own money leg compares two per-tick records and is a
+            // check on rule 3; this is the standing sector-balance
+            // reconciliation, on the path that ships behind the flag.
+            var simL = Sim.Create(new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed },
+                                  new EconParams(),
+                                  new FeatureFlags { HousingAuction = true, StoreLevelSpending = true });
+            double maxDriftL = 0;
+            var auditL = new SectorAudit();
+            simL.Run(300, s => { maxDriftL = Math.Max(maxDriftL, Math.Abs(s.W.Ledger.Drift())); auditL.Sample(s); });
+
             Check("ledger conservation: money neither created nor destroyed (both market paths)",
-                  maxDrift < 1e-3 && maxDriftA < 1e-3,
-                  $"max |drift| over 300 ticks = {maxDrift:E2} posted-curve, {maxDriftA:E2} auction");
+                  maxDrift < 1e-3 && maxDriftA < 1e-3 && maxDriftL < 1e-3,
+                  $"max |drift| over 300 ticks = {maxDrift:E2} posted-curve, {maxDriftA:E2} auction, "
+                  + $"{maxDriftL:E2} store-level");
 
             // ---- RECONCILIATION, the leg the drift leg cannot be -------------
             // Ledger.Transfer() debits one account and credits another, so the
@@ -4851,11 +5005,12 @@ namespace CS2Econ.Harness
             // range: eighteen seeds on one city shape. A much larger city
             // accumulates more rounding, and the right response there is a new
             // measurement, not a new constant.
-            bool reconciled = audit.Worst < 1e-9 && auditA.Worst < 1e-9;
+            bool reconciled = audit.Worst < 1e-9 && auditA.Worst < 1e-9 && auditL.Worst < 1e-9;
             Check("ledger reconciliation: sector balances match the money entities hold (both market paths)",
                   reconciled,
-                  $"worst relative |Σ entity − ledger| over {audit.Ticks}+{auditA.Ticks} tick samples: "
-                  + $"posted-curve {audit}, auction {auditA} (bound 1e-9)");
+                  $"worst relative |Σ entity − ledger| over {audit.Ticks}+{auditA.Ticks}+{auditL.Ticks} "
+                  + $"tick samples: posted-curve {audit}, auction {auditA}, store-level {auditL} "
+                  + "(bound 1e-9, unmoved)");
 
             // A THIRD ARM, BECAUSE THE OTHER TWO CAN BE EMPTY. Measured over the
             // eighteen seeds in the table at the head of this file: the auction
@@ -4970,6 +5125,12 @@ namespace CS2Econ.Harness
                 // else covers, which the flip inventory flagged as an accident
                 // waiting to be mistaken for coverage.
                 HousingAuction = false,
+                // Explicit for the same reason, and pinned while it is still a
+                // no-op: "flags off" has to keep meaning every experimental
+                // flag off. If StoreLevelSpending becomes the default this line
+                // is the only thing standing between this smoke and a world it
+                // does not describe.
+                StoreLevelSpending = false,
             };
             var sim = Sim.Create(cfg, p, flags, vanillaMode: true);
             sim.Run(150);

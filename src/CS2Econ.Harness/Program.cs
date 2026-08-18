@@ -21,6 +21,7 @@ namespace CS2Econ.Harness
                 if (args[i] == "--store-level") { Sim.ForceStoreLevelSpending = true; continue; }
                 if (args[i] == "--auction") { Sim.ForceHousingAuction = true; continue; }
                 if (args[i] == "--posted") { Sim.ForcePosted = true; continue; }
+                if (args[i] == "--pooled") { Sim.ForcePooled = true; continue; }
                 // MUTANT SWITCH (see AccessState.MutantCitywideProspectOdds):
                 // restores the zero-diluted citywide prospect odds so the
                 // prospect-local-odds check can be shown to fail. Never a
@@ -53,6 +54,12 @@ namespace CS2Econ.Harness
                 // intent probe stops comparing against what each household
                 // already settled for, so the counted signal stops saturating.
                 if (args[i] == "--mutant-intent-unsaturated") { AccessState.MutantIntentUnsaturated = true; continue; }
+                // MUTANT SWITCH (see LandAccounting.MutantEntryReferenceMass):
+                // the store-level commercial entry read goes back to asking the
+                // counted field about a 6-slot condition-1 shop whatever
+                // building the entrant would occupy — the entrant death mode
+                // restored verbatim.
+                if (args[i] == "--mutant-entry-reference-mass") { LandAccounting.MutantEntryReferenceMass = true; continue; }
                 if (i + 1 >= args.Length) continue;
                 if (args[i] == "--seed") seed = ulong.Parse(args[i + 1]);
                 if (args[i] == "--only") only = args[i + 1];
@@ -168,6 +175,21 @@ namespace CS2Econ.Harness
                             System.Globalization.CultureInfo.InvariantCulture);
                     }
                     return Debugging.ShopProbe(start, n, ticks, svc);
+                }
+                case "entrydiag":
+                {
+                    // The entrant post-mortem (see Debugging.EntryDiag): which
+                    // of cold start / forecast mismatch / correct selection is
+                    // killing shops born mid-run, with numbers.
+                    int ticks = 300, n = 4;
+                    ulong start = 0;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                        if (args[i] == "--seed") start = ulong.Parse(args[i + 1]);
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    }
+                    return Debugging.EntryDiag(start, n, ticks);
                 }
                 case "assesscheck": // assessment-tracks-price fixture alone (see TestRunner.AssessCheck)
                     return TestRunner.AssessCheck(seed);

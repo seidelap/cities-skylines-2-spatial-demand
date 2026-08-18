@@ -328,3 +328,50 @@ delta: labor.price hash moved; sumLR 27817.742 -> 26287.267 (-5.50%); sumLR.high
 delta: labor.money hash moved; treasury 412392.24 -> 387127.29 (-6.13%); hhMoney 321120.01 -> 313476.77 (-2.38%); firmMoney 352590.72 -> 342898.58 (-2.75%); escrow 433070.15 -> 421926.93 (-2.57%); phantoms -1443288.8 -> -1389545.3 (+3.72%); drift 1.3888348E-07 -> 3.5564881E-08 (-74.39%)
 delta: labor.labor hash moved; empRate =; outsideShare 0.57142857 -> 0.58934517 (+3.14%); unempShare =; meanT.basic 6.504797 -> 6.5166656 (+0.18%); meanT.skilled 10.559694 -> 10.553751 (-0.06%); meanT.educated 17.623201 -> 17.640157 (+0.10%); meanToverCap 0.36251233 -> 0.36603244 (+0.97%); divCompRatio 0.35837392 -> 0.38693056 (+7.97%)
 sig: 13E4EB42BFCA8FED
+
+=== stanza 12
+recorded: 2026-08-18T15:47:50Z
+reason: Entrant-survival commit: NO lane moved. All thirteen pre-existing lanes are hash-identical to the previous stanza (fingerprint --check at this tree, before this accept: zero MISMATCH lines, gating and report alike) — the store-level commercial entry read now asks the counted field about the building the firm would occupy, and that change is inside the HasCountedIntents branch which the flag-off world never enters. This stanza exists only to record the two new REPORT-ONLY consumption arms that item 6 of the flag's unblock list requires: pooled (StoreLevelSpending spelled false, so it stays the pooled path whatever the default becomes - pre-flip it duplicates default lane for lane and asserts nothing, which is the cost of having the pin before the flip rather than during one) and storelevel (the experimental path, which carries information today). Gate at this commit: canary 39/39, laborcanary --seeds 32 39/39.
+lane default.demography hash=072408A49C35B6FE pop=1499 housed=1194 sheltered=0
+lane default.built hash=872E57ED7F1D8AE0 built=405 meanLevel=1.933333333 units=2316
+lane default.price hash=F136699AE1FE1F48 sumLR=17011.59901 sumLR.high=534.2633506 sumLR.low=596.6857715 meanRent=1.894785073
+lane default.money hash=C3F1269CCA48F219 treasury=100152.0302 hhMoney=511175.5547 firmMoney=137081.8893 escrow=133527.9437 phantoms=-806053.144 drift=2.043670975E-07
+lane posted.demography hash=13C227329F9FEEA0 pop=1001 housed=802 sheltered=1
+lane posted.built hash=54824FD890F251D1 built=318 meanLevel=1.619496855 units=1922
+lane posted.price hash=61A4C73F640A8A34 sumLR=16313.43213 sumLR.high=1802.143998 sumLR.low=1492.023906 meanRent=4.358823045
+lane posted.money hash=EEF6C8B77EB4DD7C treasury=229289.7641 hhMoney=292810.8165 firmMoney=70167.54379 escrow=147435.4605 phantoms=-663819.311 drift=1.065200195E-08
+lane labor.demography hash=E3667102FB4CA16A pop=1489 housed=1186 sheltered=0
+lane labor.built hash=E4B5AA69DD12D819 built=403 meanLevel=2.042183623 units=2306
+lane labor.price hash=D5FC324D33FF1D46 sumLR=26287.26702 sumLR.high=1327.713869 sumLR.low=1425.923487 meanRent=3.019847257
+lane labor.money hash=7462EABA959F3C3C treasury=387127.2885 hhMoney=313476.7666 firmMoney=342898.5835 escrow=421926.9284 phantoms=-1389545.293 drift=3.556488082E-08
+lane labor.labor hash=9E14C3B5DD29DE12 empRate=1 outsideShare=0.589345172 unempShare=0 meanT.basic=6.51666562 meanT.skilled=10.55375063 meanT.educated=17.640157 meanToverCap=0.3660324432 divCompRatio=0.3869305612
+lane pooled.demography hash=072408A49C35B6FE pop=1499 housed=1194 sheltered=0
+lane pooled.built hash=872E57ED7F1D8AE0 built=405 meanLevel=1.933333333 units=2316
+lane pooled.price hash=F136699AE1FE1F48 sumLR=17011.59901 sumLR.high=534.2633506 sumLR.low=596.6857715 meanRent=1.894785073
+lane pooled.money hash=C3F1269CCA48F219 treasury=100152.0302 hhMoney=511175.5547 firmMoney=137081.8893 escrow=133527.9437 phantoms=-806053.144 drift=2.043670975E-07
+lane storelevel.demography hash=A62F33D104A7AEF7 pop=1487 housed=1214 sheltered=0
+lane storelevel.built hash=876C76C6229D40DE built=411 meanLevel=1.927007299 units=2292
+lane storelevel.price hash=267F8B48FE134650 sumLR=12141.04637 sumLR.high=379.7363106 sumLR.low=509.8783797 meanRent=1.677939953
+lane storelevel.money hash=A0DBC42B0398099C treasury=51008.26414 hhMoney=540676.7422 firmMoney=179993.7165 escrow=48343.02279 phantoms=-744137.4718 drift=5.969195627E-07
+delta: default.demography =
+delta: default.built =
+delta: default.price =
+delta: default.money =
+delta: posted.demography =
+delta: posted.built =
+delta: posted.price =
+delta: posted.money =
+delta: labor.demography =
+delta: labor.built =
+delta: labor.price =
+delta: labor.money =
+delta: labor.labor =
+delta: pooled.demography (new lane)
+delta: pooled.built (new lane)
+delta: pooled.price (new lane)
+delta: pooled.money (new lane)
+delta: storelevel.demography (new lane)
+delta: storelevel.built (new lane)
+delta: storelevel.price (new lane)
+delta: storelevel.money (new lane)
+sig: 97EF8BD409545E0F
