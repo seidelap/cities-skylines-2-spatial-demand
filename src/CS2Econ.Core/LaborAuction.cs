@@ -177,11 +177,12 @@ namespace CS2Econ.Core
         /// adults), which at worst mis-attaches a stay bonus when a
         /// household's participation count changes.</summary>
         public void Solve(WorldState w, AccessState acc, IAccessCosts costs, TradeSystem trade,
-                          EconParams p, byte[] participants, int[] priorFirm, int maxAdults)
+                          EconParams p, FeatureFlags flags, byte[] participants, int[] priorFirm,
+                          int maxAdults)
         {
             SolveCalls++;
             _C = acc.C;
-            BuildDoors(w, acc, trade, p, priorFirm, maxAdults);
+            BuildDoors(w, acc, trade, p, flags, priorFirm, maxAdults);
             BuildWorkers(w, costs, p, participants, priorFirm, maxAdults);
             RunAuction(p);
             // COLUMN GENERATION, exactly as in housing: solve, ask each worker
@@ -227,7 +228,7 @@ namespace CS2Econ.Core
         /// <summary>Share of a commercial firm's takings that restocking
         /// claims: need = rev × share / price at qty, cost = need × price, so
         /// the local price cancels and the margin share is 1 − Σ shares.</summary>
-        private static readonly double BasketShare = SumBasket();
+        public static readonly double BasketShare = SumBasket();
         private static double SumBasket()
         {
             double s = 0;
@@ -235,9 +236,47 @@ namespace CS2Econ.Core
             return s;
         }
 
+        /// <summary>MUTANT SWITCH (`--mutant-revenue-ema-cap`): restores the
+        /// revenue-EMA commercial cap on the store-level path, verbatim. The
+        /// door-cap CEILING leg of the staffing check must go red under it — the
+        /// EMA rule's cap rises without limit in a shop's traffic, so a shop
+        /// with traffic far above what its slots can serve posts a cap above the
+        /// technology ceiling. Never a shipping mode.</summary>
+        public static bool MutantRevenueEmaCap;
+
+        /// <summary>MUTANT SWITCH (`--mutant-served-cap`): drives the commercial
+        /// door cap from SERVED volume (ProfitEma is the EMA of realized
+        /// takings) instead of presented custom. The staffing check's STARVATION
+        /// leg must go red under it: a shop that lost its staff serves nothing,
+        /// so it can never bid for the staff that would let it serve, and any
+        /// shop losing a labor round is dead permanently. Never a shipping
+        /// mode — it exists because "presented, never served" is a load-bearing
+        /// design decision and a decision nothing can falsify is not one.</summary>
+        public static bool MutantServedCap;
+
+        /// <summary>MUTANT SWITCH (`--mutant-uncapped-util`): drops the upper
+        /// clamp on util, so the commercial door cap becomes
+        /// PresentedEma/JobSlots x (1 - BasketShare) and rises without limit in
+        /// the shop's traffic — which is the defining property of the revenue-EMA
+        /// rule this item replaces, isolated. The door-cap CEILING leg must go
+        /// red under it.
+        ///
+        /// It exists because `--mutant-revenue-ema-cap` does NOT red that leg at
+        /// this calibration: the EMA rule's cap is ProfitEma x margin / JobSlots,
+        /// and a shop under that rule is so understaffed that its realized
+        /// takings never reach perSlotCap per slot. The EMA rule's defect here
+        /// shows up as STARVATION instead (measured: 1523-1801 staffless
+        /// doorless firm-ticks against 0 clean). A leg needs a mutant that reds
+        /// THAT leg. Never a shipping mode.</summary>
+        public static bool MutantUncappedUtil;
+
         private void BuildDoors(WorldState w, AccessState acc, TradeSystem trade, EconParams p,
-                                int[] priorFirm, int maxAdults)
+                                FeatureFlags flags, int[] priorFirm, int maxAdults)
         {
+            // Which commercial cap is structural and which is the revenue-EMA
+            // proxy is a property of the market path, so the branch is explicit
+            // rather than inferred from a field being present.
+            bool storeLevel = flags != null && flags.StoreLevelSpending;
             int nf = w.Firms.Count;
             if (_doorOfFirmClass.Length != nf * 3) _doorOfFirmClass = new int[nf * 3];
             Array.Fill(_doorOfFirmClass, -1);
@@ -312,20 +351,75 @@ namespace CS2Econ.Core
                               * acc.OfficeAgglomMult[pl.Cluster];
                         break;
                     default:
-                        // Commercial: labor does not enter the production
-                        // function yet (task #20), so the firm forecasts its
-                        // margin per slot from its OWN realized takings — the
-                        // EMA of RevenueThisTick net of restocking cost, per
-                        // slot, floored at 0. Restock cost is rev × basket
-                        // share at any local price (the price cancels; see
-                        // BasketShare). With per-cluster realized prices
-                        // (task #30) that cancellation is no longer exact —
-                        // the restocking forecast and the realized delivered
-                        // price at this store's cluster can diverge — but
-                        // this margin is task #20's fight, untouched here.
-                        // Firm-local and simple until #20 makes commercial
-                        // labor structurally productive.
-                        mrp = Math.Max(0, f.ProfitEma * (1 - BasketShare)) / Math.Max(1, f.JobSlots);
+                        if (storeLevel && !MutantRevenueEmaCap)
+                        {
+                            // Commercial, store-level path: what one more worker
+                            // can DO. perSlotCap is this firm's own technology at
+                            // its own building — the same linear-in-labor
+                            // relation the other three legs above use, which
+                            // commercial did not have until it got a production
+                            // relation. It is a CEILING: however much traffic a
+                            // shop has, a slot cannot serve more than this, so
+                            // the door cap stops rising in traffic where the
+                            // revenue-EMA rule rose without limit.
+                            //
+                            // util is the firm's own forecast, from its own door
+                            // count, of the share of its full-staff capacity its
+                            // own traffic would use. A shop with a queue bids the
+                            // full product; a shop with empty aisles bids nothing,
+                            // its doors leave the auction, and it dies — the "a
+                            // shop with no catchment dies" behavior reaching the
+                            // labor market.
+                            //
+                            // The denominator is JobSlots, not WorkersFilled: a
+                            // symmetric ex-ante forecast over the slots the
+                            // building has, which avoids a divide-by-zero at zero
+                            // staff. It is a CHOICE and it cuts against the
+                            // mechanism at the margin — an understaffed shop with
+                            // a queue bids below the true marginal product while a
+                            // fully-staffed shop with spare capacity bids above 0.
+                            //
+                            // Driven by PRESENTED custom, never SERVED: see
+                            // Firm.PresentedEma for why that is load-bearing, and
+                            // Firm.PresentedObserved for the entrant that has no
+                            // door count yet and forecasts it can use its slots.
+                            double perSlotCap = p.CommercialServicePerSlot * cond
+                                                * p.Quality(pl.Level) / p.Quality(1);
+                            // Under the mutant the cap reads SERVED volume and
+                            // there is no presented-based cold start either —
+                            // both halves of "presented, never served" go
+                            // together, and a mutant that kept the cold start
+                            // would leave a staffless shop bidding at util = 1
+                            // and hide the very spiral the leg exists to catch.
+                            double traffic = MutantServedCap ? f.ProfitEma : f.PresentedEma;
+                            bool observed = MutantServedCap || f.PresentedObserved;
+                            double raw0 = traffic / Math.Max(1e-9, perSlotCap * Math.Max(1, f.JobSlots));
+                            double util = observed
+                                ? (MutantUncappedUtil ? Math.Max(0, raw0) : MathUtil.Clamp(raw0, 0, 1))
+                                : 1.0;
+                            mrp = perSlotCap * (1 - BasketShare) * util;
+                        }
+                        else
+                        {
+                            // Pooled path: labor does not enter commercial
+                            // production there, so the firm forecasts its margin
+                            // per slot from its OWN realized takings — the EMA of
+                            // RevenueThisTick net of restocking cost, per slot,
+                            // floored at 0. That is an AVERAGE product of a
+                            // revenue the worker did not produce, and it is
+                            // exactly what the store-level branch above replaces.
+                            // Restock cost is rev × basket share at any local
+                            // price (the price cancels; see BasketShare). With
+                            // per-cluster realized prices (task #30) that
+                            // cancellation is no longer exact — the restocking
+                            // forecast and the realized delivered price at this
+                            // store's cluster can diverge. Measuring that
+                            // dispersion, and a quantity-based restocking basket
+                            // if it is material, is its own item: rewriting the
+                            // restocking rule re-opens task #30's goods-demand
+                            // calibration and does not belong inside a labor change.
+                            mrp = Math.Max(0, f.ProfitEma * (1 - BasketShare)) / Math.Max(1, f.JobSlots);
+                        }
                         break;
                 }
                 if (mrp <= 0) continue;      // a door with nothing to pay is not a door

@@ -239,6 +239,16 @@ namespace CS2Econ.Core
             }
 
             // ---- firm demand signals -----------------------------------------
+            // On the store-level path the commercial bid reads COUNTED
+            // individual shop intents (AccessState.CountShopIntents), and a
+            // household counted at one cluster is also counted at its
+            // neighbours: two developers reading this signal are reading about
+            // some of the same people. What stops them both building unopposed
+            // is not the signal, it is the vacancy kernel above — pipeline and
+            // standing vacant commercial supply are netted out of the demand
+            // this loop turns into starts, with V = 1 conservation. That
+            // machinery is this file's existing answer to double-counting and
+            // the counted signal feeds it unchanged.
             for (int c = 0; c < C; c++)
             {
                 double comProfit = LandAccounting.FirmBidPerSlot(acc, trade, c, ZoneKind.Commercial, 2, p);

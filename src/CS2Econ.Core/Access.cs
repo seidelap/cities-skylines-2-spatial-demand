@@ -871,10 +871,256 @@ namespace CS2Econ.Core
         /// the market adjusts by tâtonnement rather than by a formula.</summary>
         public double[][] PostedPrice = Array.Empty<double[]>();
 
+        // ---- counted shop intents (task #20) --------------------------------
+        /// <summary>[cluster][bin] money of counted individual shop intents.
+        /// Bin 0 is "wins at any size we would build"; bins 1..IntentProbeBins
+        /// partition log M* over [Lo, Hi]; the last bin is overflow and is never
+        /// read. Region-side, exactly where the charter puts offer/size signals;
+        /// NO household reads it — its only consumers are
+        /// LandAccounting.FirmBidPerSlot's commercial leg and, through it, the
+        /// developer's construction signal and the per-parcel firm-entry
+        /// probability.</summary>
+        public double[][] IntentSpendByBin = Array.Empty<double[]>();
+        /// <summary>[cluster][bin] HEADCOUNT behind each bin of
+        /// IntentSpendByBin. A read is the money in the bins it sums; this is
+        /// how many individual households put it there, which is what the
+        /// evidence floor is measured against. Counting heads per CLUSTER
+        /// instead would not discriminate — WShop is strictly positive
+        /// everywhere, so every household is "reachable" from every cluster and
+        /// the count is the population (measured: 1690–3772 of ~8000 at every
+        /// cluster, `shopprobe --seeds 4`, task #20). What is genuinely thin is
+        /// the evidence behind a read AT A SIZE.</summary>
+        public double[][] IntentHeadsByBin = Array.Empty<double[]>();
+        /// <summary>[cluster] households with a finite M* here at all. Telemetry
+        /// only; see IntentHeadsByBin for why it is not the evidence measure.</summary>
+        public double[] IntentHeads = Array.Empty<double>();
+        /// <summary>[cluster] households whose M* fell past the top of the
+        /// histogram — no shop of a size this city would build could win them.
+        /// A legitimate and expected population (remote clusters), NOT an error:
+        /// what would be an error is a READ landing there, and no read does —
+        /// the entry probe asks at log-mass 1.79–2.83 against a range top of
+        /// IntentProbeLogMassHi. ShopProbe prints both.</summary>
+        public double[] IntentOverflow = Array.Empty<double>();
+        /// <summary>Whether the counted field has been built. Built only on the
+        /// StoreLevelSpending path; where it has not been, every consumer falls
+        /// through to the pooled PhantomCommercialCapture — the same data-driven
+        /// dispatch Refresh already uses for RealizedEmployment.</summary>
+        public bool HasCountedIntents;
+        private double _intentLo, _intentStep, _intentHeadFloor;
+
+        /// <summary>Count who would come, one household at a time.
+        ///
+        /// Each settled household has just chosen (ChooseShops), and bestU[h] is
+        /// what it actually GETS on its own scale: the shop it picked including
+        /// its own permanent taste for that store, or the out-of-town option
+        /// including its own taste for that, whichever won. A hypothetical shop
+        /// of mass M at cluster c would beat that for this household iff
+        /// log(WShop[o,c] × M) + ε_hc &gt; bestU[h], i.e. iff
+        /// M &gt; M* = exp(bestU[h] − ε_hc) / WShop[o,c], where ε_hc is that
+        /// household's own permanent taste for a new store at c. So the counted
+        /// object is a demand curve in SIZE, stored as a histogram over log M*
+        /// rather than as an H × C table.
+        ///
+        /// BOTH SIDES CARRY A DRAW, and that is what makes the count a count of
+        /// individual argmaxes rather than a comparison between a drawn quantity
+        /// and an undrawn one. See EconomyEngine.ChooseShops for the three
+        /// formulations measured and why the two one-sided ones fail in opposite
+        /// directions. Nothing here takes a Gumbel's expectation analytically —
+        /// that expectation IS the logit share, i.e. the defect being removed.
+        ///
+        /// This replaces PhantomCommercialCapture as the store-level entry
+        /// signal. That field is
+        ///   Σ_i SpendMass[i] × wNew_i / (IncumbentShopWeight[i] + wNew_i),
+        /// and its denominator is a citywide convolution over every destination
+        /// cluster: the POOLED ALLOCATION RULE re-served as one developer's
+        /// forecast. On the store-level path the market that actually runs is
+        /// discrete — each household walks into ONE shop — so that forecast
+        /// predicts a market that does not exist, and developers keep building
+        /// shops the discrete market cannot feed. A COUNT of individual
+        /// comparisons has no such denominator: every term is one household's
+        /// own comparison from its own information, and the sum's spatial reach
+        /// is set by WShop decay rather than by fiat. It is the same object
+        /// RebuildDemandShares already ships, one += per household argmax.
+        ///
+        /// Two properties, both deliberate:
+        ///
+        /// SATURATION. Once a shop of mass M stands at c, every household near c
+        /// has bestU ≥ log(WShop[o,c] × M), so its M* jumps above M and it
+        /// stops counting for another shop of that size there. The counted
+        /// intents collapse to the households a second shop would genuinely
+        /// serve better. The pooled field does no such thing — it stays strictly
+        /// positive forever and hands every entrant a share of the same money.
+        ///
+        /// WHAT IS STILL APPROXIMATE. ε_hc is a taste for a PLACE, not for a
+        /// specific store: two entrants at the same cluster would inherit the
+        /// same draw from the same household, so the probe cannot tell them
+        /// apart. That is the honest residue of not having a firm id, and it is
+        /// MEASURED against realized takings (the entry-signal check's
+        /// CALIBRATION leg) rather than modelled away.
+        ///
+        /// The intent weight is the same per-household quantity SpendMass sums —
+        /// income × (1 − own rent share) × BaseConsumptionShare — and NOT the
+        /// realized spend from ConsumptionFlows, which nets ChargedAssessment:
+        /// realized rent entering a valuation field is the §3 circularity
+        /// violation. Housing comes out at the household's OWN RentShare, a
+        /// personal attribute. Settled households only, inheriting SpendMass's
+        /// measured asymmetry verbatim (see its site comment): unhoused spending
+        /// is upside a shop may earn, never a promise the entry decision is made
+        /// on.</summary>
+        public void CountShopIntents(WorldState w, EconParams p, double[] bestU)
+        {
+            int B = Math.Max(2, p.IntentProbeBins);
+            if (IntentSpendByBin.Length != C)
+            {
+                IntentSpendByBin = new double[C][];
+                IntentHeadsByBin = new double[C][];
+                for (int c = 0; c < C; c++)
+                { IntentSpendByBin[c] = new double[B + 2]; IntentHeadsByBin[c] = new double[B + 2]; }
+                IntentHeads = new double[C];
+                IntentOverflow = new double[C];
+            }
+            for (int c = 0; c < C; c++)
+            {
+                if (IntentSpendByBin[c].Length != B + 2) IntentSpendByBin[c] = new double[B + 2];
+                else Array.Clear(IntentSpendByBin[c], 0, B + 2);
+                if (IntentHeadsByBin[c].Length != B + 2) IntentHeadsByBin[c] = new double[B + 2];
+                else Array.Clear(IntentHeadsByBin[c], 0, B + 2);
+            }
+            Array.Clear(IntentHeads, 0, C);
+            Array.Clear(IntentOverflow, 0, C);
+            _intentLo = p.IntentProbeLogMassLo;
+            _intentStep = (p.IntentProbeLogMassHi - _intentLo) / B;
+            _intentHeadFloor = p.IntentHeadFloor;
+            if (_intentStep <= 0) { HasCountedIntents = false; return; }
+            double hi = p.IntentProbeLogMassHi;
+
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
+                int o = w.Parcels[h.HomeParcel].Cluster;
+                if ((uint)o >= (uint)C) continue;
+                if ((uint)h.Id >= (uint)bestU.Length) continue;
+                var seg = Segment.All[h.Segment];
+                double wh = HouseholdIncomeEstimate(h, seg, p)
+                            * (1 - MathUtil.Clamp(h.RentShare, 0, 0.9)) * p.BaseConsumptionShare;
+                if (wh <= 0) continue;
+                double bs = MutantIntentUnsaturated ? double.NegativeInfinity : bestU[h.Id];
+                for (int c = 0; c < C; c++)
+                {
+                    double wsc = WShop[o, c];
+                    if (wsc <= 1e-12) continue;      // unreachable: no size wins
+                    // This household's own permanent taste for a new store AT
+                    // THIS PLACE. Keyed on (household, cluster) — never on a
+                    // firm id, which a shop that does not exist cannot have —
+                    // exactly as RebuildDemandShares keys a household's taste
+                    // for a (density, cluster) it does not live in. It makes the
+                    // comparison symmetric: the threshold bestU carries the
+                    // household's realized draw for what it already has, so the
+                    // newcomer must carry one too or the count is a comparison
+                    // between a drawn quantity and an undrawn one. Permanent, so
+                    // an individual's taste for a place never re-rolls.
+                    double eps = Gumbel((ulong)h.Id * 2246822519UL + (ulong)c * 40503UL + 7717UL);
+                    double logMstar = bs - eps - Math.Log(wsc);
+                    if (logMstar >= hi) { IntentOverflow[c] += 1; continue; }
+                    IntentHeads[c] += 1;
+                    int b = logMstar <= _intentLo ? 0
+                          : 1 + (int)((logMstar - _intentLo) / _intentStep);
+                    if (b > B) b = B;
+                    IntentSpendByBin[c][b] += wh;
+                    IntentHeadsByBin[c][b] += 1;
+                }
+            }
+            HasCountedIntents = true;
+        }
+
+        /// <summary>Counted intent spending a shop of the given mass at c would
+        /// win: the CONSERVATIVE (lower) cumulative — only bins whose whole
+        /// range is beaten. A developer never over-counts, which is the safe
+        /// direction given the defect being removed was over-promising; the
+        /// discretization bias is measured (IntentProbeBins) rather than
+        /// assumed. Zero below the evidence floor.</summary>
+        public double CountedIntent(int c, double mass) => CountedIntent(c, mass, out _);
+
+        /// <summary>The headcount a read AT THIS SIZE rests on, with the
+        /// evidence floor NOT applied — what the floor is set from, and what a
+        /// thin-evidence check must count before asking what the gated read
+        /// returned.</summary>
+        public double IntentHeadsFor(int c, double mass)
+        {
+            if (!HasCountedIntents || (uint)c >= (uint)C || IntentHeadsByBin.Length != C) return 0;
+            double logM = Math.Log(Math.Max(1e-12, mass));
+            if (logM <= _intentLo) return 0;
+            var hrow = IntentHeadsByBin[c];
+            int upto = (int)Math.Floor((logM - _intentLo) / _intentStep);
+            if (upto > hrow.Length - 2) upto = hrow.Length - 2;
+            double heads = hrow[0];
+            for (int i = 1; i <= upto; i++) heads += hrow[i];
+            return heads;
+        }
+
+        /// <summary>As above, also returning the HEADCOUNT that produced the
+        /// read — how many individual households a place's retail forecast
+        /// rests on.</summary>
+        public double CountedIntent(int c, double mass, out double heads)
+        {
+            heads = 0;
+            if (!HasCountedIntents || (uint)c >= (uint)C || IntentSpendByBin.Length != C) return 0;
+            double logM = Math.Log(Math.Max(1e-12, mass));
+            if (logM <= _intentLo) return 0;
+            var row = IntentSpendByBin[c];
+            var hrow = IntentHeadsByBin[c];
+            int last = row.Length - 2;              // the final entry is overflow, never read
+            int upto = (int)Math.Floor((logM - _intentLo) / _intentStep);
+            if (upto > last) upto = last;
+            double sum = row[0];
+            heads = hrow[0];
+            for (int i = 1; i <= upto; i++) { sum += row[i]; heads += hrow[i]; }
+            // Thin evidence: one household's basket is not a place's retail
+            // forecast. The read is zeroed, not shrunk toward a prior, because
+            // the safe direction here is under-promising — the defect being
+            // removed was a field that promised every entrant a share.
+            if (heads < _intentHeadFloor) { heads = 0; return 0; }
+            return sum;
+        }
+
+        /// <summary>What a developer reads: counted individual intents where
+        /// they have been built, the pooled phantom-entrant field where they
+        /// have not (flag off, or a host that never calls CountShopIntents).
+        /// The pooled field stays reachable and pinned, exactly as the posted
+        /// housing curve stays reachable behind `--posted`.</summary>
+        public double CommercialCapture(int c, double mass)
+            => HasCountedIntents && !MutantPooledEntry
+               ? CountedIntent(c, mass) : PhantomCommercialCapture(c, mass);
+
+        /// <summary>MUTANT SWITCH (`--mutant-pooled-entry`): restores
+        /// PhantomCommercialCapture as the store-level entry signal — the flag
+        /// comment's measured defect, verbatim. The entry-signal check's
+        /// CALIBRATION and SATURATION legs must go red under it. Never a
+        /// shipping mode.</summary>
+        public static bool MutantPooledEntry;
+
+        /// <summary>MUTANT SWITCH (`--mutant-intent-unsaturated`): counts every
+        /// reachable household regardless of what it already settled for, i.e.
+        /// drops bestSys from the probe. That IS the pooled defect in counted
+        /// clothing — the signal stops saturating when a shop is built — which
+        /// is why it is the right mutant for the SATURATION leg. Never a
+        /// shipping mode.</summary>
+        public static bool MutantIntentUnsaturated;
+
+        /// <summary>Gumbel(0,1) from a stable hash — the same inverse-CDF trick
+        /// the shop and location choices use, so a household's taste for a
+        /// specific place never re-rolls.</summary>
+        private static double Gumbel(ulong key)
+        {
+            double e = SplitMix64.Hash01(key);
+            return -Math.Log(-Math.Log(Math.Min(1 - 1e-12, Math.Max(1e-12, e))));
+        }
+
         /// <summary>Phantom entrant (design §4.2): expected spending capture of a
         /// hypothetical new commercial firm of given mass at cluster c, inserted
         /// into the shopping logit against incumbents — the bucket machinery run
-        /// hypothetically. O(C).</summary>
+        /// hypothetically. O(C). Reached on the pooled path, and by
+        /// CommercialCapture wherever the counted field was never built.</summary>
         public double PhantomCommercialCapture(int c, double newMass)
         {
             double captured = 0;

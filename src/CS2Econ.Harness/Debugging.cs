@@ -1028,5 +1028,242 @@ namespace CS2Econ.Harness
                     Console.WriteLine($"  access quintile {i + 1}: mean level {slice.Average(x => x.Level):F2} (n={slice.Count})");
             }
         }
+
+        /// <summary>`harness shopprobe` — the task #20 measurement aid. Every
+        /// numeric bound this item ships comes from here, and every bound's
+        /// comment names this command and the run.
+        ///
+        /// Prints, per seed and pooled across seeds:
+        ///  - the realized presented-per-FILLED-slot distribution on the
+        ///    store-level arm, which is what CommercialServicePerSlot is set at
+        ///    a high percentile of (capacity should bind on the busiest shops,
+        ///    never on the median);
+        ///  - the shop-mass distribution over live shops, which is what the
+        ///    intent histogram's log range must cover, plus any overflow reads
+        ///    (a read landing in overflow is a bug, so the count must be 0);
+        ///  - the histogram's discretization error against an EXACT unbucketed
+        ///    read of the same intents, which is what IntentProbeBins is chosen by;
+        ///  - the per-cluster head distribution behind IntentHeadFloor;
+        ///  - capacity binding share, turned-away share, and entrant survival by
+        ///    AGE — the population the cold start would kill;
+        ///  - the sector-coherence relation: capacity at full staffing against
+        ///    the spending the city presents. If the sector structurally cannot
+        ///    serve the city, leakage explodes for reasons that have nothing to
+        ///    do with siting, and this is the first thing to look at;
+        ///  - the flag comment's own census on BOTH arms: alive/dead commercial
+        ///    firms and commercial-parcel vacancy.</summary>
+        public static int ShopProbe(ulong startSeed, int seeds, int ticks, double servicePerSlot = 0)
+        {
+            Console.WriteLine($"shopprobe: seeds {startSeed}..{startSeed + (ulong)seeds - 1}, {ticks} ticks"
+                + (servicePerSlot > 0 ? $", CommercialServicePerSlot={servicePerSlot:G}" : ""));
+            var presentedPerFilled = new List<double>();
+            var massAll = new List<double>();
+            double capBindTicks = 0, allTicks = 0, turnedAway = 0, servedTot = 0, overflowTot = 0;
+            var headsAll = new List<double>();
+            var countedPerSlot = new List<double>();
+            var pooledPerSlot = new List<double>();
+            var binErr = new Dictionary<int, double>();
+            var census = new List<(bool on, int alive, int dead, double vac,
+                                   double coherence, int youngDead, int born)>();
+
+            for (ulong s = startSeed; s < startSeed + (ulong)seeds; s++)
+                foreach (bool on in new[] { false, true })
+                {
+                    var p = new EconParams();
+                    if (servicePerSlot > 0) p.CommercialServicePerSlot = servicePerSlot;
+                    var sim = Sim.Create(new SyntheticCity.Config { Seed = s, SeedHouseholds = 8000 },
+                                         p, new FeatureFlags { StoreLevelSpending = on });
+                    int youngDead = 0, born = 0;
+                    var seenBorn = new HashSet<int>();
+                    var seenDead = new HashSet<int>();
+                    sim.Run(ticks, s2 =>
+                    {
+                        var w2 = s2.W;
+                        foreach (var f in w2.Firms)
+                        {
+                            if (f.Sector != ZoneKind.Commercial) continue;
+                            if (f.EnteredTick > 0 && seenBorn.Add(f.Id)) born++;
+                            if (f.Dead)
+                            {
+                                if (f.EnteredTick > 0 && seenDead.Add(f.Id)
+                                    && w2.Tick - f.EnteredTick <= 40) youngDead++;
+                                continue;
+                            }
+                            if (!on || f.Parcel < 0) continue;
+                            allTicks++;
+                            double c0 = EconomyEngine.CommercialServiceCapacity(f, w2.Parcels[f.Parcel], p);
+                            if (c0 > 1e-9 && f.PresentedThisTick > c0 + 1e-9) capBindTicks++;
+                            turnedAway += Math.Max(0, f.PresentedThisTick - f.ServedThisTick);
+                            servedTot += f.ServedThisTick;
+                            if (f.WorkersFilled > 1e-9 && w2.Tick > ticks - 200)
+                                presentedPerFilled.Add(f.PresentedThisTick / f.WorkersFilled);
+                        }
+                    });
+
+                    var w = sim.W; var acc = sim.Engine.Access;
+                    int alive = 0, dead = 0;
+                    foreach (var f in w.Firms)
+                    {
+                        if (f.Sector != ZoneKind.Commercial) continue;
+                        if (f.Dead) { dead++; continue; }
+                        alive++;
+                        if (!on || f.Parcel < 0) continue;
+                        var pl = w.Parcels[f.Parcel];
+                        massAll.Add(f.JobSlots * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level));
+                    }
+                    int comParcels = 0, comVacant = 0;
+                    foreach (var pl in w.Parcels)
+                        if (pl.State == ParcelState.Built && pl.Use == ZoneKind.Commercial)
+                        { comParcels++; if (pl.OccupantFirm < 0) comVacant++; }
+
+                    double fullCap = 0, presented = 0;
+                    foreach (var f in w.Firms)
+                    {
+                        if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                        var pl = w.Parcels[f.Parcel];
+                        fullCap += p.CommercialServicePerSlot * f.JobSlots
+                                   * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level) / p.Quality(1);
+                        presented += f.PresentedEma;
+                    }
+                    double coherence = presented > 1e-9 ? fullCap / presented : 0;
+                    if (on)
+                        for (int c = 0; c < acc.C; c++)
+                        {
+                            overflowTot += acc.IntentOverflow.Length > c ? acc.IntentOverflow[c] : 0;
+                            double fe = LandAccounting.FirmFillEstimate(acc, c, ZoneKind.Commercial);
+                            double read = acc.CountedIntent(c, 6.0);
+                            headsAll.Add(acc.IntentHeadsFor(c, 6.0));
+                            countedPerSlot.Add(read / Math.Max(1e-9, 6.0 * fe));
+                            pooledPerSlot.Add(acc.PhantomCommercialCapture(c, 6.0) / 6.0);
+                        }
+                    double vac = comParcels > 0 ? (double)comVacant / comParcels : 0;
+                    census.Add((on, alive, dead, vac, coherence, youngDead, born));
+                    Console.WriteLine($"  seed {s} {(on ? "ON " : "OFF")}: com alive={alive} dead={dead} "
+                        + $"vac={vac:P0} | entrants born={born} died≤40t={youngDead}"
+                        + (on ? $" | fullcap/presented={coherence:F2}" : ""));
+                    if (on) MeasureBinError(sim, p, binErr);
+                }
+
+            Console.WriteLine();
+            if (presentedPerFilled.Count > 0)
+            {
+                presentedPerFilled.Sort();
+                Console.WriteLine($"  presented per FILLED slot per tick (n={presentedPerFilled.Count}): "
+                    + $"p25={Pct(presentedPerFilled, .25):F2} p50={Pct(presentedPerFilled, .50):F2} "
+                    + $"p75={Pct(presentedPerFilled, .75):F2} p90={Pct(presentedPerFilled, .90):F2} "
+                    + $"p99={Pct(presentedPerFilled, .99):F2} max={presentedPerFilled[presentedPerFilled.Count - 1]:F2}");
+            }
+            if (massAll.Count > 0)
+            {
+                massAll.Sort();
+                Console.WriteLine($"  live shop mass (n={massAll.Count}): min={massAll[0]:F2} "
+                    + $"p50={Pct(massAll, .5):F2} max={massAll[massAll.Count - 1]:F2} "
+                    + $"| log range [{Math.Log(massAll[0]):F2}, {Math.Log(massAll[massAll.Count - 1]):F2}] "
+                    + $"| intents past the range top={overflowTot:F0}");
+            }
+            if (headsAll.Count > 0)
+            {
+                headsAll.Sort();
+                Console.WriteLine($"  intent heads BACKING the reference read (n={headsAll.Count}): min={headsAll[0]:F0} "
+                    + $"p05={Pct(headsAll, .05):F0} p10={Pct(headsAll, .10):F0} p25={Pct(headsAll, .25):F0} "
+                    + $"p50={Pct(headsAll, .50):F0} max={headsAll[headsAll.Count - 1]:F0}");
+            }
+            if (countedPerSlot.Count > 0)
+            {
+                countedPerSlot.Sort(); pooledPerSlot.Sort();
+                Console.WriteLine($"  ENTRY READ per (filled) slot at the reference mass 6, over clusters: "
+                    + $"counted p10={Pct(countedPerSlot, .10):F2} p50={Pct(countedPerSlot, .50):F2} "
+                    + $"p90={Pct(countedPerSlot, .90):F2} max={countedPerSlot[countedPerSlot.Count - 1]:F2} "
+                    + $"| pooled p10={Pct(pooledPerSlot, .10):F2} p50={Pct(pooledPerSlot, .50):F2} "
+                    + $"p90={Pct(pooledPerSlot, .90):F2} max={pooledPerSlot[pooledPerSlot.Count - 1]:F2}");
+            }
+            if (allTicks > 0)
+                Console.WriteLine($"  capacity binds on {capBindTicks / allTicks:P1} of {allTicks:F0} firm-ticks "
+                    + $"| turned-away share of presented "
+                    + $"{(servedTot + turnedAway > 0 ? turnedAway / (servedTot + turnedAway) : 0):P1}");
+            foreach (var kv in binErr.OrderBy(k => k.Key))
+                Console.WriteLine($"  discretization error, {kv.Key} bins: worst {kv.Value:P2} of the exact read (city aggregate)");
+            foreach (var grp in census.GroupBy(c => c.on))
+                Console.WriteLine($"  CENSUS {(grp.Key ? "store-level" : "pooled    ")}: "
+                    + $"alive {grp.Average(c => (double)c.alive):F1} dead {grp.Average(c => (double)c.dead):F1} "
+                    + $"com-parcel vacancy {grp.Average(c => c.vac):P0} "
+                    + $"| entrants dying ≤40 ticks {grp.Sum(c => (double)c.youngDead):F0}"
+                    + $"/{grp.Sum(c => (double)c.born):F0}"
+                    + (grp.Key ? $" | fullcap/presented {grp.Average(c => c.coherence):F2}" : ""));
+            return 0;
+        }
+
+        /// <summary>The binned counted-intent read against an EXACT unbucketed
+        /// read built from the same households' own M* values, at the size the
+        /// entry probe actually asks about. The binned read is deliberately
+        /// conservative, so the error is one-sided; what is measured is what
+        /// size resolution costs, which is how IntentProbeBins is chosen.</summary>
+        private static void MeasureBinError(Sim sim, EconParams p, Dictionary<int, double> binErr)
+        {
+            var w = sim.W; var acc = sim.Engine.Access;
+            var bestU = sim.Engine.ShopBestUtility;
+            // Averaged over four read sizes. At one fixed size the metric is
+            // degenerate: bin counts 12/24/48 put a boundary at the SAME place
+            // below log 6, so all three drop the same window and report an
+            // identical 4.52% (measured). What resolution costs is the distance
+            // from the read to the nearest boundary below it, so the honest
+            // measure averages over reads.
+            var masses = new[] { 4.0, 6.0, 9.0, 14.0 };
+            var exact = new double[acc.C * masses.Length];
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
+                int o = w.Parcels[h.HomeParcel].Cluster;
+                if ((uint)o >= (uint)acc.C || (uint)h.Id >= (uint)bestU.Length) continue;
+                var seg = Segment.All[h.Segment];
+                double wh = AccessState.HouseholdIncomeEstimate(h, seg, p)
+                            * (1 - MathUtil.Clamp(h.RentShare, 0, 0.9)) * p.BaseConsumptionShare;
+                double bs = bestU[h.Id];
+                for (int c = 0; c < acc.C; c++)
+                {
+                    double wsc = acc.WShop[o, c];
+                    if (wsc <= 1e-12) continue;
+                    // The same comparison the mechanism makes, unbucketed: the
+                    // household own taste for a new store at c on one side,
+                    // its own realized best on the other.
+                    double e = SplitMix64.Hash01((ulong)h.Id * 2246822519UL + (ulong)c * 40503UL + 7717UL);
+                    double eps = -Math.Log(-Math.Log(Math.Min(1 - 1e-12, Math.Max(1e-12, e))));
+                    for (int m = 0; m < masses.Length; m++)
+                        if (Math.Log(wsc * masses[m]) + eps > bs) exact[m * acc.C + c] += wh;
+                }
+            }
+            foreach (int bins in new[] { 24, 96, 192 })
+            {
+                var p2 = new EconParams
+                {
+                    IntentProbeBins = bins,
+                    IntentProbeLogMassLo = p.IntentProbeLogMassLo,
+                    IntentProbeLogMassHi = p.IntentProbeLogMassHi,
+                    IntentHeadFloor = 0,
+                };
+                acc.CountShopIntents(w, p2, bestU);
+                // AGGREGATE relative error, not the worst cluster: a read rests
+                // on ~9 households (measured), so one household landing in the
+                // partial bin is a ~11% single-cluster error at ANY bin width
+                // and the max is a knife-edge, not a resolution measure. What a
+                // developer signal is judged on is how much of the counted money
+                // the bucketing drops city-wide.
+                double gotSum = 0, exactSum = 0;
+                for (int m = 0; m < masses.Length; m++)
+                    for (int c = 0; c < acc.C; c++)
+                    { gotSum += acc.CountedIntent(c, masses[m]); exactSum += exact[m * acc.C + c]; }
+                double err = exactSum > 1e-9 ? Math.Abs(gotSum - exactSum) / exactSum : 0;
+                binErr[bins] = Math.Max(binErr.TryGetValue(bins, out var prev) ? prev : 0, err);
+            }
+            acc.CountShopIntents(w, p, bestU);   // leave the field as the engine had it
+        }
+
+        private static double Pct(List<double> sorted, double q)
+        {
+            if (sorted.Count == 0) return 0;
+            double idx = q * (sorted.Count - 1);
+            int lo = (int)Math.Floor(idx), hi = Math.Min(sorted.Count - 1, lo + 1);
+            return sorted[lo] + (idx - lo) * (sorted[hi] - sorted[lo]);
+        }
     }
 }

@@ -11,7 +11,7 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (35 checks)
+## verify (45 checks)
 
 29 at the per-cluster prospect-odds commit (28 plus prospect-local-odds;
 seeds 0–7 and 25 measured 29/29 there, canary 39/39) plus the three
@@ -70,6 +70,51 @@ rows below. Same verdicts: verify 35/35 on seeds 1, 9, 13 and 34/35 on
 seed 25, canary 39/39, laborcanary 39/39, fingerprint lanes unmoved (no
 new stanza). The occupancy row below now carries the 57-seed `occsweep`
 inventory the previous row said had not been run.
+
+The 36th to 45th are the task #20 commerce legs — five in the commercial-staffing
+fixture (capacity bound + its binding floor, the door-cap technology ceiling,
+staffless-shop bidding with its embedded MutantServedCap arm, the defaults rule,
+and store-level money conservation) and five in the counted-shop-intents fixture
+(the commercial-side circularity guard, thin evidence, discrimination against the
+pooled field, the crowding response, and calibration against realized takings),
+added at the real-staffing commit. `shopsweep` runs both fixtures
+alone across seeds; `shopprobe` is the census every bound in them was set from.
+They are the first assertions in this suite that name the commercial sector at
+all — measured at the start of that item, `grep -c Commercial TestRunner.cs`
+read **0**, with no occurrence of "shop", "retail" or "capture" either, against
+26 for "residential". At that commit: verify **45/45** on seeds 1, 9 and 13 and
+**44/45** on seed 25 (the standing occupancy red, unchanged leg and unchanged
+numbers — FillEma worst err 0.663, price leg responding 2.333 → 0.534), canary
+39/39, laborcanary 39/39, goodssweep 7/7, and `fingerprint --check` all lanes
+matching with no accept. Cost: the two fixtures add ~50 s per seed to a suite
+the labor round measured at ~120 s. That is the price of testing a fifth
+mechanism, stated the way the labor fixture's was.
+
+**THE STORE-LEVEL FLAG DID NOT FLIP, AND THE BLOCKER IS MEASURED.**
+`FeatureFlags.StoreLevelSpending` still ships FALSE. Task #20 landed both
+mechanisms the flag's own doc comment was waiting on — commercial production
+became linear in the staff the shop has, and the pooled phantom-entrant entry
+field was replaced on that path by counted individual shop intents — and the
+census gap narrowed without closing: on the store-level path commercial firms
+alive **98.0 → 103.5** and commercial-parcel vacancy **42% → 39%**
+(`shopprobe --seeds 4`, 300 ticks, against `firmdiag` at 58cab48 on the same
+seeds), against a pooled path this item leaves BIT-IDENTICAL at 130.2 alive and
+26% vacancy. It was not free: commercial deaths rose **44.2 → 77.5**,
+concentrated entirely in entry — **141 of 161** shops born mid-run die within 40
+ticks against **0 of 48** on the pooled path. That is a NEW measured fact about
+this path and it is the first thing the inventory has to classify. The flip decision was not taken on that number. It was not taken
+because a flip inventory classifies changed verdicts, and until this commit
+nothing in the suite could see a commercial verdict change at all — every one
+would have classified as "unchanged by construction". WHAT WOULD UNBLOCK IT,
+in order: (1) the two new checks green across the 26-seed `shopsweep` on the ON
+arm, (2) `webersweep` on the ON arm no worse than the OFF arm's record on the
+same seeds — the flag comment's own stated blocker, still unmeasured on the ON
+arm here, (3) the census gap closed or explained per number rather than as one
+band over two numbers that move in opposite directions, (4) both canaries 39/39
+on the ON arm, (5) ledger conservation and per-sector reconciliation exact on
+both arms with a pooled arm added to those checks, (6) the mechanical pins:
+`--pooled`, `vanillaMode`, flags-off smoke, the occupancy pin, a pooled
+fingerprint arm.
 
 | Seed | Check | Status | Attribution |
 |---|---|---|---|

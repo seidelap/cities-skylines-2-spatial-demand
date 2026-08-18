@@ -31,6 +31,28 @@ namespace CS2Econ.Harness
                 // goods-price localization check can be shown to fail. Never a
                 // shipping mode.
                 if (args[i] == "--mutant-citywide-goods") { TradeSystem.MutantCitywideGoodsPrice = true; continue; }
+                // MUTANT SWITCH (see LaborAuction.MutantRevenueEmaCap):
+                // restores the revenue-EMA commercial door cap on the
+                // store-level path, so the staffing check's door-cap CEILING
+                // leg can be shown to fail. Never a shipping mode.
+                if (args[i] == "--mutant-revenue-ema-cap") { LaborAuction.MutantRevenueEmaCap = true; continue; }
+                // MUTANT SWITCH (see AccessState.MutantPooledEntry): restores
+                // the pooled phantom-entrant field as the store-level entry
+                // signal — the flag comment's measured defect, verbatim.
+                if (args[i] == "--mutant-pooled-entry") { AccessState.MutantPooledEntry = true; continue; }
+                // MUTANT SWITCH (see LaborAuction.MutantServedCap): drives the
+                // commercial door cap from served volume instead of presented
+                // custom, so the staffing check's STARVATION leg can be shown
+                // to fail.
+                if (args[i] == "--mutant-served-cap") { LaborAuction.MutantServedCap = true; continue; }
+                // MUTANT SWITCH (see LaborAuction.MutantUncappedUtil): drops the
+                // technology ceiling from the commercial door cap, so it rises
+                // without limit in the shop's traffic.
+                if (args[i] == "--mutant-uncapped-util") { LaborAuction.MutantUncappedUtil = true; continue; }
+                // MUTANT SWITCH (see AccessState.MutantIntentUnsaturated): the
+                // intent probe stops comparing against what each household
+                // already settled for, so the counted signal stops saturating.
+                if (args[i] == "--mutant-intent-unsaturated") { AccessState.MutantIntentUnsaturated = true; continue; }
                 if (i + 1 >= args.Length) continue;
                 if (args[i] == "--seed") seed = ulong.Parse(args[i + 1]);
                 if (args[i] == "--only") only = args[i + 1];
@@ -106,6 +128,37 @@ namespace CS2Econ.Harness
                         if (set.Count < n) set.Add(s);
                     for (ulong s = 4; set.Count < n; s++) if (!set.Contains(s)) set.Add(s);
                     return TestRunner.GoodsSweep(set);
+                }
+                case "shopsweep":   // both task #20 commerce checks across seeds (see TestRunner.ShopSweep)
+                {
+                    int n = 4;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    var set = new List<ulong>();
+                    for (ulong s = 0; s < (ulong)n; s++) set.Add(s);
+                    return TestRunner.ShopSweep(set);
+                }
+                case "shopprobe":
+                {
+                    // Task #20 measurement aid (see Debugging.ShopProbe): every
+                    // bound this item ships is set from this command's output.
+                    // --seed is the START of the sweep; --seeds its length.
+                    int ticks = 300, n = 4;
+                    ulong start = 0;
+                    double svc = 0;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                        if (args[i] == "--seed") start = ulong.Parse(args[i + 1]);
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                        // Overrides CommercialServicePerSlot for THIS run only —
+                        // how the pick is swept, and how the uncapped
+                        // presented-per-filled-slot distribution the pick is set
+                        // from is measured (set it high enough never to bind).
+                        if (args[i] == "--service") svc = double.Parse(args[i + 1],
+                            System.Globalization.CultureInfo.InvariantCulture);
+                    }
+                    return Debugging.ShopProbe(start, n, ticks, svc);
                 }
                 case "assesscheck": // assessment-tracks-price fixture alone (see TestRunner.AssessCheck)
                     return TestRunner.AssessCheck(seed);
