@@ -208,6 +208,19 @@ namespace CS2Econ.Harness
             // not silently change worlds if the default ever moves again.
             lanes.AddRange(Arm("labor", new FeatureFlags { HousingAuction = true, LaborAuction = true },
                                gating: true));
+            // REPORT-ONLY, and the pair exists for the reason the posted arm
+            // exists: whichever consumption path is NOT the default must keep a
+            // hash while it still ships. The `pooled` arm spells
+            // StoreLevelSpending = false, so it stays the pooled path whatever
+            // the default becomes; the `storelevel` arm is the experimental
+            // path and is the one that carries information today. Pre-flip
+            // `pooled` duplicates `default` lane for lane and asserts nothing —
+            // that is the cost of having the pin in place BEFORE the flip
+            // rather than remembering it during one.
+            lanes.AddRange(Arm("pooled", new FeatureFlags { HousingAuction = true, StoreLevelSpending = false },
+                               gating: false));
+            lanes.AddRange(Arm("storelevel", new FeatureFlags { HousingAuction = true, StoreLevelSpending = true },
+                               gating: false));
             return lanes;
         }
 

@@ -68,6 +68,14 @@ namespace CS2Econ.Core
     /// either. Both fallbacks are market signals no single parcel produces.</summary>
     public static class LandAccounting
     {
+        /// <summary>MUTANT SWITCH (`--mutant-entry-reference-mass`): makes the
+        /// store-level commercial entry read ask the counted field about a
+        /// 6-slot condition-1 shop again, whatever building the firm would
+        /// actually occupy. That is the entrant death mode restored verbatim —
+        /// the entrant-survival leg must go red under it. Never a shipping
+        /// mode.</summary>
+        public static bool MutantEntryReferenceMass;
+
         public static int UnitsFor(ZoneKind use) => use switch
         {
             ZoneKind.ResidentialLow => 2,
@@ -400,9 +408,25 @@ namespace CS2Econ.Core
         /// for extractors the best raw the cluster's geology supports.</summary>
         public static double FirmBidPerSlot(
             AccessState acc, IPriceContext prices, int cluster, ZoneKind sector, int level, EconParams p,
-            out Res chosenOutput, ClusterInfo[]? workCluster)
+            out Res chosenOutput, ClusterInfo[]? workCluster,
+            double entrantMass = 0, double entrantSlots = 0, double entrantCondition = 0)
+            => FirmBidPerSlot(acc, prices, cluster, sector, level, p, out chosenOutput, workCluster,
+                              out _, entrantMass, entrantSlots, entrantCondition);
+
+        /// <summary>Overload reporting whether the returned bid ALREADY prices
+        /// the parcel's condition. It does exactly when the store-level
+        /// commercial branch was given a specific building: there condition
+        /// enters the catchment mass a shopper sees and the service ceiling a
+        /// slot can deliver, which is the whole of what condition means to a
+        /// shop, so the caller's generic CondFactor discount would charge the
+        /// same fact a second time.</summary>
+        public static double FirmBidPerSlot(
+            AccessState acc, IPriceContext prices, int cluster, ZoneKind sector, int level, EconParams p,
+            out Res chosenOutput, ClusterInfo[]? workCluster, out bool conditionPriced,
+            double entrantMass = 0, double entrantSlots = 0, double entrantCondition = 0)
         {
             chosenOutput = Res.Services;
+            conditionPriced = false;
             double fillEst = FirmFillEstimate(acc, cluster, sector);
             double quality = p.Quality(level) / p.Quality(1);
             // Production needs labor: revenue AND wages both scale with fill —
@@ -446,9 +470,50 @@ namespace CS2Econ.Core
                         // change against a calibrated signal, which is why it is
                         // reported separately from the counted-vs-pooled swap and
                         // why it is confined to this branch.
-                        double counted = acc.CommercialCapture(cluster, 6.0 * quality);
-                        capturePerSlot = Math.Min(counted / Math.Max(1e-9, 6.0 * fillEst),
-                                                  p.CommercialServicePerSlot * quality);
+                        // ASK THE FIELD ABOUT THE SHOP THAT WOULD ACTUALLY
+                        // STAND HERE. The counted field is a demand curve in
+                        // SIZE, so the mass it is read at is not a formality: it
+                        // is the object EconomyEngine.ChooseShops scores, namely
+                        // units × max(0.2, condition) × Quality(level). A caller
+                        // that leaves entrantMass at 0 gets the CLUSTER
+                        // reference — a 6-slot, condition-1 shop at this level —
+                        // which is the right question for Construction's
+                        // per-cluster signal and its calibrated scale, and the
+                        // wrong one for a firm deciding whether to take a
+                        // SPECIFIC vacant building.
+                        //
+                        // Measured at the two-track merge (`entrydiag --seeds 4`,
+                        // 300 ticks, store-level arm, 143 mid-run entrants):
+                        // the reference read is 1.63× the same field asked at
+                        // the entrant's own mass at the median and never
+                        // smaller (own/reference p10 0.374, p50 0.612, p90
+                        // 1.000) — entrants take over standing buildings whose
+                        // condition has decayed, and condition multiplies the
+                        // mass a shopper sees. Against realized presented
+                        // custom over the entrant's own first 40 ticks the
+                        // reference read over-predicts 3.4× (p50 0.293); the
+                        // own-mass read over-predicts 2.05× (p50 0.488, p90
+                        // 1.260). The residue is the probe's stated
+                        // taste-blindness, measured rather than corrected away.
+                        //
+                        // CONDITION IS PRICED ONCE. It enters here twice on
+                        // purpose — the mass a shopper sees and the service a
+                        // slot can deliver both carry max(0.2, condition), which
+                        // is exactly how EconomyEngine.ChooseShops and
+                        // CommercialServiceCapacity carry it — and the caller is
+                        // told so through conditionPriced, so the generic
+                        // CondFactor bid discount is not charged on top. Without
+                        // that the same run-down building is discounted twice
+                        // and entry stops: measured on seeds 0-1, 3 mid-run
+                        // entrants across four seeds against 143.
+                        double mass = entrantMass > 0 ? entrantMass : 6.0 * quality;
+                        double slots = entrantSlots > 0 ? entrantSlots : 6.0;
+                        double cond = entrantCondition > 0 ? Math.Max(0.2, entrantCondition) : 1.0;
+                        if (MutantEntryReferenceMass) { mass = 6.0 * quality; slots = 6.0; cond = 1.0; }
+                        else conditionPriced = entrantMass > 0 && entrantCondition > 0;
+                        double counted = acc.CommercialCapture(cluster, mass);
+                        capturePerSlot = Math.Min(counted / Math.Max(1e-9, slots * fillEst),
+                                                  p.CommercialServicePerSlot * quality * cond);
                     }
                     else capturePerSlot = acc.PhantomCommercialCapture(cluster, 6.0 * quality) / 6.0;
                     profitPerFilledSlot = capturePerSlot * (p.CommercialMarkup - 0.1 * (cogsIndex - 0.3)) - wage;

@@ -41,10 +41,18 @@ namespace CS2Econ.Harness
         /// for every sim this process builds, so the task-#19 arm can be
         /// measured without editing a default that ships off.</summary>
         public static bool ForceNonResLandParity;
+        /// <summary>Set by `--pooled`: force the pooled consumption path even
+        /// where a fixture or a future default asks for store-level spending.
+        /// The mirror of `--posted`, and it exists for the same measured
+        /// reason: the flip inventory found that without an explicit switch
+        /// NOTHING in the harness could reach the non-default path. Applied
+        /// after `--store-level` so an explicit `--pooled` wins.</summary>
+        public static bool ForcePooled;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
             if (ForceStoreLevelSpending) flags.StoreLevelSpending = true;
+            if (ForcePooled) flags.StoreLevelSpending = false;
             if (ForceHousingAuction) flags.HousingAuction = true;
             if (ForcePosted) flags.HousingAuction = false;
             if (ForceNonResLandParity) p.NonResLandParity = true;
@@ -62,6 +70,14 @@ namespace CS2Econ.Harness
                 // being vanilla (measured at the flip round: the levels
                 // scenario's vanilla arm read −0.16 through the auction).
                 flags.HousingAuction = false;
+                // Same reason, same measured precedent: vanilla means the
+                // VANILLA market on BOTH sides. If StoreLevelSpending ever
+                // becomes the default, inheriting it here would run the vanilla
+                // spawner against a discrete shop market and every scenario's
+                // "vs vanilla" arm would quietly stop being vanilla. Pinned now,
+                // while it is a no-op, so the flip cannot forget it — the
+                // housing flip hit exactly this defect and it is recorded.
+                flags.StoreLevelSpending = false;
                 sim.Vanilla = new VanillaSpawner();
             }
             return sim;
