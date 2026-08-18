@@ -1,11 +1,18 @@
 # MODEL FINGERPRINT — append-only baseline for the acceptance suite.
 #
 # Each stanza records what the pinned fixture produced at one commit:
-# eight lanes (demography / built / price / money, on the default and
-# auction arms), each an entity-level hash plus the human-readable
-# scalars behind it. `verify` gates on the four default-arm lanes and
-# REPORTS the auction lanes (see Fingerprint.cs for why that split, and
-# for the rule that would promote them).
+# thirteen lanes (demography / built / price / money on the default,
+# posted and labor arms, plus the labor arm's cleared-market lane), each
+# an entity-level hash plus the human-readable scalars behind it.
+# `verify` gates on all of them. It gated only the default arm until the
+# promotion rule was measured over this branch's whole fingerprint era
+# (Fingerprint.cs head); the earlier stanzas below were recorded while
+# the posted and labor lanes were report-only, and stanzas 1-5 carry an
+# `auction` arm that was retired at the flip commit.
+#
+# This header is a COMMENT, outside every stanza and outside every
+# signature; the stanzas themselves stay append-only and are only ever
+# written by `fingerprint --accept`.
 #
 # DO NOT HAND-EDIT. Each stanza is signed over its own text, deltas
 # included, so an edited hash fails as 'hand-edited' rather than

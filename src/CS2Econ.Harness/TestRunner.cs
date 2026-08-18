@@ -2021,131 +2021,216 @@ namespace CS2Econ.Harness
                   $"{lo.positive}/{lo.built} overall at {loOcc:P0}");
         }
 
+        /// <summary>REALIZED VACANCY MOVES RENT — measured as a property of the
+        /// channel, not of whichever cluster a selection lands on.
+        ///
+        /// The channel is two links and the check is one leg per link:
+        ///   (a) AccessState.FillEma is THIS submarket's own realized fill,
+        ///       smoothed at the declared constant;
+        ///   (b) that quantity reaches the clearing price, through
+        ///       RebuildDemandShares' attraction term and the demand curve
+        ///       LandAccounting.ResidentialBidPerUnit inverts.
+        /// An integration test alone cannot say this: the allocator re-houses
+        /// whoever you evict, and an earlier check CLAIMED to measure a vacancy
+        /// overhang while in fact only varying population (adversarial review).
+        ///
+        /// WHY BOTH LEGS WERE REWRITTEN. Both had the same defect in different
+        /// clothes — a verdict decided by world composition rather than by the
+        /// channel — and both generated registry churn at every world change
+        /// while the transmission they name went untouched. Measured across
+        /// four worlds, the failing SET re-rolled almost completely (base
+        /// {9, 41, 910}, housing track {23, 41, 43, 46, 48}, goods track 48/57,
+        /// merged {1, 20, 22, 28, 30, 41}); at 88fc88c the six reds split 4/2
+        /// between the two old legs, so neither was healthy:
+        ///   · the old price leg probed the LOWEST-INDEXED cleared cluster out
+        ///     of the 47–70 that qualify per seed (`occprobe`, 57 seeds), so
+        ///     one unresponsive cluster decided the verdict — seeds 30 and 41.
+        ///   · the old tracking leg bounded the worst |FillEma − occupancy| at
+        ///     0.5 with the sweep's own maximum measured at 0.500, i.e. zero
+        ///     headroom — seeds 1, 20, 22 (0.500) and 28 (0.548). That bound
+        ///     could not be tightened either: the EMA's own step response
+        ///     permits |FillEma − target| up to (1 − α) = 0.75 after a single
+        ///     full-swing tick, so anything under 0.75 is a claim about how
+        ///     fast this fixture's occupancy moves, not about the mechanism.
+        ///
+        /// LEG (a) IS NOW A DIFFERENTIAL ORACLE, exact instead of bounded. The
+        /// per-submarket fill target is recomputed here from the parcels, the
+        /// sim is advanced across ONE refresh, and the shipped FillEma must
+        /// equal Ema(previous, target, FillEmaAlpha) to 1e-9 — measured 0.0
+        /// exactly on all 57 sweep seeds. It carries its own paired
+        /// non-degeneracy floor: the same identity read against the NEXT
+        /// submarket's inputs must FAIL on ≥ 40 submarkets (measured 65–100),
+        /// so a world where every submarket carried the same fill could not
+        /// pass leg (a) vacuously. Four mutants confirm it can fail —
+        /// `--mutant-fill-pooled` (citywide fill for every submarket),
+        /// `--mutant-fill-shift` (the neighbour's), `--mutant-fill-frozen`,
+        /// `--mutant-fill-alpha` — 0/57 seeds pass under each.
+        ///
+        /// LEG (b) IS NOW DISTRIBUTIONAL. The FillEma 1.0 → 0.2 reprice runs on
+        /// EVERY cleared candidate submarket (stock ≥ 4, fill ratio 1 at
+        /// current occupancy), and the assertion is on the MEDIAN response and
+        /// on how many respond at all. A single flat cluster can no longer
+        /// decide it, and a severed channel still reds it everywhere:
+        /// `--mutant-fill-blind` (attraction ignores FillEma) passes 0/57.
+        ///
+        /// A MUTE CLUSTER IS REAL, and this is how that was established. On the
+        /// 57-seed `occprobe` 0–10 cleared clusters per seed do not move at all
+        /// (ratio within 1e-9 of 1); the probe prints, per seed, how many of
+        /// those ALSO saw no demand-share movement, and that accounts for 133
+        /// of the 154 mute clusters across the sweep. Those clusters are ones
+        /// no household names as its best alternative, so their entire demand
+        /// share is sitting tenants renewing — and a renewal bid is counted
+        /// unconditionally in RebuildDemandShares, by design, because a sitting
+        /// tenant will pay to stay whatever the vacancy rate. There is nothing
+        /// there for the attraction term to move. The remaining 21 lose share
+        /// and still do not move the price: the demand ladder is flat where
+        /// they read it. Both are properties of the world, which is exactly why
+        /// the verdict must not rest on one draw from it.
+        ///
+        /// PINNED POSTED. This is the posted path's own transmission and stays
+        /// meaningful only there. The auction path's vacancy→price channel is
+        /// asserted structurally by the auction-equilibrium check (a non-full
+        /// door posts its reserve), canary-swept 39/39.
+        ///
+        /// EVERY BOUND BELOW IS SET FROM `occprobe --seeds 50` PLUS THE SEVEN
+        /// PINNED SEEDS at 88fc88c (57 seeds, the occsweep set), and each is
+        /// stated with the measured margin it leaves.</summary>
         private static void OccupancyChannel(ulong seed)
         {
-            // Does REALIZED VACANCY move rent, at fixed citywide population?
-            // Two legs, because an integration test alone is confounded by the
-            // allocator instantly re-housing whoever you evict:
-            //   (a) AccessState.FillEma really is measured occupancy;
-            //   (b) lowering FillEma lowers the clearing price.
-            // Together those are the channel. Stated separately and honestly
-            // because an earlier check CLAIMED to measure a vacancy overhang
-            // and in fact only varied population (adversarial review).
             var p = new EconParams();
             var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
-            // PINNED POSTED: this check tests the posted path's own price
-            // transmission (FillEma → demand shares → the forecast clearing
-            // price) and stays meaningful only on that path. The flip inventory
-            // measured it on auction-built worlds: the same pre-existing
-            // flat-tranche fragility recorded for seed 9 simply re-rolls which
-            // seeds it fires on (0/1/25 red, 9 healed) — world composition, not
-            // transmission. The auction path's vacancy→price channel is
-            // asserted structurally by the auction-equilibrium check
-            // (a non-full door posts its reserve), canary-swept 39/39.
             var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = false });
             sim.Run(120);
             var w = sim.W; var acc = sim.Engine.Access; var pres = sim.Engine.SegmentPresence;
 
-            // (a) FillEma tracks measured occupancy. It is an EMA by design, so
-            // the claim is that it TRACKS (small mean error), not that it
-            // equals the instantaneous value.
-            double sumErr = 0, worstErr = 0; int compared = 0;
-            for (int k = 0; k < 2; k++)
-            {
-                var kind = k == 1 ? ZoneKind.ResidentialHigh : ZoneKind.ResidentialLow;
-                for (int c = 0; c < acc.C; c++)
-                {
-                    double units = 0, occ = 0;
-                    foreach (var pl in w.Parcels)
-                        if (pl.State == ParcelState.Built && pl.Use == kind && pl.Cluster == c)
-                        { units += pl.Units; occ += Math.Min(pl.Units, pl.OccupantHouseholds.Count); }
-                    if (units < 4) continue;
-                    compared++;
-                    double err = Math.Abs(acc.FillEma[k][c] - occ / units);
-                    sumErr += err;
-                    worstErr = Math.Max(worstErr, err);
-                }
-            }
-
-            // (b) the same cluster, priced at full vs collapsed occupancy —
-            // population, stock, access and geometry all held identical. The
-            // probed cluster must be CLEARED (fill ratio 1 at current
+            // ---- (b) the price response, on every cleared candidate ---------
+            // The probed submarket must be CLEARED (fill ratio 1 at current
             // occupancy): there the channel must move the PRICE, which is the
             // substantive claim. In an excess submarket the flat-tail price is
             // mass-invariant and the fill response is mass-proportional by
-            // construction — a probe landing there would be measuring the
-            // check's own plumbing, so finding NO cleared submarket is a
-            // FAILURE of this check, not a cue to measure something weaker.
-            //
-            // THE FALLBACK ARM THIS REPLACES WAS DEAD, twice over (measured,
-            // 57-seed occsweep at the check-debt commit: seeds 0–49, 138, 208,
-            // 271, 327, 549, 910, 6550). The old form fell back to the
-            // largest-stock cluster when no cleared submarket existed and
-            // accepted a vacancy leg there (flat price + fill drop ≥ 20 %):
-            //   - the fallback was reached on 0/57 seeds — 46–68 of the
-            //     stock≥4 candidate submarkets clear on every seed, so the
-            //     first-cleared selection always succeeds;
-            //   - force-evaluated on the fallback cluster anyway, the vacancy
-            //     disjunct held on 0/57 seeds (that cluster also clears:
-            //     fill stayed 1.000 on 52/57, never below 0.901 against the
-            //     0.8 conjunct), while the price disjunct duplicated in that
-            //     arm fired 57/57 — the ternary was `priceLeg` in both arms,
-            //     one leg written twice, plus a vacancy disjunct that never
-            //     fired.
-            // Deleting the arm changed no verdict: the rewritten check agrees
-            // with the old one on all 57 sweep seeds (54 pass; 9, 41, 910
-            // fail with an unresponsive first-cleared cluster, the standing
-            // red KNOWN-RED.md owns for seed 9).
-            int c0 = -1, candidates = 0, cleared = 0;
+            // construction — probing there measures the check's own plumbing.
+            // Population, stock, access and geometry are held identical across
+            // the two prices; only FillEma moves, and it is restored after.
+            var ratios = new List<double>();
+            int candidates = 0, mute = 0;
             for (int c = 0; c < acc.C; c++)
             {
                 if (acc.HousingStock[0][c] < 4) continue;
                 candidates++;
                 LandAccounting.ResidentialBidPerUnit(acc, c, ZoneKind.ResidentialLow, 2, pres, p, out double f0);
-                if (f0 >= 1.0 - 1e-9) { cleared++; if (c0 < 0) c0 = c; }
-            }
-            bool clearedSelected = c0 >= 0;
-
-            double bidFull = 0, bidEmpty = 0, fillFull = 0, fillEmpty = 0;
-            if (clearedSelected)
-            {
-                double[] saved = { acc.FillEma[0][c0], acc.FillEma[1][c0] };
+                if (f0 < 1.0 - 1e-9) continue;
+                double[] saved = { acc.FillEma[0][c], acc.FillEma[1][c] };
                 void Reprice(double fill)
                 {
-                    acc.FillEma[0][c0] = fill; acc.FillEma[1][c0] = fill;
-                    acc.RebuildDemandShares(sim.W, p);   // same recompute the refresh does
+                    acc.FillEma[0][c] = fill; acc.FillEma[1][c] = fill;
+                    acc.RebuildDemandShares(w, p);   // same recompute the refresh does
                 }
                 Reprice(1.0);
-                bidFull = LandAccounting.ResidentialBidPerUnit(
-                    acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out fillFull);
+                double bidFull = LandAccounting.ResidentialBidPerUnit(acc, c, ZoneKind.ResidentialLow, 2, pres, p);
                 Reprice(0.2);
-                bidEmpty = LandAccounting.ResidentialBidPerUnit(
-                    acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out fillEmpty);
-                acc.FillEma[0][c0] = saved[0]; acc.FillEma[1][c0] = saved[1];
-                acc.RebuildDemandShares(sim.W, p);
+                double bidEmpty = LandAccounting.ResidentialBidPerUnit(acc, c, ZoneKind.ResidentialLow, 2, pres, p);
+                acc.FillEma[0][c] = saved[0]; acc.FillEma[1][c] = saved[1];
+                acc.RebuildDemandShares(w, p);
+                double r = bidFull > 1e-12 ? bidEmpty / bidFull : 1.0;
+                ratios.Add(r);
+                if (r > 1 - 1e-9) mute++;
             }
+            ratios.Sort();
+            int qualifying = ratios.Count;
+            double medianRatio = qualifying == 0 ? 1
+                : qualifying % 2 == 1 ? ratios[qualifying / 2]
+                : 0.5 * (ratios[qualifying / 2 - 1] + ratios[qualifying / 2]);
+            int responded = ratios.Count(x => x < 0.95);
+            double respondShare = qualifying > 0 ? (double)responded / qualifying : 0;
 
-            // While the submarket CLEARS, the thinner demand share reads
-            // deeper down the WTP ladder and the PRICE falls — that is the
-            // channel, and the price leg is REQUIRED (a vacancy rescue here
-            // let a constant-price mutant through; adversarial review,
-            // measured). The 0.95 band and the FillEma-tracking bounds are
-            // inherited from the pre-rewrite form; the 57-seed sweep above
-            // measured mean err ≤ 0.020 (bound 0.06) and worst err up to 0.50
-            // at seed 22 — the worst-err bound has NO measured headroom, so
-            // treat a new red there as the bound binding, not as noise.
-            bool priceLeg = clearedSelected && bidEmpty < bidFull * 0.95;
+            // HOW THESE BARS ARE SET, since a bar placed at whatever was
+            // observed asserts nothing: each sits BETWEEN the measured range and
+            // the value a severed channel produces, nearer the measured side.
+            //   median ratio  measured 0.246–0.490 · severed 1.000 · bar 0.70
+            //   respond share measured 0.841–0.984 · severed 0.000 · bar 0.60
+            //   qualifying    measured 47–70       · floor 20 (2.3x under)
+            // So the median response would have to weaken from ~51 % to ~30 %
+            // before this reds, and a severed channel misses by 0.30.
+            bool qualifyingFloor = qualifying >= 20;
+            bool medianLeg = medianRatio <= 0.70;
+            bool breadthLeg = respondShare >= 0.60;
 
-            double meanErr = compared > 0 ? sumErr / compared : 1;
-            Check("occupancy channel: realized vacancy softens rent (price responds on a cleared submarket)",
-                  compared >= 10 && meanErr < 0.06 && worstErr < 0.5 && clearedSelected && priceLeg,
-                  $"FillEma tracks measured occupancy on {compared} submarkets " +
-                  $"(mean err {meanErr:F3}, worst {worstErr:F3}); " +
-                  (clearedSelected
-                      ? $"cluster {c0} ({cleared}/{candidates} candidates cleared) bid {bidFull:F3} (fill {fillFull:F2}) " +
-                        $"at full occupancy → {bidEmpty:F3} (fill {fillEmpty:F2}) at 20 % " +
-                        $"({(priceLeg ? "price leg" : "NO response")})"
-                      : $"NO cleared submarket among {candidates} candidates (stock ≥ 4) — nothing valid to probe, failing"));
+            // ---- (a) FillEma is this submarket's own smoothed fill -----------
+            // Snapshot the state the next refresh will read, recompute the fill
+            // target here from the parcels, advance across exactly ONE refresh,
+            // and require the EMA recursion to hold exactly. The fixture's 120
+            // ticks land on a refresh boundary; if the interval ever moves so
+            // that they do not, this leg says so rather than silently measuring
+            // a tick with no refresh in it.
+            bool onBoundary = w.Tick % p.RefreshInterval == 0;
+            var stock = new double[2][]; var target = new double[2][]; var prev = new double[2][];
+            for (int k = 0; k < 2; k++)
+            { stock[k] = new double[acc.C]; target[k] = new double[acc.C]; prev[k] = new double[acc.C]; }
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || !pl.IsResidential) continue;
+                if ((uint)pl.Cluster >= (uint)acc.C) continue;
+                int k = pl.Use == ZoneKind.ResidentialHigh ? 1 : 0;
+                stock[k][pl.Cluster] += pl.Units;
+                target[k][pl.Cluster] += Math.Min(pl.Units, pl.OccupantHouseholds.Count);
+            }
+            for (int k = 0; k < 2; k++)
+                for (int c = 0; c < acc.C; c++)
+                {
+                    prev[k][c] = acc.FillEma[k][c];
+                    target[k][c] = stock[k][c] > 0 ? MathUtil.Clamp(target[k][c] / stock[k][c], 0, 1) : 1.0;
+                }
+            sim.Run(1);
+
+            var live = new List<(int k, int c)>();
+            double worstResidual = 0, worstLag = 0, sumLag = 0;
+            for (int k = 0; k < 2; k++)
+                for (int c = 0; c < acc.C; c++)
+                {
+                    if (stock[k][c] < 4) continue;
+                    live.Add((k, c));
+                    double want = MathUtil.Ema(prev[k][c], target[k][c], AccessState.FillEmaAlpha);
+                    worstResidual = Math.Max(worstResidual, Math.Abs(acc.FillEma[k][c] - want));
+                    double lag = Math.Abs(prev[k][c] - target[k][c]);
+                    sumLag += lag; worstLag = Math.Max(worstLag, lag);
+                }
+            // PAIRED NON-DEGENERACY. The identity above is vacuous on a world
+            // where every submarket carries the same fill, so count how many
+            // submarkets it can actually TELL APART: read each one's shipped
+            // FillEma against its neighbour's inputs, and require the identity
+            // to break there.
+            int discriminated = 0;
+            for (int i = 0; i < live.Count; i++)
+            {
+                var (k, c) = live[i];
+                var (k2, c2) = live[(i + 1) % live.Count];
+                double wrong = MathUtil.Ema(prev[k2][c2], target[k2][c2], AccessState.FillEmaAlpha);
+                if (Math.Abs(acc.FillEma[k][c] - wrong) > 1e-9) discriminated++;
+            }
+            // MEASURED MARGINS (57 seeds, 88fc88c): residual 0.0 exactly
+            // everywhere; compared 87–114 against the floor of 40;
+            // discriminated 65–100 against 40. The lag |FillEma − occupancy| is
+            // REPORTED (mean 0.003–0.023, worst 0.063–0.548) and asserted
+            // nowhere: it is a statement about how fast this world's occupancy
+            // moves, and the old 0.5 bound on it was the sweep's own maximum.
+            int compared = live.Count;
+            bool identityLeg = onBoundary && compared >= 40 && worstResidual <= 1e-9;
+            bool discriminationLeg = discriminated >= 40;
+
+            Check("occupancy channel: realized vacancy softens rent (median response over every cleared submarket)",
+                  identityLeg && discriminationLeg && qualifyingFloor && medianLeg && breadthLeg,
+                  $"FillEma = Ema(prev, measured fill) on {compared} submarkets, residual {worstResidual:E1}"
+                  + (onBoundary ? "" : " [NOT ON A REFRESH BOUNDARY]")
+                  + $", {discriminated} discriminated; lag mean {sumLag / Math.Max(1, compared):F3} "
+                  + $"worst {worstLag:F3} (reported, not asserted); "
+                  + $"reprice 1.0→0.2 on {qualifying}/{candidates} cleared candidates: median ratio "
+                  + $"{medianRatio:F3} (bar 0.70), {responded} of {qualifying} respond <0.95 "
+                  + $"({respondShare:P0}, bar 60 %), {mute} mute"
+                  + (identityLeg ? "" : " — IDENTITY")
+                  + (discriminationLeg ? "" : " — DISCRIMINATION")
+                  + (qualifyingFloor ? "" : " — TOO FEW CLEARED")
+                  + (medianLeg ? "" : " — MEDIAN")
+                  + (breadthLeg ? "" : " — BREADTH"));
         }
 
         /// <summary>PROSPECTS PRICE THE PLACE, NOT THE MAP. Every admitted
@@ -5002,11 +5087,12 @@ namespace CS2Econ.Harness
                   h1 == h2 && h1 != h3, $"h(seed)={h1:X} twice, h(seed+1)={h3:X}");
         }
 
-        /// <summary>Gates on the four default-arm lanes of the checked-in model
-        /// fingerprint; the auction lanes are printed, not gated (Fingerprint.cs
-        /// states the promotion rule and the measured accept rate that justifies
-        /// the split). A missing or hand-edited baseline FAILS — never skips,
-        /// because a skip is how a check quietly stops existing.</summary>
+        /// <summary>Gates on ALL THIRTEEN lanes of the checked-in model
+        /// fingerprint. The gating/report-only split ended when the promotion
+        /// rule was finally measured (Fingerprint.cs head: every fingerprint-era
+        /// commit rebuilt, 0 false alarms in 29 arm-fires, 0 extra accepts for
+        /// either promoted arm). A missing or hand-edited baseline FAILS — never
+        /// skips, because a skip is how a check quietly stops existing.</summary>
         private static void ModelFingerprint()
         {
             var lanes = Fingerprint.Compute();
@@ -5022,11 +5108,11 @@ namespace CS2Econ.Harness
                 detail = $"all lanes match stanza recorded {v.Recorded} (\"{v.Reason}\")";
             else
                 detail = $"gating lanes moved: [{string.Join(", ", v.GatingMismatch)}]; "
-                         + $"report-only (auction) lanes moved: [{string.Join(", ", v.ReportMismatch)}]; "
+                         + $"report-only lanes moved: [{string.Join(", ", v.ReportMismatch)}]; "
                          + $"missing from baseline: [{string.Join(", ", v.Missing)}]. If the change was "
                          + "intended, record it: `fingerprint --accept --reason \"...\"` (it writes the "
                          + "computed before→after deltas into the file for the reviewer)";
-            Check("model fingerprint: the model is unchanged, or the change is recorded (default arm gates)",
+            Check("model fingerprint: the model is unchanged, or the change is recorded (all arms gate)",
                   v.GatePass, detail);
         }
     }

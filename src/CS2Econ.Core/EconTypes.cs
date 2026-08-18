@@ -691,8 +691,17 @@ namespace CS2Econ.Core
         /// access anchored on the city's OWN MeanAccess, so its relative
         /// premium is a constant and a spatially uniform improvement is
         /// structurally invisible to the come/stay margin. Exists so that
-        /// check stays falsifiable; never a shipping mode.</summary>
-        public bool MutantRelativeOutsideAccess = false;
+        /// check stays falsifiable; never a shipping mode. The per-instance
+        /// field takes its value from the process-wide default so a whole
+        /// FIXTURE can be run mutated from the CLI (`--mutant-relative-outside`,
+        /// how the boom/bust scenario's mutant arm is measured); the verify
+        /// check still sets the field directly on its own mutant arm, and the
+        /// clean arm reads this default on purpose, so flipping the shipped
+        /// default reds that check too.</summary>
+        public bool MutantRelativeOutsideAccess = MutantRelativeOutsideAccessDefault;
+        /// <summary>Process-wide default for <see cref="MutantRelativeOutsideAccess"/>
+        /// (`--mutant-relative-outside`). Never set outside the harness.</summary>
+        public static bool MutantRelativeOutsideAccessDefault = false;
         /// <summary>How long a household that would rather be elsewhere waits
         /// before actually going. Its own patience, scaled by its own moving
         /// cost at the use site.</summary>

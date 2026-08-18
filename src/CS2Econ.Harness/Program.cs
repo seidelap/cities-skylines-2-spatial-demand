@@ -26,6 +26,26 @@ namespace CS2Econ.Harness
                 // prospect-local-odds check can be shown to fail. Never a
                 // shipping mode.
                 if (args[i] == "--mutant-citywide-odds") { AccessState.MutantCitywideProspectOdds = true; continue; }
+                // MUTANT SWITCH (see AccessState.MutantFillBlindShares): severs
+                // realized occupancy from the location decision, so the
+                // occupancy check's price leg can be shown to fail. Never a
+                // shipping mode.
+                if (args[i] == "--mutant-fill-blind") { AccessState.MutantFillBlindShares = true; continue; }
+                // MUTANT SWITCH (see AccessState.MutantFillEmaSource): the
+                // occupancy EMA stops reading its own submarket's realized
+                // fill, so the occupancy check's tracking leg can be shown to
+                // fail. Never a shipping mode.
+                if (args[i] == "--mutant-fill-pooled") { AccessState.MutantFillEmaSource = 1; continue; }
+                if (args[i] == "--mutant-fill-alpha") { AccessState.MutantFillEmaSource = 2; continue; }
+                if (args[i] == "--mutant-fill-frozen") { AccessState.MutantFillEmaSource = 3; continue; }
+                if (args[i] == "--mutant-fill-shift") { AccessState.MutantFillEmaSource = 4; continue; }
+                // MUTANT SWITCH (see EconParams.MutantRelativeOutsideAccess):
+                // anchors the outside door on the city's own MeanAccess, so a
+                // spatially uniform improvement is invisible to the come/stay
+                // margin — how the boom/bust scenario's response leg is shown
+                // to fail. Never a shipping mode.
+                if (args[i] == "--mutant-relative-outside")
+                { EconParams.MutantRelativeOutsideAccessDefault = true; continue; }
                 // MUTANT SWITCH (see TradeSystem.MutantCitywideGoodsPrice):
                 // restores the one-scalar citywide goods price so the
                 // goods-price localization check can be shown to fail. Never a
@@ -168,6 +188,48 @@ namespace CS2Econ.Harness
                             System.Globalization.CultureInfo.InvariantCulture);
                     }
                     return Debugging.ShopProbe(start, n, ticks, svc);
+                }
+                case "boomprobe":
+                {
+                    // Boom/bust scenario measurement aid (see Debugging.BoomProbe):
+                    // the migration split per sub-window, with the region-side
+                    // offer count printed next to it.
+                    int win = 120, sub = 20;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
+                        if (args[i] == "--window") win = int.Parse(args[i + 1]);
+                        if (args[i] == "--sub") sub = int.Parse(args[i + 1]);
+                    }
+                    return Debugging.BoomProbe(seed, win, sub);
+                }
+                case "leveltraj":
+                {
+                    // Levels-scenario measurement aid (see Debugging.LevelTrajectory):
+                    // where the §6 rank correlation settles and how long it takes,
+                    // on both arms. The scenario's horizon and bar are set from it.
+                    int ticks = 6000, every = 200;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                        if (args[i] == "--every") every = int.Parse(args[i + 1]);
+                    }
+                    return Debugging.LevelTrajectory(seed, ticks, every);
+                }
+                case "occprobe":
+                {
+                    // Occupancy-check measurement aid (see Debugging.OccProbe):
+                    // every bound the rewritten occupancy check ships is set
+                    // from this command's output. --seed is the START of the
+                    // sweep; --seeds its length.
+                    int ticks = 120, n = 8;
+                    ulong start = 0;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                        if (args[i] == "--seed") start = ulong.Parse(args[i + 1]);
+                        if (args[i] == "--seeds") n = int.Parse(args[i + 1]);
+                    }
+                    return Debugging.OccProbe(start, n, ticks);
                 }
                 case "assesscheck": // assessment-tracks-price fixture alone (see TestRunner.AssessCheck)
                     return TestRunner.AssessCheck(seed);

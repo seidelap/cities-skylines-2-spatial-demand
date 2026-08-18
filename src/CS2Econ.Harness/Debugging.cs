@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using CS2Econ.Core;
 
 namespace CS2Econ.Harness
@@ -1274,6 +1275,253 @@ namespace CS2Econ.Harness
                 binErr[bins] = Math.Max(binErr.TryGetValue(bins, out var prev) ? prev : 0, err);
             }
             acc.CountShopIntents(w, p, bestU);   // leave the field as the engine had it
+        }
+
+        /// <summary>`harness boomprobe` — the boom/bust scenario's own fixture,
+        /// with every migration quantity printed per sub-window instead of one
+        /// windowed total. It exists because the scenario's asserted inflow
+        /// margin is `LastProspects.Admitted + Priced`, and that sum is bounded
+        /// above by `Offered`, which `Prospects.Step` sizes from population and
+        /// the tie stock alone — region-side, blind to city quality by the
+        /// anti-smuggling rule. A pulse therefore cannot move the COUNT; it can
+        /// only move how the same lookers SPLIT between coming, being priced
+        /// out, and declining. This prints Offered alongside the split so that
+        /// distinction is visible, and prints it per sub-window so a response
+        /// that decays as the city absorbs the pulse can be told from one that
+        /// never happened.
+        ///
+        /// Every bound the restated scenario ships is set from this output.</summary>
+        public static int BoomProbe(ulong seed, int win, int sub)
+        {
+            var p = new EconParams { MigInElasticity = new EconParams().MigInElasticity * 0.3 };
+            var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 6000 };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(300);
+            Console.WriteLine($"boomprobe seed {seed}: {win}-tick windows in {sub}-tick sub-windows"
+                              + " (base / +0.9 amenity / -0.9)");
+            Console.WriteLine("  phase  t      offered admitted  priced declined  want%   desired  departs "
+                              + "declEx    pop");
+            void Windows(string tag)
+            {
+                for (int done = 0; done < win; done += sub)
+                {
+                    double offered = 0, admitted = 0, priced = 0, declined = 0,
+                           desired = 0, departs = 0, declEx = 0;
+                    sim.Run(sub, s =>
+                    {
+                        var pr = s.Engine.LastProspects;
+                        offered += pr.Offered; admitted += pr.Admitted;
+                        priced += pr.Priced; declined += pr.Declined;
+                        desired += s.Engine.LastFlows.DesiredBySegment?.Sum() ?? 0;
+                        departs += s.Engine.LastFlows.DeparturesBySegment?.Sum() ?? 0;
+                        declEx += s.Engine.DeclineExitsThisTick;
+                    });
+                    int pop = 0;
+                    foreach (var h in sim.W.Households) if (h.ExitedTick < 0) pop++;
+                    double want = offered > 0 ? (admitted + priced) / offered : 0;
+                    Console.WriteLine($"  {tag,-6} {sim.W.Tick,5}  {offered,8:F0}{admitted,9:F0}{priced,8:F0}"
+                        + $"{declined,9:F0}{want,7:P1}{desired,10:F0}{departs,9:F0}{declEx,7:F0}{pop,7}");
+                }
+            }
+            Windows("base");
+            foreach (var c in sim.W.Clusters) c.Amenity += 0.9;
+            Windows("boom");
+            foreach (var c in sim.W.Clusters) c.Amenity -= 1.8;
+            Windows("bust");
+            foreach (var c in sim.W.Clusters) c.Amenity += 0.9;
+            return 0;
+        }
+
+        /// <summary>`harness leveltraj` — the §6 level-map statistic as a
+        /// TRAJECTORY instead of one reading. Same fixture and same ℓ* oracle as
+        /// the levels scenario (8000 households, forecast curve across five
+        /// levels of each built residential parcel), scored every `--every`
+        /// ticks out to `--ticks`, on the spatial arm and the vanilla arm.
+        ///
+        /// It exists because the scenario's 2600-tick horizon and 0.35 bar were
+        /// both derived on the POSTED path, and neither had been re-derived
+        /// since the auction became the default. A horizon is only honest if
+        /// the series has flattened by it, and a bar is only honest if it sits
+        /// clear of where the series settles — this prints both so the two
+        /// numbers can be set from a measurement rather than from one
+        /// reading.</summary>
+        public static int LevelTrajectory(ulong seed, int ticks, int every)
+        {
+            var p0 = new EconParams();
+            double Score(Sim sim, EconParams p)
+            {
+                var lv = new List<double>(); var sup = new List<double>();
+                foreach (var pl in sim.W.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || !pl.IsResidential) continue;
+                    int lStar = 1; double best = double.NegativeInfinity;
+                    for (int l = 1; l <= p.MaxLevel; l++)
+                    {
+                        double bid = LandAccounting.BidPerUnit(sim.Engine.Access, sim.Engine.Trade,
+                            pl.Cluster, pl.Use, l, sim.Engine.SegmentPresence, p);
+                        double v = bid - LandAccounting.SPerUnit(l, 1.0, p);
+                        if (v > best) { best = v; lStar = l; }
+                    }
+                    lv.Add(pl.Level); sup.Add(lStar);
+                }
+                return Scenarios.SpearmanPublic(lv, sup);
+            }
+            var arms = new List<(string name, Sim sim, EconParams p)>();
+            foreach (bool vanilla in new[] { false, true })
+            {
+                var p = new EconParams();
+                var cfg = new SyntheticCity.Config { Seed = seed, SeedHouseholds = 8000 };
+                arms.Add((vanilla ? "vanilla" : "spatial",
+                          Sim.Create(cfg, p, new FeatureFlags(), vanillaMode: vanilla), p));
+            }
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Console.WriteLine($"leveltraj seed {seed}: Spearman(realized level, ℓ*) every {every} to {ticks} ticks");
+            for (int t = every; t <= ticks; t += every)
+            {
+                var line = new StringBuilder($"  t={t,5}");
+                foreach (var (name, sim, p) in arms)
+                {
+                    sim.Run(every);
+                    line.Append($"  {name} {Score(sim, p):F3}");
+                }
+                var built = new int[p0.MaxLevel + 2];
+                foreach (var pl in arms[0].sim.W.Parcels)
+                    if (pl.State == ParcelState.Built && pl.IsResidential) built[pl.Level]++;
+                line.Append("  spatial levels " + string.Join("/",
+                    Enumerable.Range(1, p0.MaxLevel).Select(l => built[l].ToString())));
+                line.Append($"  [{sw.Elapsed.TotalSeconds:F0}s]");
+                Console.WriteLine(line.ToString());
+            }
+            return 0;
+        }
+
+        /// <summary>`harness occprobe` — the occupancy check's two legs measured
+        /// as DISTRIBUTIONS instead of at one selected cluster, on the same
+        /// pinned-posted fixture the check uses (10×10, 3000 households, 120
+        /// ticks). Every bound the rewritten check ships is set from this
+        /// command's output; it asserts nothing itself.
+        ///
+        /// Leg (b): the FillEma 1.0 → 0.2 reprice is run on EVERY cleared
+        /// candidate submarket, not on the lowest-indexed one, and the response
+        /// ratio bidEmpty/bidFull is printed as a distribution. `flat` counts
+        /// clusters whose price did not move AT ALL (ratio within 1e-9 of 1) and
+        /// `noShare` how many of those also saw no demand-share movement — the
+        /// attribution for a mute cluster.
+        ///
+        /// Leg (a): the EMA recursion residual. FillEma is snapshotted before a
+        /// refresh tick, the fill target is recomputed independently from the
+        /// parcels, one tick is run, and |F_new − Ema(F_prev, target)| is
+        /// printed. `moved` and `below1` are the non-degeneracy populations —
+        /// how many submarkets the EMA actually stepped on, and how many carry a
+        /// target below 1 (a constant-1 target makes the recursion vacuous).</summary>
+        public static int OccProbe(ulong start, int n, int ticks)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (ulong seed = start; seed < start + (ulong)n; seed++)
+            {
+                var p = new EconParams();
+                var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+                var sim = Sim.Create(cfg, p, new FeatureFlags { HousingAuction = false });
+                sim.Run(ticks);
+                var w = sim.W; var acc = sim.Engine.Access; var pres = sim.Engine.SegmentPresence;
+
+                // ---- leg (b): response on EVERY cleared candidate -----------
+                var ratios = new List<double>();
+                int candidates = 0, cleared = 0, flat = 0, noShare = 0;
+                var flatList = new List<int>();
+                for (int c = 0; c < acc.C; c++)
+                {
+                    if (acc.HousingStock[0][c] < 4) continue;
+                    candidates++;
+                    LandAccounting.ResidentialBidPerUnit(acc, c, ZoneKind.ResidentialLow, 2, pres, p, out double f0);
+                    if (f0 < 1.0 - 1e-9) continue;
+                    cleared++;
+                    double[] saved = { acc.FillEma[0][c], acc.FillEma[1][c] };
+                    double ShareAt(int cl)
+                    {
+                        double m = 0;
+                        for (int s = 0; s < Segment.Count; s++) m += acc.SegmentKindShare[s][0][cl] * pres[s];
+                        return m;
+                    }
+                    void Reprice(double fill)
+                    {
+                        acc.FillEma[0][c] = fill; acc.FillEma[1][c] = fill;
+                        acc.RebuildDemandShares(w, p);
+                    }
+                    Reprice(1.0);
+                    double bidFull = LandAccounting.ResidentialBidPerUnit(acc, c, ZoneKind.ResidentialLow, 2, pres, p);
+                    double mFull = ShareAt(c);
+                    Reprice(0.2);
+                    double bidEmpty = LandAccounting.ResidentialBidPerUnit(acc, c, ZoneKind.ResidentialLow, 2, pres, p);
+                    double mEmpty = ShareAt(c);
+                    acc.FillEma[0][c] = saved[0]; acc.FillEma[1][c] = saved[1];
+                    acc.RebuildDemandShares(w, p);
+                    double r = bidFull > 1e-12 ? bidEmpty / bidFull : 1.0;
+                    ratios.Add(r);
+                    if (r > 1 - 1e-9) { flat++; flatList.Add(c); if (mFull - mEmpty < 1e-9) noShare++; }
+                }
+                ratios.Sort();
+
+                // ---- leg (a): EMA recursion residual ------------------------
+                var target = new double[2][]; var prev = new double[2][];
+                for (int k = 0; k < 2; k++) { target[k] = new double[acc.C]; prev[k] = new double[acc.C]; }
+                var stock = new double[2][];
+                for (int k = 0; k < 2; k++) stock[k] = new double[acc.C];
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || !pl.IsResidential) continue;
+                    if ((uint)pl.Cluster >= (uint)acc.C) continue;
+                    int k = pl.Use == ZoneKind.ResidentialHigh ? 1 : 0;
+                    stock[k][pl.Cluster] += pl.Units;
+                    target[k][pl.Cluster] += Math.Min(pl.Units, pl.OccupantHouseholds.Count);
+                }
+                for (int k = 0; k < 2; k++)
+                    for (int c = 0; c < acc.C; c++)
+                    {
+                        prev[k][c] = acc.FillEma[k][c];
+                        target[k][c] = stock[k][c] > 0 ? MathUtil.Clamp(target[k][c] / stock[k][c], 0, 1) : 1.0;
+                    }
+                sim.Run(1);
+                double worstRes = 0, worstErr = 0, sumErr = 0;
+                int compared = 0, moved = 0, below1 = 0;
+                var live = new List<(int k, int c)>();
+                for (int k = 0; k < 2; k++)
+                    for (int c = 0; c < acc.C; c++)
+                    {
+                        if (stock[k][c] < 4) continue;
+                        compared++; live.Add((k, c));
+                        double want = MathUtil.Ema(prev[k][c], target[k][c], AccessState.FillEmaAlpha);
+                        worstRes = Math.Max(worstRes, Math.Abs(acc.FillEma[k][c] - want));
+                        double err = Math.Abs(prev[k][c] - target[k][c]);
+                        sumErr += err; worstErr = Math.Max(worstErr, err);
+                        if (Math.Abs(want - prev[k][c]) > 1e-6) moved++;
+                        if (target[k][c] < 0.98) below1++;
+                    }
+                // Discrimination: the same identity read against the NEXT
+                // submarket's inputs. This is the paired non-degeneracy leg —
+                // it counts how many of the compared submarkets the identity
+                // can actually tell apart, so a world where every submarket
+                // carries the same fill cannot pass leg (a) vacuously.
+                int discriminated = 0;
+                for (int i = 0; i < live.Count; i++)
+                {
+                    var (k, c) = live[i];
+                    var (k2, c2) = live[(i + 1) % live.Count];
+                    double wrong = MathUtil.Ema(prev[k2][c2], target[k2][c2], AccessState.FillEmaAlpha);
+                    if (Math.Abs(acc.FillEma[k][c] - wrong) > 1e-9) discriminated++;
+                }
+
+                Console.WriteLine(
+                    $"seed {seed,4}: cand {candidates,3} cleared {cleared,3} | ratio min {Pct(ratios, 0):F3} "
+                    + $"p10 {Pct(ratios, 0.10):F3} p25 {Pct(ratios, 0.25):F3} med {Pct(ratios, 0.50):F3} "
+                    + $"p75 {Pct(ratios, 0.75):F3} max {Pct(ratios, 1):F3} | <0.95 {ratios.Count(x => x < 0.95),3} "
+                    + $"flat {flat,3} noShare {noShare,3}"
+                    + (flatList.Count > 0 && flatList.Count <= 6 ? " @" + string.Join(",", flatList) : "")
+                    + $" || ema: cmp {compared,3} residual {worstRes:E2} lagErr mean {sumErr / Math.Max(1, compared):F3} "
+                    + $"worst {worstErr:F3} moved {moved,3} below1 {below1,3} discr {discriminated,3}");
+            }
+            Console.WriteLine($"occprobe: {n} seeds in {sw.Elapsed.TotalSeconds:F0}s");
+            return 0;
         }
 
         private static double Pct(List<double> sorted, double q)
