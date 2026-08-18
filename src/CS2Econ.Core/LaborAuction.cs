@@ -865,5 +865,17 @@ namespace CS2Econ.Core
         public double OutsideOf(int wk) => _outside[wk];
         public double OutsideNetOf(int wk) => _outsideNet[wk];
         public double ReservationOf(int wk) => _reservation[wk];
+        /// <summary>How many doors this worker carried into the solve, and which
+        /// — exposed so a probe can ask whether a doorless worker had anything
+        /// worth taking at any comp (a CHOICE) or lost on price (a RATION).
+        /// Why alone cannot tell those apart: it labels both `Outside`.</summary>
+        public int ShortCountOf(int wk) => (uint)wk < (uint)_shortCount.Length ? _shortCount[wk] : 0;
+        public int ShortDoorOf(int wk, int q)
+            => q >= 0 && q < ShortCountOf(wk) ? _shortItems[_shortStart[wk] + q] : -1;
+        /// <summary>Generalized minutes from a cluster to the nearest trade
+        /// exit — the commute the outside option is netted of, and the term
+        /// that decides whether the outside wage is near or far.</summary>
+        public double BorderMinutesOf(int cluster)
+            => (uint)cluster < (uint)_borderMin.Length ? _borderMin[cluster] : double.PositiveInfinity;
     }
 }

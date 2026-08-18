@@ -298,6 +298,16 @@ namespace CS2Econ.Harness
             // (meanToverCap) and the dividend/comp ratio are the split the
             // total-comp design lets EMERGE, so they are the scalars a
             // reviewer should read on a labor diff.
+            //
+            // HOW TO READ unempShare, because its zero is not what it looks
+            // like: LaborAuction.Why calls an unmatched worker `Outside`
+            // whenever its outside net beats its own leisure floor, and on this
+            // fixture that is 11.24 against 2.77 — so the zero says the outside
+            // wage beats sitting at home, not that city work was available.
+            // Every unmatched worker here holds a shortlisted door worth more
+            // than its own default price-free (median surplus 30.4); they lose
+            // on price, against a door supply of 0.52 slots per worker. Read
+            // outsideShare against slotsPerWorker below, never alone.
             if (flags.LaborAuction)
             {
                 var a = sim.Engine.Labor;
@@ -322,7 +332,7 @@ namespace CS2Econ.Harness
                     lh.MixD(h.BaseComp);
                 }
                 var tSum = new double[3]; var tN = new double[3];
-                double usedT = 0, usedCap = 0, divPart = 0, compSum = 0;
+                double usedT = 0, usedCap = 0, divPart = 0, compSum = 0, slots = 0;
                 for (int d = 0; d < a.D; d++)
                 {
                     lh.MixD(a.Price[d]); lh.MixD(a.Cap[d]); lh.Mix((ulong)a.Used[d] + 1);
@@ -330,6 +340,7 @@ namespace CS2Econ.Harness
                     int cls = a.DoorClass[d];
                     tSum[cls] += t * a.Used[d]; tN[cls] += a.Used[d];
                     usedT += t * a.Used[d]; usedCap += a.Cap[d] * a.Used[d];
+                    slots += a.Capacity[d];
                     double divEma = w.Firms[a.DoorFirm[d]].DividendPerEarnerEma;
                     divPart += Math.Min(Math.Max(0, t), divEma) * a.Used[d];
                     compSum += Math.Max(0, t) * a.Used[d];
@@ -349,6 +360,18 @@ namespace CS2Econ.Harness
                         ("meanT.educated", tN[2] > 0 ? tSum[2] / tN[2] : 0),
                         ("meanToverCap", usedCap > 0 ? usedT / usedCap : 0),
                         ("divCompRatio", compSum > 0 ? divPart / compSum : 0),
+                        // WITHOUT THIS THE OUTSIDE SHARE CANNOT BE READ, and it
+                        // was read wrong for six stanzas. Door slots per worker
+                        // is the ration the labor market clears against: where
+                        // it is below 1 the outside share is bounded below by
+                        // the shortfall whatever the outside wage is. Measured
+                        // across grid sizes on the same fixture shape
+                        // (`laborprobe`, this commit): 8×8 0.52 slots/worker →
+                        // outside 0.589, 12×12 0.50 → 0.589, 16×16 0.78 →
+                        // 0.452, 20×20 1.16 → 0.231. It is a scalar, not a hash
+                        // term, so adding it moves no lane hash and needs no
+                        // accept; it lands in the next stanza as "(new)".
+                        ("slotsPerWorker", demanded > 0 ? slots / demanded : 0),
                     },
                 };
             }

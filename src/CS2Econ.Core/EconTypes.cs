@@ -731,16 +731,67 @@ namespace CS2Econ.Core
         /// what a worker's own commute from its own home subtracts from a
         /// door's total comp when it values the door. At 0.05, a 20-minute
         /// commute costs 1.0/tick against a basic-class mean wage of 10.
-        /// Default unswept.</summary>
+        ///
+        /// NOW SWEPT — `laborprobe --commute-cost {0.00,0.05,0.20,0.50}` on the
+        /// pinned labor fixture. This is also the term the outside option is
+        /// netted of (`wage × OutsideWageMult − CommuteCostPerMinute ×
+        /// minutes-to-the-nearest-exit`), so the sweep answers whether the
+        /// fixture's outside-worker share is an artifact of a near border:
+        ///
+        ///   cost   mean outsideNet  outside share  unemp
+        ///   0.00      11.77           0.604        0.000
+        ///   0.05      11.24           0.589        0.000
+        ///   0.20       9.51           0.562        0.002
+        ///   0.50       5.81           0.363        0.095
+        ///
+        /// Making the border FREE — the strongest possible "the border is next
+        /// door" case — moves the share by 1.5 points. The border commute is
+        /// not what puts most of this fixture's workers outside; door supply is
+        /// (OutsideWageMult's comment carries that table). Default unchanged:
+        /// nothing in the sweep argues for a different price of a minute, and
+        /// the 0.50 arm is a 10× commute cost rather than a calibration
+        /// candidate.</summary>
         public double CommuteCostPerMinute = 0.05;
         /// <summary>The cross-border wage as a fraction of the class mean. On
         /// the labor-auction path the global class wage DEMOTES to what it
         /// truly is: the world price of labor outside the region — a genuine
         /// property of the outside world, legitimate as a global. Working
         /// outside is the always-available default the auction must beat per
-        /// individual. Default unswept; chosen so both inside employment and
-        /// outside work occur on the verify fixture (measured at the labor
-        /// bring-up run, seeds 0-3).</summary>
+        /// individual. Chosen so both inside employment and outside work occur
+        /// on the verify fixture (measured at the labor bring-up run, seeds
+        /// 0-3).
+        ///
+        /// NOW SWEPT — `laborprobe --outside-mult {0.30,0.45,0.55,0.70,0.85}` on
+        /// the pinned labor fixture (8×8 / 1500 / 120 ticks, seed 1). The
+        /// outside-worker share responds strongly and monotonically:
+        ///
+        ///   mult   workers  door slots  slots/worker  outside  unemp  T/cap
+        ///   0.30    1247      992         80%          0.065   0.215  0.238
+        ///   0.45    1345      999         74%          0.338   0.051  0.305
+        ///   0.55    1537      926         60%          0.490   0.001  0.333
+        ///   0.70    1802      942         52%          0.589   0.000  0.366
+        ///   0.85    1755      954         54%          0.621   0.000  0.402
+        ///
+        /// Read the last two columns together with the third. The wage share of
+        /// marginal product RISES with the outside wage because the outside
+        /// option is the worker's side of the bargain — that is the mechanism
+        /// working. What the same table shows is that the shipped 0.70 sits
+        /// past the point where the city's own unemployment reaches zero, and
+        /// zero is not a market outcome here: LaborAuction.Why labels every
+        /// unmatched worker `Outside` whenever its outside net beats its own
+        /// leisure floor (11.24 vs 2.77 at the default), so `unempShare` is
+        /// pinned to zero at any mult ≥ ~0.55 and carries no information about
+        /// whether city work was available.
+        ///
+        /// NOT CHANGED, and the reason is the charter's globals rule: this is a
+        /// property of the outside world, so calibrating it to make the CITY's
+        /// unemployment look right would be fitting a global to a local
+        /// outcome. What the level would need is an outside-world anchor, and
+        /// none is measured. What IS measured, and is the fixture caveat any
+        /// reader of the 0.589 needs: the pinned 8×8 fixture builds job slots
+        /// for 52% of its workers, so at least 48% of them are outside at ANY
+        /// outside wage that beats leisure. See CommuteCostPerMinute for the
+        /// border-distance half of the same question.</summary>
         public double OutsideWageMult = 0.7;
         /// <summary>Worker-side lump for changing employer, scaling the
         /// household's own MovingCostDraw. Folded worker-side together with

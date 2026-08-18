@@ -1283,5 +1283,411 @@ namespace CS2Econ.Harness
             int lo = (int)Math.Floor(idx), hi = Math.Min(sorted.Count - 1, lo + 1);
             return sorted[lo] + (idx - lo) * (sorted[hi] - sorted[lo]);
         }
+
+        /// <summary>`harness laborprobe` — the labor arm's outside-worker share,
+        /// and whether it is a CHOICE or a RATION. The fingerprint's labor lane
+        /// reports the share and nothing about its cause; LaborAuction.Why
+        /// labels every unmatched worker `Outside` whenever its outside net beats
+        /// its own leisure reservation, so `unempShare = 0` is a statement about
+        /// the leisure floor and not about whether city work was available.
+        ///
+        /// The decisive number is door CAPACITY against worker count: where
+        /// capacity is short, the outside share is bounded below by the shortfall
+        /// whatever the outside wage is, and moving OutsideWageMult cannot fix
+        /// it. Printed alongside the border commute the outside option is netted
+        /// of, so "the border is two minutes away" is measured rather than
+        /// assumed.</summary>
+        public static int LaborProbe(ulong seed, int cols, int rows, int households, int ticks,
+                                     double outsideMult, double commuteCost)
+        {
+            var p = new EconParams();
+            if (outsideMult >= 0) p.OutsideWageMult = outsideMult;
+            if (commuteCost >= 0) p.CommuteCostPerMinute = commuteCost;
+            var cfg = new SyntheticCity.Config
+            { Cols = cols, Rows = rows, SeedHouseholds = households, Seed = seed };
+            var sim = new Sim { P = p, Flags = new FeatureFlags { HousingAuction = true, LaborAuction = true } };
+            (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
+            sim.Engine = new EconomyEngine(sim.W, sim.Access, p, sim.Flags);
+            sim.Run(ticks);
+            var w = sim.W; var a = sim.Engine.Labor;
+
+            double demanded = 0, matched = 0, outside = 0, unemp = 0;
+            var slackNoDoorBeatsOutside = new List<double>();
+            int unmatchedWithShortlist = 0, unmatchedNoShortlist = 0;
+            var borderMins = new List<double>();
+            double outsideNetSum = 0, reservationSum = 0;
+            foreach (var h in w.Households)
+            {
+                if (h.ExitedTick >= 0 || !a.ActiveWorker(h.Id)) continue;
+                int e = a.EarnersOf(h.Id);
+                for (int s = 0; s < e; s++)
+                {
+                    int wk = a.WorkerOf(h.Id, s);
+                    demanded += 1;
+                    outsideNetSum += a.OutsideNetOf(wk);
+                    reservationSum += a.ReservationOf(wk);
+                    if (a.Assignment[wk] >= 0) { matched += 1; continue; }
+                    if (a.Why[wk] == LaborAuction.Outcome.Outside) outside += 1; else unemp += 1;
+                    // What the loser could see: the best door VALUE on its own
+                    // shortlist against its own outside option, price-free. A
+                    // worker with no door worth more than its default at ANY
+                    // comp is a genuine outside CHOICE; one whose best door beats
+                    // its default price-free lost on price, i.e. was rationed.
+                    double best = double.NegativeInfinity;
+                    int n = a.ShortCountOf(wk);
+                    for (int q = 0; q < n; q++)
+                    {
+                        int d = a.ShortDoorOf(wk, q);
+                        if (d < 0) continue;
+                        best = Math.Max(best, a.ValueOf(wk, d, p));
+                    }
+                    if (n == 0 || double.IsNegativeInfinity(best)) unmatchedNoShortlist++;
+                    else { unmatchedWithShortlist++; slackNoDoorBeatsOutside.Add(best - a.OutsideOf(wk)); }
+                }
+                if (h.HomeParcel >= 0) borderMins.Add(a.BorderMinutesOf(w.Parcels[h.HomeParcel].Cluster));
+            }
+            borderMins.Sort(); slackNoDoorBeatsOutside.Sort();
+
+            double capSum = 0, usedSum = 0, tSum = 0, capComp = 0;
+            for (int d = 0; d < a.D; d++)
+            {
+                capSum += a.Capacity[d];                  // slots the door OFFERS this solve
+                usedSum += a.Used[d];
+                tSum += a.CompMember(d) * a.Used[d];
+                capComp += a.Cap[d] * a.Used[d];
+            }
+
+            double slotsBuilt = 0, slotsFilled = 0, firmMoney = 0;
+            int liveFirms = 0;
+            foreach (var f in w.Firms)
+            {
+                if (f.Dead || f.Parcel < 0) continue;
+                liveFirms++;
+                slotsBuilt += f.JobSlots;
+                for (int cl = 0; cl < 3; cl++) slotsFilled += f.FilledByClass[cl];
+                firmMoney += f.Money;
+            }
+
+            int pop = 0; double hhMoney = 0;
+            foreach (var h in w.Households) if (h.ExitedTick < 0) { pop++; hhMoney += h.Money; }
+
+            Console.WriteLine($"laborprobe seed {seed} {cols}×{rows} hh={households} t={ticks} "
+                + $"OutsideWageMult={p.OutsideWageMult:F2} CommuteCostPerMinute={p.CommuteCostPerMinute:F3}");
+            Console.WriteLine($"  pop {pop}  workers {demanded:F0}  doors {a.D}  door slots {capSum:F0} "
+                + $"({capSum / Math.Max(1, demanded):P0} of workers)  taken {usedSum:F0}");
+            Console.WriteLine($"  empRate {(demanded > 0 ? (matched + outside) / demanded : 0):F4}  "
+                + $"outsideShare {(demanded > 0 ? outside / demanded : 0):F4}  "
+                + $"unempShare {(demanded > 0 ? unemp / demanded : 0):F4}  "
+                + $"meanToverCap {(capComp > 0 ? tSum / capComp : 0):F4}");
+            Console.WriteLine($"  border minutes over worker homes: min {Pct(borderMins, 0):F1} "
+                + $"p50 {Pct(borderMins, 0.5):F1} p90 {Pct(borderMins, 0.9):F1} max {Pct(borderMins, 1):F1}; "
+                + $"mean outsideNet {(demanded > 0 ? outsideNetSum / demanded : 0):F3} "
+                + $"vs mean leisure reservation {(demanded > 0 ? reservationSum / demanded : 0):F3}");
+            Console.WriteLine($"  unmatched: {unmatchedWithShortlist} had a shortlisted door, "
+                + $"{unmatchedNoShortlist} had none; best-door value minus own default over the first group: "
+                + $"p10 {Pct(slackNoDoorBeatsOutside, 0.1):F3} p50 {Pct(slackNoDoorBeatsOutside, 0.5):F3} "
+                + $"p90 {Pct(slackNoDoorBeatsOutside, 0.9):F3} (>0 = rationed, not chosen)");
+            Console.WriteLine($"  firms {liveFirms}: slots {slotsBuilt:F0} filled {slotsFilled:F0} "
+                + $"({slotsFilled / Math.Max(1, slotsBuilt):P0}); firmMoney {firmMoney:F0}; hhMoney {hhMoney:F0}; "
+                + $"treasury {w.Ledger.Balance(Account.Treasury):F0}");
+            Console.WriteLine($"  payroll this tick: firms {sim.Engine.LaborFirmDebitsThisTick:F1} vs "
+                + $"OutsideWorld {sim.Engine.LaborOutsideCreditsThisTick:F1} "
+                + $"({sim.Engine.LaborOutsideCreditsThisTick / Math.Max(1e-9, sim.Engine.LaborFirmDebitsThisTick + sim.Engine.LaborOutsideCreditsThisTick):P0} "
+                + $"of wage income paid from outside the region)");
+            return 0;
+        }
+
+        /// <summary>`harness weberprobe` — what sets the number of DISTINCT
+        /// industrial outputs on the Weber fixture, which is the leg seed 5
+        /// fails while holding the Weber property perfectly (100% extraction,
+        /// 100% recipe alignment).
+        ///
+        /// For each seed it prints the realized output census and then the
+        /// decision every entrant actually faces: LandAccounting.FirmBidPerSlot's
+        /// industrial leg is argmax over recipes of
+        /// `OutputPerSlot × RecipeOutputScale × quality × (outNet − inputCost) − wage`,
+        /// so the same expression is evaluated here at EVERY cluster. If one
+        /// recipe is the argmax at every cluster, a second output exists only
+        /// if some entrant chooses against its own margin — and the runner-up
+        /// gap says by how much.</summary>
+        public static int WeberProbe(ulong start, int n, int households)
+        {
+            Console.WriteLine($"weberprobe: seeds {start}..{start + (ulong)n - 1}, "
+                + $"{households} seed households (Weber industrial fixture, 300 ticks)");
+            for (ulong seed = start; seed < start + (ulong)n; seed++)
+            {
+                var p = new EconParams();
+                var sim = Sim.Create(new SyntheticCity.Config { Seed = seed, SeedHouseholds = households },
+                                     p, new FeatureFlags());
+                sim.Run(300);
+                var w = sim.W; var tr = sim.Engine.Trade;
+
+                var byOutput = new Dictionary<Res, int>();
+                int firms = 0;
+                foreach (var f in w.Firms)
+                {
+                    if (f.Dead || f.Parcel < 0 || f.Sector != ZoneKind.Industrial) continue;
+                    firms++;
+                    byOutput[f.Output] = byOutput.TryGetValue(f.Output, out var q) ? q + 1 : 1;
+                }
+
+                // The entrant's own argmax at every cluster, at level-1 quality
+                // (entry level). wage matches FirmBidPerSlot's industrial leg.
+                double wage = 0.6 * p.WageBasic + 0.4 * p.WageSkilled;
+                var argmaxCount = new Dictionary<Res, int>();
+                int viable = 0; double worstGap = double.PositiveInfinity; int worstAt = -1;
+                Res worstAlt = Res.Services;
+                var gaps = new List<double>();
+                for (int c = 0; c < sim.Engine.Access.C; c++)
+                {
+                    double best = double.NegativeInfinity, second = double.NegativeInfinity;
+                    Res bestRes = Res.Services, secondRes = Res.Services;
+                    foreach (var recipe in ResourceCatalog.Recipes)
+                    {
+                        double outNet = Math.Max(tr.OriginStat(recipe.Output, c), tr.BestExportNet(recipe.Output, c));
+                        double inputCost = 0;
+                        foreach (var (res, qty) in recipe.Inputs) inputCost += qty * tr.DeliveredCost(res, c);
+                        double perSlot = recipe.OutputPerSlot * p.RecipeOutputScale * (outNet - inputCost) - wage;
+                        if (perSlot > best) { second = best; secondRes = bestRes; best = perSlot; bestRes = recipe.Output; }
+                        else if (perSlot > second) { second = perSlot; secondRes = recipe.Output; }
+                    }
+                    argmaxCount[bestRes] = argmaxCount.TryGetValue(bestRes, out var q2) ? q2 + 1 : 1;
+                    if (best > 0)
+                    {
+                        viable++;
+                        double gap = best - second;
+                        gaps.Add(gap);
+                        if (gap < worstGap) { worstGap = gap; worstAt = c; worstAlt = secondRes; }
+                    }
+                }
+                gaps.Sort();
+                string census = string.Join(" ", byOutput.OrderByDescending(kv => kv.Value)
+                                                        .Select(kv => $"{kv.Key}×{kv.Value}"));
+                string argm = string.Join(" ", argmaxCount.OrderByDescending(kv => kv.Value)
+                                                          .Select(kv => $"{kv.Key}×{kv.Value}"));
+                Console.WriteLine($"seed {seed,3}: {firms,3} industrial firms, {byOutput.Count} distinct outputs [{census}]");
+                Console.WriteLine($"           entrant argmax over {sim.Engine.Access.C} clusters: "
+                    + $"{argmaxCount.Count} distinct [{argm}]; {viable} clusters with positive margin; "
+                    + $"runner-up gap p10 {Pct(gaps, 0.1):F3} median {Pct(gaps, 0.5):F3} "
+                    + $"min {(worstAt >= 0 ? worstGap : 0):F3} at c{worstAt} (2nd best {worstAlt})");
+            }
+            return 0;
+        }
+
+        /// <summary>Everything ResidentialBidPerUnit reads on the forecast path,
+        /// captured so a post-collapse price can be re-read with any single
+        /// input held at its pre-collapse value. Deep copies: the engine
+        /// overwrites these arrays in place on every refresh.</summary>
+        private sealed class PriceInputs
+        {
+            public double[][][] Ladder = null!;
+            public double[][][] Share = null!;
+            public double[][] Access = null!;
+            public double MeanAccess;
+            public double[][] Stock = null!;
+            public double[] Presence = null!;
+
+            public static PriceInputs Capture(AccessState a, double[] pres)
+            {
+                var s = new PriceInputs { MeanAccess = a.MeanAccess, Presence = (double[])pres.Clone() };
+                s.Ladder = new double[a.BidLadder.Length][][];
+                for (int k = 0; k < a.BidLadder.Length; k++)
+                {
+                    s.Ladder[k] = new double[a.BidLadder[k].Length][];
+                    for (int q = 0; q < a.BidLadder[k].Length; q++)
+                        s.Ladder[k][q] = (double[])(a.BidLadder[k][q] ?? Array.Empty<double>()).Clone();
+                }
+                s.Share = new double[a.SegmentKindShare.Length][][];
+                for (int q = 0; q < a.SegmentKindShare.Length; q++)
+                {
+                    s.Share[q] = new double[a.SegmentKindShare[q].Length][];
+                    for (int k = 0; k < a.SegmentKindShare[q].Length; k++)
+                        s.Share[q][k] = (double[])(a.SegmentKindShare[q][k] ?? Array.Empty<double>()).Clone();
+                }
+                s.Access = new double[a.AccessValue.Length][];
+                for (int q = 0; q < a.AccessValue.Length; q++)
+                    s.Access[q] = (double[])(a.AccessValue[q] ?? Array.Empty<double>()).Clone();
+                s.Stock = new double[a.HousingStock.Length][];
+                for (int k = 0; k < a.HousingStock.Length; k++)
+                    s.Stock[k] = (double[])(a.HousingStock[k] ?? Array.Empty<double>()).Clone();
+                return s;
+            }
+        }
+
+        /// <summary>`harness collapseprobe` — the clearing-price check's
+        /// population-collapse leg (TestRunner.ClearingPrice leg (d)), run
+        /// alone and decomposed. Same fixture (8×8 / 2500 / 80 ticks), same
+        /// cull (60% of households whose home is outside the probed cluster),
+        /// same 10-tick settle.
+        ///
+        /// What it prints beyond the check's own two numbers: the post-collapse
+        /// price re-read with each pricing input in turn held at its
+        /// pre-collapse value, so a rise can be attributed to the demand COUNT,
+        /// the surviving population's bid ladder (composition), the
+        /// kind/cluster shares, the access field, or the stock — and the same
+        /// price on a REBUILT post ladder, because the check reads `before` off
+        /// a ladder it rebuilds itself and `after` off whatever the engine's
+        /// last refresh left behind.
+        ///
+        /// `--owner-ask 0` folds every owner door (item #41); the process-wide
+        /// `--mutant-citywide-goods` restores the one-scalar goods price
+        /// (item #30). Both are the arms the T3a registry row names.
+        /// `--spare-c0 0` culls the probed cluster's own residents too, which is
+        /// the arm that says whether the leg's stimulus reaches the quantity
+        /// its price inverts.</summary>
+        public static int CollapseProbe(ulong seed, double ownerAskScale, bool spareC0 = true)
+        {
+            var p = new EconParams { OwnerAskScale = ownerAskScale };
+            var cfg = new SyntheticCity.Config { Cols = 8, Rows = 8, SeedHouseholds = 2500, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            sim.Run(80);
+            var acc = sim.Engine.Access;
+            acc.RebuildHouseholdLadders(sim.W, p);
+            var pres = sim.Engine.SegmentPresence;
+
+            int c0 = 0;
+            for (int c = 1; c < acc.C; c++)
+                if (acc.HousingStock[0][c] > acc.HousingStock[0][c0]) c0 = c;
+
+            double Price(AccessState a, double[] pv, out double fill)
+                => LandAccounting.ResidentialBidPerUnit(a, c0, ZoneKind.ResidentialLow, 2, pv, p, out fill);
+
+            double before = Price(acc, pres, out double fillBefore);
+            var pre = PriceInputs.Capture(acc, pres);
+
+            // Who is in the probed submarket's queue, and how rich. The price
+            // is a rung of some segment's ladder times that segment's location
+            // multiplier, so the marginal bidder is identified by inverting
+            // that: for each segment, the cheapest rung still bidding at or
+            // above the clearing price.
+            void Composition(string tag, AccessState a, double[] pv, double price)
+            {
+                double quality = p.Quality(2) / p.Quality(1);
+                double bestRung = double.PositiveInfinity; int bestSeg = -1; double massAt = 0;
+                for (int s = 0; s < Segment.Count; s++)
+                {
+                    if (pv[s] < 1) continue;
+                    var lad = a.BidLadder[0][s];
+                    if (lad == null || lad.Length == 0) continue;
+                    double share = a.SegmentKindShare[s][0][c0];
+                    if (share <= 0) continue;
+                    double rel = a.AccessValue[s][c0] / a.MeanAccess;
+                    double premium = MathUtil.Clamp(Math.Pow(Math.Max(0.05, rel), p.PremiumExponent), 0.2, 4.0);
+                    double mult = premium * p.BidAccessScale * quality;
+                    if (mult <= 0) continue;
+                    double need = price / mult;
+                    int cnt = 0;
+                    for (int i = 0; i < lad.Length; i++) { if (lad[i] >= need) cnt++; else break; }
+                    massAt += cnt * share * (pv[s] / lad.Length);
+                    if (cnt > 0 && lad[cnt - 1] < bestRung) { bestRung = lad[cnt - 1]; bestSeg = s; }
+                }
+                Console.WriteLine($"  {tag}: price {price:F4}  marginal rung {(bestSeg >= 0 ? bestRung : 0):F4} "
+                    + $"(segment {bestSeg})  mass at price {massAt:F1}  stock {a.HousingStock[0][c0]:F1}");
+            }
+            Composition("pre ", acc, pres, before);
+
+            int pop0 = 0, inC0 = 0;
+            foreach (var h in sim.W.Households)
+            {
+                if (h.ExitedTick >= 0) continue;
+                pop0++;
+                if (h.HomeParcel >= 0 && sim.W.Parcels[h.HomeParcel].Cluster == c0) inC0++;
+            }
+
+            int killed = 0;
+            foreach (var h in sim.W.Households)
+            {
+                if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
+                if (spareC0 && sim.W.Parcels[h.HomeParcel].Cluster == c0) continue;
+                if (SplitMix64.Hash01((ulong)h.Id * 977 + 5) < 0.6)
+                { h.ExitedTick = sim.W.Tick; killed++; }
+            }
+            sim.Run(10);
+
+            var acc2 = sim.Engine.Access;
+            var pres2 = sim.Engine.SegmentPresence;
+            double after = Price(acc2, pres2, out double fillAfter);      // exactly what the check reads
+            Composition("post", acc2, pres2, after);
+
+            int pop1 = 0, inC0After = 0;
+            foreach (var h in sim.W.Households)
+            {
+                if (h.ExitedTick >= 0) continue;
+                pop1++;
+                if (h.HomeParcel >= 0 && sim.W.Parcels[h.HomeParcel].Cluster == c0) inC0After++;
+            }
+
+            // PAIRED arm: the check builds `before` on a ladder it rebuilds and
+            // `after` on the engine's, which Access.Refresh writes at the TOP of
+            // RefreshTick — one refresh behind the benefit cliff. Leg (c) was
+            // paired for exactly this; leg (d) was not.
+            var stale = PriceInputs.Capture(acc2, pres2);
+            acc2.RebuildHouseholdLadders(sim.W, p);
+            double afterPaired = Price(acc2, pres2, out double fillPaired);
+            var post = PriceInputs.Capture(acc2, pres2);
+
+            // One input at a time, held at its PRE value on the paired post
+            // state: the gap each input is responsible for.
+            double Hold(string which)
+            {
+                var savedL = acc2.BidLadder; var savedS = acc2.SegmentKindShare;
+                var savedA = acc2.AccessValue; double savedM = acc2.MeanAccess;
+                var savedH = acc2.HousingStock; var pv = post.Presence;
+                if (which == "ladder") acc2.BidLadder = pre.Ladder;
+                if (which == "share") acc2.SegmentKindShare = pre.Share;
+                if (which == "access") { acc2.AccessValue = pre.Access; acc2.MeanAccess = pre.MeanAccess; }
+                if (which == "stock") acc2.HousingStock = pre.Stock;
+                if (which == "presence") pv = pre.Presence;
+                // share × presence is the RAW BID COUNT at this cluster
+                // (LandAccounting divides the share by the ladder length and
+                // multiplies by presence), so holding either one alone breaks
+                // an identity the pricing path relies on. "count" holds both.
+                if (which == "count") { acc2.SegmentKindShare = pre.Share; pv = pre.Presence; }
+                double v = Price(acc2, pv, out _);
+                acc2.BidLadder = savedL; acc2.SegmentKindShare = savedS;
+                acc2.AccessValue = savedA; acc2.MeanAccess = savedM; acc2.HousingStock = savedH;
+                return v;
+            }
+
+            Console.WriteLine($"collapseprobe seed {seed} OwnerAskScale={ownerAskScale} "
+                + $"citywideGoodsMutant={TradeSystem.MutantCitywideGoodsPrice} spareC0={spareC0}");
+            Console.WriteLine($"  cluster {c0}: pop {pop0} → {pop1} ({killed} culled), residents of c0 {inC0} → {inC0After}");
+            Console.WriteLine($"  CHECK READS  before {before:F4} (fill {fillBefore:F2}) → after {after:F4} "
+                + $"(fill {fillAfter:F2})  ratio {after / Math.Max(1e-12, before):F4}  "
+                + $"softens={(after < before * 0.98 || (fillAfter < fillBefore * 0.8 && after < before * 1.20))}");
+            Console.WriteLine($"  PAIRED       before {before:F4} → afterPaired {afterPaired:F4} (fill {fillPaired:F2})  "
+                + $"ratio {afterPaired / Math.Max(1e-12, before):F4}  "
+                + $"[stale-ladder wedge {after - afterPaired:+0.0000;-0.0000}]");
+            Console.WriteLine($"  HOLD ONE PRE-COLLAPSE (paired post otherwise): "
+                + $"ladder {Hold("ladder"):F4}  share {Hold("share"):F4}  access {Hold("access"):F4}  "
+                + $"stock {Hold("stock"):F4}  presence {Hold("presence"):F4}  "
+                + $"count(share×presence) {Hold("count"):F4}  none {afterPaired:F4}");
+            // The quantity the leg believes it is collapsing: how many
+            // households actually bid at the probed submarket. share × presence
+            // is that count, and it is what the price inverts against supply.
+            double bidsPre = 0, bidsPost = 0;
+            for (int s = 0; s < Segment.Count; s++)
+            {
+                bidsPre += pre.Share[s][0][c0] * pre.Presence[s];
+                bidsPost += post.Share[s][0][c0] * post.Presence[s];
+            }
+            Console.WriteLine($"  BIDS AT c0 (low): {bidsPre:F2} → {bidsPost:F2} "
+                + $"({bidsPost / Math.Max(1e-12, bidsPre):F3}×) against stock {pre.Stock[0][c0]:F1} → {post.Stock[0][c0]:F1}");
+            for (int s = 0; s < Segment.Count; s++)
+            {
+                var lp = pre.Ladder[0][s]; var lq = post.Ladder[0][s];
+                if (lp.Length == 0 && lq.Length == 0) continue;
+                double MeanOf(double[] x) { double t = 0; foreach (var v in x) t += v; return x.Length > 0 ? t / x.Length : 0; }
+                double TailOf(double[] x) => x.Length > 0 ? x[Math.Max(0, x.Length - 1 - x.Length / 200)] : 0;
+                Console.WriteLine($"    seg {s,2} {Segment.All[s].Name,-12} n {lp.Length,5} → {lq.Length,5}  "
+                    + $"mean rung {MeanOf(lp):F3} → {MeanOf(lq):F3}  bottom-0.5% rung {TailOf(lp):F3} → {TailOf(lq):F3}  "
+                    + $"share(c0,low) {pre.Share[s][0][c0]:F5} → {post.Share[s][0][c0]:F5}  "
+                    + $"access(c0) {pre.Access[s][c0]:F3} → {post.Access[s][c0]:F3}");
+            }
+            Console.WriteLine($"  meanAccess {pre.MeanAccess:F4} → {post.MeanAccess:F4}; "
+                + $"stock(c0,low) {pre.Stock[0][c0]:F2} → {post.Stock[0][c0]:F2}; "
+                + $"stale ladder n(seg0) {stale.Ladder[0][0].Length} vs rebuilt {post.Ladder[0][0].Length}");
+            return 0;
+        }
     }
 }

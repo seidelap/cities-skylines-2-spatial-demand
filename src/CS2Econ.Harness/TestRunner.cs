@@ -541,6 +541,32 @@ namespace CS2Econ.Harness
             return Math.Min(failed.Count, 100);
         }
 
+        /// <summary>The clearing-price check alone across seeds — 1.9 s a seed
+        /// against 434 s for the full suite (measured, seed 13, this commit), so
+        /// this is the instrument for the collapse leg's bands and for its
+        /// non-degeneracy floor. Every number the leg's comment cites over seeds
+        /// 0–299 comes from here.</summary>
+        public static int ClearSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"clearing-price sweep: {seeds.Count} seeds"
+                + (MutantSpareProbedCluster ? " [MUTANT: probed cluster spared from the cull]" : ""));
+            var failed = new List<ulong>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                ClearingPrice(seed);
+                bool ok = Results.Count > before;
+                for (int k = before; k < Results.Count; k++) ok &= Results[k].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"clearing-price sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass "
+                + $"({sw.Elapsed.TotalSeconds:F0}s)"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
+        }
+
         /// <summary>The Weber check alone across seeds — same rationale as
         /// <see cref="Canary"/> (auction-world Weber fragility moves seeds:
         /// the red was on seed 0 at c0c584d and on seed 13 at the flip
@@ -551,6 +577,7 @@ namespace CS2Econ.Harness
         {
             Console.WriteLine($"weber sweep: {seeds.Count} seeds");
             var failed = new List<ulong>();
+            WeberPremiseSeen = 0; WeberPremiseMet = 0;
             var sw = System.Diagnostics.Stopwatch.StartNew();
             foreach (var seed in seeds)
             {
@@ -563,7 +590,29 @@ namespace CS2Econ.Harness
             Console.WriteLine($"weber sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass "
                 + $"({sw.Elapsed.TotalSeconds:F0}s)"
                 + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
-            return Math.Min(failed.Count, 100);
+
+            // THE PAIRED NON-DEGENERACY FLOOR for the diversity premise. Moving
+            // "two distinct outputs" out of the per-seed verdict would otherwise
+            // retire it silently: if NO seed ever produced two outputs, the
+            // alignment leg would never once be asked to separate places, and
+            // nothing would say so. This is the leg that says so, and it lives
+            // here because the statement is distributional.
+            //
+            // The bar is a bare majority of the swept seeds, and the reason it is
+            // not tighter is measured: over seeds 0-25 at this commit the premise
+            // holds on 20 of 26, and the count is a small-sample statistic over
+            // 6-12 industrial firms per seed (`weberprobe --seed 0 --seeds 26`),
+            // so a bar near the observed rate would be a bound written past its
+            // sweep. What the floor forbids is the regime the reverted retooling
+            // experiment produced — one argmax citywide and one output nearly
+            // everywhere (premise on 6 of 26 there, KNOWN-RED retooling section)
+            // — which lands well under a half.
+            bool premiseFloor = WeberPremiseSeen > 0
+                                && WeberPremiseMet * 2 > WeberPremiseSeen;
+            Console.WriteLine($"  [{(premiseFloor ? "PASS" : "FAIL")}] weber sweep floor: the alignment leg's "
+                + $"discrimination premise is met on {WeberPremiseMet}/{WeberPremiseSeen} seeds "
+                + $"(>50% required) — the population two-or-more-outputs describes is non-empty");
+            return Math.Min(failed.Count + (premiseFloor ? 0 : 1), 100);
         }
 
         /// <summary>The two task #30 goods checks alone across seeds — same
@@ -1195,12 +1244,19 @@ namespace CS2Econ.Harness
 
             int ind = 0, indAligned = 0;
             var outputsSeen = new HashSet<Res>();
+            // The alignment leg below skips Machinery (multi-input: no single
+            // cheapest raw), so a Machinery firm can never contribute to what
+            // that leg discriminates between. The diversity count that matters
+            // to it is therefore over the outputs it actually examines — both
+            // are reported, the single-input one is the premise.
+            var singleInputOutputs = new HashSet<Res>();
             foreach (var f in simInd.W.Firms)
             {
                 if (f.Dead || f.Parcel < 0 || f.Sector != ZoneKind.Industrial) continue;
                 int c = simInd.W.Parcels[f.Parcel].Cluster;
                 outputsSeen.Add(f.Output);
                 if (f.Output == Res.Machinery) continue;   // multi-input: no single cheapest raw
+                singleInputOutputs.Add(f.Output);
                 ind++;
                 // The chosen recipe's raw should be the locally cheapest raw
                 // to deliver (allowing a 15% tolerance band for ties).
@@ -1214,11 +1270,65 @@ namespace CS2Econ.Harness
 
             double extractShare = extract > 0 ? (double)extractRight / extract : 0;
             double indShare = ind > 0 ? (double)indAligned / ind : 0;
+
+            // DISTINCT OUTPUTS IS A PREMISE, NOT AN ASSERTION — decided on
+            // measurement, `weberprobe --seed 0 --seeds 26` at this commit.
+            //
+            // What it used to be: a leg of the verdict (`outputsSeen.Count >= 2`),
+            // so a city that produced one industrial good read as a Weber
+            // FAILURE. Seed 5 is the case that forced the question: 10 extractors
+            // at 100% on the best raw and 7 of 7 single-input industrials on the
+            // cheapest-sourced recipe — the property this check exists to assert
+            // holds perfectly — red solely on the diversity bar.
+            //
+            // The evidence that it is not an economics claim, in three parts.
+            // (1) An entrant's choice is argmax over recipes of margin at its own
+            //     location (LandAccounting.FirmBidPerSlot). Evaluated at every one
+            //     of the 196 clusters on the seed-5 fixture, Food is that argmax
+            //     at 195 of them, and the runner-up trails by a median 0.941 per
+            //     filled slot. A second output there is not a diversification a
+            //     healthy city would find; it is an entrant choosing against its
+            //     own margin, which the defaults rule forbids the mechanism to
+            //     make anyone do.
+            // (2) The realized count does not track the spatial signal anyway.
+            //     Seed 0 produces ONE output while two recipes are argmax
+            //     somewhere on its map (Food at 145 clusters, Plastics at 51);
+            //     seed 3 produces THREE while a single recipe is argmax at all
+            //     196. What the count actually records is entry TIMING against a
+            //     moving price path — the "freeze artifact" the reverted
+            //     retooling experiment named (KNOWN-RED, retooling section): let
+            //     firms re-evaluate continuously and they converge on the one
+            //     argmax, and this leg goes red on 20 of 26 seeds.
+            // (3) The population is small enough that the count is a sample-size
+            //     statistic: 6-12 industrial firms per seed, drawn from a choice
+            //     distribution concentrated on one recipe.
+            //
+            // What it IS: the condition under which the alignment leg above can
+            // DISCRIMINATE. With one output citywide, "the chosen recipe's raw is
+            // the locally cheapest" is one recipe's claim repeated; with two or
+            // more it separates firms in different places choosing differently.
+            // So it is reported per seed and asserted across the SWEEP, where the
+            // population it describes actually lives (WeberSweep's floor leg) —
+            // and a seed that cannot meet it no longer reads as an economics
+            // failure.
+            bool diversePremise = singleInputOutputs.Count >= 2;
+            WeberPremiseSeen++;
+            if (diversePremise) WeberPremiseMet++;
             Check("Weber: extraction follows geology; recipes follow input sourcing",
-                  extract >= 5 && extractShare >= 0.9 && ind >= 5 && indShare >= 0.55 && outputsSeen.Count >= 2,
+                  extract >= 5 && extractShare >= 0.9 && ind >= 5 && indShare >= 0.55,
                   $"{extract} extractors ({extractShare:P0} on best raw); {ind} single-input industrials " +
-                  $"({indShare:P0} on cheapest-sourced recipe); {outputsSeen.Count} distinct industrial outputs");
+                  $"({indShare:P0} on cheapest-sourced recipe); {outputsSeen.Count} distinct industrial outputs, " +
+                  $"{singleInputOutputs.Count} of them single-input " +
+                  $"({(diversePremise ? "discrimination premise met" : "PREMISE NOT MET — one single-input output "
+                      + "citywide, so the alignment leg cannot separate places; reported, not failed, "
+                      + "and floored by WeberSweep")})");
         }
+
+        /// <summary>Counters for the Weber check's discrimination premise, so
+        /// the floor leg lives where its population does — across a sweep, not
+        /// inside one seed. Reset by WeberSweep; RunAll leaves them alone
+        /// because one seed cannot carry a distributional floor.</summary>
+        public static int WeberPremiseSeen, WeberPremiseMet;
 
         private static void VacancyKernelConservation(ulong seed)
         {
@@ -1877,17 +1987,83 @@ namespace CS2Econ.Harness
             // flat price a few percent either way; what must never happen is
             // the market registering NO response on either margin.
             double before = LandAccounting.ResidentialBidPerUnit(acc, c0, ZoneKind.ResidentialLow, 2, pres, p, out double fillBefore);
+            // The quantity this price inverts is the number of households
+            // BIDDING HERE, and that is share × presence: LandAccounting divides
+            // SegmentKindShare by the segment's ladder length and multiplies by
+            // segmentPresence, so the two multiply back to the raw count of
+            // (renewal + best-alternative) bids the submarket faces. Measured on
+            // both sides of the cull, because the leg's whole claim is that this
+            // number falls.
+            double BidsAtC0(AccessState a, double[] pv)
+            {
+                double n = 0;
+                for (int s = 0; s < Segment.Count; s++)
+                    if (a.SegmentKindShare.Length > s && a.SegmentKindShare[s][0].Length > c0)
+                        n += a.SegmentKindShare[s][0][c0] * pv[s];
+                return n;
+            }
+            double bidsBefore = BidsAtC0(acc, pres);
             int killed = 0;
             foreach (var h in sim.W.Households)
             {
                 if (h.ExitedTick >= 0 || h.HomeParcel < 0) continue;
-                if (sim.W.Parcels[h.HomeParcel].Cluster == c0) continue;   // keep c0's own residents
+                // MEASURED, and the reason this leg was red on seed 13 at
+                // `88fc88c`: the cull used to exempt the probed cluster's own
+                // residents, and those residents are most of the queue it
+                // prices. On seed 13 the exemption left the bid count at c0
+                // EXACTLY unchanged — 23.00 → 23.00 — while 695 of 1317
+                // households exited, so the leg demanded a price fall from a
+                // submarket whose demand had not fallen at all. The survivors
+                // re-sorted up-market into c0 (SingleBasic bids 2.90 → 0.00,
+                // FamilyBasic 5.21 → 7.75, SeniorMid 2.07 → 5.46), the marginal
+                // bidder got richer at constant quantity, and the price
+                // correctly ROSE 2.15 → 2.56. Decomposed by holding each pricing
+                // input at its pre-collapse value (`collapseprobe --seed 13`):
+                // holding the demand SHARE field pre-collapse moves the post
+                // price 2.59 → 0.52, while holding the ladder moves it to 2.74
+                // and holding stock or access moves it not at all.
+                //
+                // Both mutants the registry named DO restore the fall
+                // (`collapseprobe --seed 13 --owner-ask 0` reads 5.46 → 1.12,
+                // `--mutant-citywide-goods` reads 2.90 → 2.65), but neither
+                // does so by removing a defect: each simply perturbs the
+                // re-sort enough that the bid count at c0 falls too (26 → 19
+                // and 24 → 22 respectively). The channel is the exemption, not
+                // owner asks and not per-cluster goods prices.
+                if (MutantSpareProbedCluster
+                    && sim.W.Parcels[h.HomeParcel].Cluster == c0) continue;
                 if (SplitMix64.Hash01((ulong)h.Id * 977 + 5) < 0.6)
                 { h.ExitedTick = sim.W.Tick; killed++; }                   // citywide demand collapse
             }
             sim.Run(10);
             double after = LandAccounting.ResidentialBidPerUnit(
                 sim.Engine.Access, c0, ZoneKind.ResidentialLow, 2, sim.Engine.SegmentPresence, p, out double fillAfter);
+            double bidsAfter = BidsAtC0(sim.Engine.Access, sim.Engine.SegmentPresence);
+            // NON-DEGENERACY FLOOR for the softening leg: the collapse has to
+            // reach the market being priced. Without it the leg is satisfied by
+            // whatever the price happens to do to a queue that never shrank,
+            // which is what it was doing. This is a leg of the check, not a
+            // precondition — producing the shock is the fixture's own job, so a
+            // cull that fails to move the probed submarket is a broken check and
+            // must read red.
+            //
+            // THE BAR, AND ITS OVERLAP, MEASURED (`clearsweep --seeds 300`, both
+            // arms, this commit). Clean: the ratio runs 0.118 to 0.789 with p50
+            // 0.474 — a 60% citywide cull takes about half the probed queue.
+            // With `--mutant-spare-probed-cluster`: 0.650 to 1.176, p50 0.864.
+            // The two distributions OVERLAP on [0.650, 0.789], so NO bar
+            // separates them perfectly and this one does not pretend to. 0.80
+            // is where the clean arm stops producing floor failures at all
+            // (0 of 267 measured seeds; 0.75 leaves 3 and 0.70 leaves 10) while
+            // the mutant still dies on 203 of 267 — 164 on this floor alone and
+            // 39 on floor and softening together. The headroom over the clean
+            // maximum is 1.4%, which is thin and is stated rather than dressed
+            // up: widening the sweep may find a clean seed above 0.80, and the
+            // reading to take then is that the cull is weak on that seed, not
+            // that the bar should move without the sweep that justifies it.
+            // The queue counts are small (bidsBefore 10 to 34, median 22), which
+            // is why the bar is a ratio and why it cannot be tight.
+            bool demandFell = bidsAfter < bidsBefore * 0.80 && bidsBefore > 5;
             // Either the price falls, or — once the submarket is in the excess
             // regime where the price is pinned to the deepest real bidder — the
             // expected FILL falls hard while the price only drifts.
@@ -1896,32 +2072,27 @@ namespace CS2Econ.Harness
             // worth stating because it is a genuine property of pricing off a
             // real population rather than a fitted curve: the excess anchor is
             // a low QUANTILE of the households present, and culling 60% of the
-            // city (while deliberately sparing c0's own residents) both shrinks
-            // and re-weights the sample, so that quantile moves by more than
-            // rounding.
+            // city both shrinks and re-weights the sample, so that quantile
+            // moves by more than rounding.
             //
-            // CORRECTED, AND FLAGGED RATHER THAN FIXED. This comment used to
-            // read "Measured here: fill 0.59 → 0.31 (a 47% collapse, the
-            // substantive response) while the price drifted +11%", and defended
-            // its 20% band on the grounds that "the leg it guards is carried by
-            // the fill term, which is nowhere near its threshold". Both are
-            // false, and the second is backwards. Measured over seeds 0–299:
-            // fillBefore is exactly 1.00 on 300/300 and fillAfter never drops
-            // below 0.909, so `fillAfter < fillBefore * 0.8` fires on 0 of 300
-            // — the vacancy disjunct never fires at all, and the leg is carried
-            // ENTIRELY by the price disjunct, which fires on 288 of 300. (The
-            // 12 seeds where neither fires are this check's other standing
-            // failure: 44, 54, 77, 125, 128, 138, 206, 233, 236, 242, 288, 298.)
-            // The band is therefore load-bearing in exactly the way the old
-            // comment said it was not. Left alone deliberately: this leg is not
-            // what the current commit rewrites, and fixing it means finding a
-            // cull that actually produces vacancy in this fixture, which is its
-            // own investigation.
+            // THE VACANCY DISJUNCT NOW FIRES. The previous comment recorded,
+            // over seeds 0–299 with the c0 exemption in place, that fillBefore
+            // was exactly 1.00 on 300/300 and fillAfter never fell below 0.909,
+            // so `fillAfter < fillBefore * 0.8` fired on 0 of 300 and the leg
+            // rested entirely on the price disjunct — and left it, saying that
+            // "finding a cull that actually produces vacancy in this fixture is
+            // its own investigation". That investigation is the exemption: with
+            // it removed, seed 13 reads fill 1.00 → 0.35 and bid 2.15 → 0.88,
+            // so both disjuncts fire (`collapseprobe --seed 13 --spare-c0 0`).
+            // The distribution over seeds is recorded at `clearsweep --seeds
+            // 300` in this commit's log; the bands are unchanged, because what
+            // changed is the stimulus and not the assertion.
             bool softens = after < before * 0.98
                            || (fillAfter < fillBefore * 0.8 && after < before * 1.20);
 
             Console.WriteLine($"    AUDIT supplyMonotone={supplyMonotone} demandMonotone={demandMonotone} "
-                + $"killed>100={killed > 100} softens={softens} sweepMonotone={sweepMonotone} "
+                + $"killed>100={killed > 100} demandFell={demandFell} ({bidsBefore:F2}→{bidsAfter:F2}) "
+                + $"softens={softens} sweepMonotone={sweepMonotone} "
                 + $"sweepDeclines={sweepDeclines} tracksIncome={tracksIncome} | dLow={dLow:F4} dMid={dMid:F4} dHigh={dHigh:F4}");
             Console.WriteLine($"    AUDIT income: wagesLiftTop={wagesLiftTop} ({topResponse:F5}) "
                 + $"incomeHomogeneous={incomeHomogeneous} (dev {homogDev:E3}) "
@@ -1929,11 +2100,12 @@ namespace CS2Econ.Harness
                 + $"sourcesReach={sourcesReach} (wage {reachWage:F3} benefit {reachBenefit:F3} "
                 + $"floor {reachFloor:F3} transfer {reachTransfer:F3}) tableRestored={tableRestored}");
             Check("clearing price: quantity responds (supply ↓, demand ↑, population ↓ — price while cleared, vacancy once flat)",
-                  supplyMonotone && demandMonotone && killed > 100 && softens
+                  supplyMonotone && demandMonotone && killed > 100 && demandFell && softens
                   && sweepMonotone && sweepDeclines && tracksIncome,
                   $"supply×{{0.5,2,8}} → {pLow:F2}/{pMid:F2}/{pHigh:F2} (fill {fMid:F2}→{fHigh:F2}); " +
                   $"demand×{{0.5,1,2}} → {dLow:F2}/{dMid:F2}/{dHigh:F2} (fill {fdLow:F2}→{fdMid:F2}); " +
-                  $"after {killed} citywide exits bid {before:F2} → {after:F2}, fill {fillBefore:F2} → {fillAfter:F2}; " +
+                  $"after {killed} citywide exits bids at the probed submarket {bidsBefore:F1} → {bidsAfter:F1} " +
+                  $"(<0.80× required), bid {before:F2} → {after:F2}, fill {fillBefore:F2} → {fillAfter:F2}; " +
                   $"25-point supply sweep {sweepHi:F2}→{sweepLo:F2} " +
                   $"({(sweepMonotone ? "monotone" : $"{upSteps} UPWARD steps")}); " +
                   $"income: wages×2 top ×{topResponse:F5} (≤2), all-income×2 pointwise dev {homogDev:E2} (≤1e-6), " +
@@ -2429,6 +2601,15 @@ namespace CS2Econ.Harness
         /// parameter's dose-response is one command per value. Null in every
         /// other run.</summary>
         public static double? TieBonusOverride;
+
+        /// <summary>MUTANT SWITCH, harness-only (`--mutant-spare-probed-cluster`):
+        /// restores the clearing-price collapse leg's exemption for the probed
+        /// cluster's own residents. That exemption is the defect this leg's
+        /// non-degeneracy floor now catches — with it on, the cull leaves the
+        /// bid count at the probed submarket essentially untouched, so
+        /// `demandFell` goes false and the check reds. Exists so the floor leg
+        /// stays falsifiable; never a shipping mode.</summary>
+        public static bool MutantSpareProbedCluster;
 
         private static void ProspectTieChannel(ulong seed)
         {
