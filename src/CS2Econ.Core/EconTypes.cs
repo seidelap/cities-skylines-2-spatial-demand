@@ -480,6 +480,96 @@ namespace CS2Econ.Core
         public double OutsideShopMinutes = 40.0;   // outside option in the shopping logit
         public double OutsideShopMass = 60.0;      // (uncaptured spending leaks outward)
 
+        // ---- commercial service capacity (StoreLevelSpending path) -----------
+        /// <summary>Services sold per FILLED job slot per tick, at level-1
+        /// quality and condition 1. Commercial's production coefficient — the
+        /// same kind of technology constant as ExtractorOutputPerSlot,
+        /// OfficeOutputPerSlot and recipe.OutputPerSlot, and the term commercial
+        /// was missing: a shop's takings are min(custom presented, staff × this
+        /// × cond × quality), so takings are bounded by the staff the shop
+        /// actually has.
+        ///
+        /// This is a SERVICE capacity — staff-hours — and NOT an inventory.
+        /// Restocking is same-tick and proportional to takings
+        /// (EconomyEngine.ProductionAndTrade), so nothing stocks out; what runs
+        /// short is the ability to serve. A shop's ATTRACTIVENESS to a shopper
+        /// stays its building (JobSlots × cond × quality, what ChooseShops
+        /// already uses — a shopper sees shelf space, not the roster); its
+        /// THROUGHPUT is its staff. The gap between the two is the mechanism,
+        /// and it is what makes hiring worth money.
+        ///
+        /// PICK: 60, between the p75 and the p90 of the presented-per-FILLED-slot
+        /// distribution measured with capacity switched off
+        /// (`shopprobe --seeds 4 --service 1e9`, task #20: p25 35.8, p50 45.2,
+        /// p75 55.3, p90 65.3, p99 85.7, max 115.6 over 40k firm-ticks), so
+        /// capacity binds on the busiest shops and not on the median. Measured
+        /// consequence at this pick (`shopprobe --seeds 4`, 4 seeds × 300
+        /// ticks): the bound binds on 8.8% of 128240 commercial firm-ticks and
+        /// 1.8% of presented custom is turned away, while the sector's capacity
+        /// at full staffing is 1.40× the spending presented to it — above 1, so
+        /// what is turned away is siting and staffing rather than a sector-wide
+        /// shortfall. Swept
+        /// {0.5×, 1×, 2×, 4×} — the sweep is in impl-20-commerce.md.</summary>
+        public double CommercialServicePerSlot = 60.0;
+        /// <summary>Rounds of pro-rata rationing over each household's OWN
+        /// shortlist. K = 1 is exactly the defaults rule (turned away from your
+        /// chosen shop → out of town, which is your own default); K &gt; 1 lets
+        /// the household improve on that default by walking to its own
+        /// next-best shop, and never places it below the default because the
+        /// shortlist only ever holds shops it ranks above its own realized
+        /// outside option.</summary>
+        public int ShopRationingRounds = 2;
+        /// <summary>How many shops a household ranks. Must be ≥
+        /// ShopRationingRounds. ChooseShops already scores every live shop for
+        /// every household, so keeping the top few costs one insertion each.</summary>
+        public int ShopShortlist = 3;
+
+        // ---- counted shop intents (StoreLevelSpending entry signal) ----------
+        /// <summary>Bins in the per-cluster size histogram of counted shop
+        /// intents. Each settled household contributes, per cluster, the SIZE
+        /// M* above which a hypothetical shop there would systematically beat
+        /// what that household actually settled for; the histogram is over
+        /// log M*, so a developer reads a demand curve in size.
+        ///
+        /// The read is the CONSERVATIVE cumulative — only bins whose whole range
+        /// is beaten — so the discretization error is one-sided and a developer
+        /// never over-counts, which is the safe direction given that the defect
+        /// being removed was over-promising.
+        ///
+        /// PICK: 96. Measured against an EXACT unbucketed read of the same
+        /// intents, averaged over four read sizes (`shopprobe --seeds 4`,
+        /// task #20): city-aggregate under-count 24 bins 13.97%, 96 bins 2.06%,
+        /// 192 bins 1.59% — 96 is where the curve flattens. The averaging over
+        /// sizes is not decoration: at a single fixed read size the metric is
+        /// degenerate, because bin counts 12/24/48 place a boundary at the same
+        /// point below log 6 and all three then report an identical 4.52%.</summary>
+        public int IntentProbeBins = 96;
+        /// <summary>Log-mass range the histogram covers. Realized shop mass
+        /// (JobSlots × cond × quality) over live shops spans 1.60–10.92
+        /// (log 0.47–2.39; `shopprobe --seeds 4`, task #20) and the entry probe
+        /// reads at 6 × quality, so the range carries well over a decade of
+        /// margin on each side. Intents falling past the top are expected and
+        /// legitimate — remote clusters no shop could win — and are counted
+        /// separately (AccessState.IntentOverflow); what would be an error is a
+        /// READ landing there, and none does.</summary>
+        public double IntentProbeLogMassLo = -2.5, IntentProbeLogMassHi = 6.0;
+        /// <summary>Minimum number of individual households a read must rest on
+        /// before it is anything but zero. One household's basket is not a
+        /// place's retail forecast — the #30 thin-market argument transposed to
+        /// the entry field, and zeroed rather than shrunk toward a prior because
+        /// the safe direction here is under-promising.
+        ///
+        /// PICK: 5. Measured head counts BACKING the reference read
+        /// (`shopprobe --seeds 4`, task #20, over 784 cluster-observations):
+        /// min 0, p05 3, p10 4, p25 6, p50 9, max 26. So the floor excludes
+        /// roughly the bottom decile — clusters whose whole retail case rests on
+        /// four households or fewer — and leaves every cluster with real
+        /// catchment reading. Counted AT THE READ'S SIZE, never per cluster:
+        /// WShop is positive everywhere, so a per-cluster head count is just the
+        /// population (1690–3772 of ~8000 at every cluster, same run) and would
+        /// gate nothing.</summary>
+        public double IntentHeadFloor = 5.0;
+
         // ---- city services / fiscal -----------------------------------------
         public double ServiceCostPerHousehold = 1.2; // per tick, paid by Treasury
         public double ServiceCostPerFirmSlot = 0.35;
@@ -869,16 +959,45 @@ namespace CS2Econ.Core
         /// path the same deduction is just a ~30% cut to an entry signal the
         /// pooled calibration was set against, and it costs three seeds.
         ///
-        /// The remaining gap is ENTRY. The phantom-entrant capture field still
-        /// describes a pooled market — it tells a developer it will earn its
-        /// proportional share of nearby spending — so developers keep building
-        /// shops the discrete market cannot feed. Closing that is the next step,
-        /// and it is what this flag is waiting on.
+        /// THE ENTRY GAP IS NOW CLOSED, AND THE FLAG STILL DOES NOT FLIP. Task
+        /// #20 replaced the two things this comment was waiting on. Commercial
+        /// production gained the linear-in-labor relation the other three
+        /// sectors already had, so a shop's takings are bounded by the staff it
+        /// actually has (CommercialServicePerSlot) and the labor auction's
+        /// commercial door cap became a technology ceiling instead of an EMA of
+        /// realized takings. And the phantom-entrant capture field was replaced,
+        /// on this path only, by a per-cluster histogram of COUNTED individual
+        /// shop intents (AccessState.CountShopIntents).
         ///
-        /// Harness: `--store-level` on any command turns it on. Measured
-        /// verify over seeds 0–7: 7/8 with the flag off (seed 3 fails on the
-        /// clearing-price check, and did so before this branch), 5/8 with it
-        /// on (seeds 0 and 5 additionally fail Weber).</summary>
+        /// What that bought, measured (`shopprobe --seeds 4`, 300 ticks, against
+        /// `firmdiag` at 58cab48 on the same seeds): on this path commercial
+        /// firms alive 98.0 → 103.5 and commercial-parcel vacancy 42% → 39%,
+        /// against a pooled path this item leaves BIT-IDENTICAL at 130.2 alive
+        /// and 26% vacancy. The gap narrowed; it did not close. And it was not
+        /// free: commercial deaths rose 44.2 → 77.5, concentrated entirely in
+        /// entry — 141 of 161 shops born mid-run die within 40 ticks, against
+        /// 0 of 48 on the pooled path. A discrete market with a staffing bound
+        /// kills speculative entrants faster, and whether that is the mechanism
+        /// working or a defect is the first question the flip inventory has to
+        /// answer.
+        ///
+        /// WHY THE FLIP IS STILL NOT DECIDABLE, and this is the measured
+        /// blocker rather than caution: a flip inventory needs checks that can
+        /// SEE the change, and at the start of this item TestRunner.cs contained
+        /// zero occurrences of "Commercial", "shop", "retail" or "capture"
+        /// outside three lines discussing MUT-L and known limit 4, against 26
+        /// for "residential" — and both ledger arms ran this flag false. Every
+        /// commercial verdict would have classified as "unchanged by
+        /// construction" and meant nothing. This item lands that coverage: two
+        /// checks, ten legs, each with a mutant run red. The inventory is the
+        /// next round's work, and it now has instruments.
+        ///
+        /// Harness: `--store-level` on any command turns it on; `shopsweep` runs
+        /// the two commerce checks alone across seeds and `shopprobe` is the
+        /// census. Measured verify over seeds 0–7 BEFORE this item: 7/8 with the
+        /// flag off (seed 3 fails on the clearing-price check, and did so before
+        /// this branch), 5/8 with it on (seeds 0 and 5 additionally fail
+        /// Weber).</summary>
         public bool StoreLevelSpending = false;
         /// <summary>Solve housing as ONE assignment market (HousingAuction):
         /// prices and who-lives-where come out of the same ascending auction,

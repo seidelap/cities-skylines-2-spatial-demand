@@ -385,13 +385,45 @@ namespace CS2Econ.Core
             {
                 case ZoneKind.Commercial:
                 {
-                    double capturePerSlot = acc.PhantomCommercialCapture(cluster, 6.0 * quality) / 6.0;
                     double wage = 0.7 * p.WageBasic + 0.3 * p.WageSkilled;
                     // Restocking cost: the consumption basket at delivered prices,
                     // relative to its anchor value (imported/near baskets squeeze margin).
                     double cogsIndex = 0;
                     foreach (var (res, share) in ResourceCatalog.Basket)
                         cogsIndex += share * prices.DeliveredCost(res, cluster) / ResourceCatalog.Anchor[(int)res];
+                    double capturePerSlot;
+                    if (acc.HasCountedIntents)
+                    {
+                        // Store-level path. TWO changes, and they close the flag's
+                        // own stated gap from both sides: a developer will not
+                        // build for custom that is not COUNTED, and will not build
+                        // what it cannot STAFF.
+                        //
+                        // The count is individual intents (AccessState.
+                        // CountShopIntents) rather than the phantom-entrant share,
+                        // which was the pooled allocation rule re-served as a
+                        // forecast of a discrete market that does not work that way.
+                        //
+                        // The ceiling is this item's production relation: however
+                        // much custom a location would draw, a slot cannot serve
+                        // more than CommercialServicePerSlot × quality of it.
+                        //
+                        // Capture is divided by FILLED slots and the trailing
+                        // × fillEst below multiplies it back, so both sides of the
+                        // min are per FILLED slot. That is NOT an identity with the
+                        // pooled leg's capture/6: it drops a fillEst ∈ [0.35, 1]
+                        // from the capture side, raising it by up to 2.9×. It is
+                        // the economically coherent form — custom arriving does not
+                        // depend on your roster, your ability to serve it does, and
+                        // that is what the min says — and it is a measured level
+                        // change against a calibrated signal, which is why it is
+                        // reported separately from the counted-vs-pooled swap and
+                        // why it is confined to this branch.
+                        double counted = acc.CommercialCapture(cluster, 6.0 * quality);
+                        capturePerSlot = Math.Min(counted / Math.Max(1e-9, 6.0 * fillEst),
+                                                  p.CommercialServicePerSlot * quality);
+                    }
+                    else capturePerSlot = acc.PhantomCommercialCapture(cluster, 6.0 * quality) / 6.0;
                     profitPerFilledSlot = capturePerSlot * (p.CommercialMarkup - 0.1 * (cogsIndex - 0.3)) - wage;
                     break;
                 }

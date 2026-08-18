@@ -289,10 +289,45 @@ namespace CS2Econ.Core
         /// Updated in the dividend pass on both flag paths; only the
         /// labor-auction path reads it.</summary>
         public double DividendPerEarnerEma;
+        /// <summary>EMA of the money of custom that showed up at this shop's
+        /// door per tick, INCLUDING what it had to turn away for want of staff.
+        /// The firm's own observation, and the only thing its labor bid may be
+        /// driven by: a shop that lost its staff serves nothing, so a cap read
+        /// off SERVED volume could never buy back the staff that would let it
+        /// serve and any shop losing one labor round would be dead permanently.
+        /// Presented custom is the honest observation ("people walked in and I
+        /// turned them away") and it is what breaks that spiral.
+        /// Store-level path only; the pooled path's cap stays on ProfitEma.</summary>
+        public double PresentedEma;
+        /// <summary>Whether this firm has ever seen custom at its door. Until
+        /// it has, PresentedEma is not a forecast it could hold and the labor
+        /// cap falls back to the firm's full staffing ceiling — a shop that has
+        /// not yet opened forecasts it can use its slots. Without this a new
+        /// firm starts at PresentedEma = 0, posts no door, hires nobody, has
+        /// zero service capacity and therefore zero takings, and starves on its
+        /// seed capital before the EMA can ramp: the measured
+        /// "new shops starve before they fill" mode (deaths 217 → 680) in a new
+        /// disguise. The first STRICTLY POSITIVE observation both seeds the EMA
+        /// and sets this — the same first-observation seed the posted-price EMA
+        /// uses (AccessState.Refresh).</summary>
+        public bool PresentedObserved;
 
         // Per-tick scratch (settlement + telemetry)
         public double RevenueThisTick;
         public double OutputThisTick;
+        /// <summary>Money of custom presented at this shop's door this tick,
+        /// summed over rationing rounds; what PresentedEma consumes. Distinct
+        /// from RoundPresented, which is one round's presentation and is what
+        /// the pro-rata ratio divides capacity by — using the tick-cumulative
+        /// figure for the ratio under-serves every round after the first.</summary>
+        public double PresentedThisTick;
+        public double ServedThisTick;
+        public double RoundPresented;
+        /// <summary>This round's pro-rata share, fixed before anybody is
+        /// served, so which of a full shop's customers the loop reaches first
+        /// cannot change what any of them gets.</summary>
+        public double RoundRatio;
+        public double RemainingCapacity;
         public double[] InputNeedByRes = new double[ResourceCatalog.Count];
     }
 

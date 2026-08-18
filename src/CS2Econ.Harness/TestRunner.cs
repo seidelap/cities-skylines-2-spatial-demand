@@ -124,6 +124,81 @@ namespace CS2Econ.Harness
     ///          BEFORE  MISS — 22/22.   AFTER  STILL A MISS — 26/26.
     ///          Two arms are two arms, not 2^n: nothing in this suite enters the
     ///          StoreLevelSpending branch. See known limit 4.
+    ///          AT TASK #20  CAUGHT. The branch now has two fixtures in it
+    ///          (commercial-staffing, counted-shop-intents). Re-run against
+    ///          this commit: verify goes red on the staffing check's
+    ///          starvation leg, whose MutantServedCap arm collapses from 1406
+    ///          doorless firm-ticks to 0 — a revenue floor of 5 gives every
+    ///          shop a positive ProfitEma, so under a served-driven cap no
+    ///          shop can starve and the arm that must manufacture the state
+    ///          manufactures nothing. Indirect, and recorded as indirect; the
+    ///          money leg does NOT see it, because RevenueThisTick is not the
+    ///          record that leg reads.
+    ///
+    /// --- TASK #20: THE COMMERCIAL MECHANISM, PREVIOUSLY UNASSERTED --------
+    /// Measured at the start of that item: `grep -c Commercial TestRunner.cs`
+    /// → 0, and no occurrence of "shop", "retail" or "capture" either, against
+    /// 26 for "residential". Both ledger arms ran StoreLevelSpending = false.
+    /// So no assertion named the commercial sector on EITHER arm; money on the
+    /// POOLED path was covered (MUT-L1a/b via reconciliation), money on the
+    /// store-level path was not, and the mechanism was covered nowhere.
+    ///
+    /// Two checks and ten legs closed that. Every leg names the mutant that
+    /// reds it, and each was run:
+    ///  MUT-20a EconomyEngine, capacity × 1.5 at the enforcement site.
+    ///          CAUGHT — the BOUND leg, 222 firm-ticks served above a
+    ///          recomputed capacity, worst excess exactly 5.0E-1.
+    ///          THIS MUTANT FOUND A REAL DEFECT before it caught anything: it
+    ///          first read ZERO violations, because the pro-rata ratio was
+    ///          being recomputed per customer against a capacity already being
+    ///          drawn down. That made the split order-dependent in household id
+    ///          — the defect pro-rata exists to prevent — and left every full
+    ///          shop short of its own capacity (served peaked at 0.9985 of it),
+    ///          which is what hid the mutant. Fixed by computing each shop's
+    ///          ratio in its own pass, before anybody is served.
+    ///  MUT-20b EconParams, CommercialServicePerSlot → 1e9 (mechanism inert).
+    ///          CAUGHT — the BINDS floor: the bound stops binding.
+    ///  MUT-20c `--mutant-uncapped-util` (WIRED): the technology ceiling is
+    ///          dropped from the door cap, which is the revenue-EMA rule's
+    ///          defining property isolated. CAUGHT — 48 of 52 and 12 of 12
+    ///          qualifying door-ticks post a cap above the ceiling, worst
+    ///          +44.6 %.
+    ///  MUT-20d `--mutant-revenue-ema-cap` (WIRED): the old cap restored
+    ///          verbatim. CAUGHT, but by the STARVATION leg rather than the
+    ///          ceiling leg — 1523-1801 staffless doorless firm-ticks against
+    ///          0 clean. Recorded because it is the honest result: at this
+    ///          calibration the EMA rule's cap sits BELOW the technology
+    ///          ceiling, so it cannot breach it; what it does instead is
+    ///          starve every shop that loses its staff. MUT-20c exists because
+    ///          a leg needs a mutant that reds THAT leg.
+    ///  MUT-20e `MutantServedCap` (WIRED, embedded as the starvation leg's own
+    ///          second arm, the Ward pattern): the cap reads served volume.
+    ///          CAUGHT — 1523-2369 doorless staffless firm-ticks against 0.
+    ///  MUT-20f EconomyEngine.ChooseShops, shortlist cut against bare `outU`
+    ///          instead of the household's own realized outside utility.
+    ///          CAUGHT — the DEFAULTS leg.
+    ///  MUT-20g EconomyEngine.RationShopping, 0.1 % of each household's
+    ///          unserved residual vanishes instead of leaking — rule 3's literal
+    ///          violation. CAUGHT — the conservation leg on its OWN path, at
+    ///          2.5E-5 against a 1e-12 bound.
+    ///          NOTE on the mutant that was tried FIRST and is not usable:
+    ///          crediting the shop from `ratio × RoundPresented` is a NO-OP
+    ///          once the pro-rata ratio is fixed per round, because the
+    ///          per-household shares then sum to exactly the round capacity and
+    ///          the min() clamp never binds. Recorded so nobody re-derives it.
+    ///  MUT-20h AccessState.CountShopIntents, the intent weight built from
+    ///          realized spend net of ChargedAssessment. CAUGHT — the GUARD
+    ///          leg. This is the one the standing circularity guard cannot
+    ///          see: it asserts on a residential parcel's land rent.
+    ///  MUT-20i `--mutant-pooled-entry` (WIRED): the pooled phantom-entrant
+    ///          field restored as the entry signal. CAUGHT — the
+    ///          DISCRIMINATION leg (the counted read is zero at 6-18 of
+    ///          121-169 clusters; the pooled field is zero at none of them,
+    ///          and structurally cannot be).
+    ///  MUT-20j `--mutant-intent-unsaturated` (WIRED): the probe stops
+    ///          comparing against what each household already has. CAUGHT —
+    ///          four legs at once (THIN, DISCRIMINATION, CROWDING, and
+    ///          CALIBRATION at a ratio of 0.014 against a [0.4, 4.0] band).
     ///
     /// --- BLIND SPOT 3: the auction is off for almost the whole suite ----
     ///  MUT-D   EconomyEngine.cs, auction move-in: delete the shelter release.
@@ -186,8 +261,13 @@ namespace CS2Econ.Harness
     ///     the Declined/Outbid split or on what CutVacancies achieves — and
     ///     task #28 records a KNOWN open defect there. Each wants a check, none
     ///     wants a flag.
-    ///  4. FLAG COMBINATIONS: StoreLevelSpending, ShadowAccountingOnly, vanilla
-    ///     mode and the TNTP import path are outside both arms. MUT-L passes.
+    ///  4. FLAG COMBINATIONS: ShadowAccountingOnly, vanilla mode and the TNTP
+    ///     import path are outside both arms. StoreLevelSpending CAME INSIDE at
+    ///     task #20 — two fixtures run it, ten legs assert on it, MUT-L is
+    ///     caught — but the flag itself still ships FALSE, so the pooled path is
+    ///     what the other twenty-five checks exercise and the store-level path
+    ///     is covered only by those two. A defect that needs a THIRD mechanism
+    ///     to interact with store-level spending is still outside both arms.
     ///  5. ONE FIXTURE PER INSTRUMENT; THE FINGERPRINT IS ONE SEED. A defect
     ///     needing a bigger city, a longer run or another seed moves no lane.
     ///  6. SCENARIOS REMAIN UNGATED AND PARTLY RED (7/10 at seed 1 at c0c584d,
@@ -621,6 +701,8 @@ namespace CS2Econ.Harness
                 var (lpOk, lpDetail) = AssignmentOracle.Run(seed);
                 Check("auction total surplus is LP-optimal within the epsilon budget", lpOk, lpDetail); });
             Timed("labor-auction", () => LaborMarket(seed));
+            Timed("commercial-staffing", () => CommercialStaffing(seed));
+            Timed("counted-shop-intents", () => CountedShopIntents(seed));
             Timed("clearing-price", () => ClearingPrice(seed));
             Timed("occupied-stock-rent", () => OccupiedStockCarriesRent(seed));
             Timed("coop-rerate", () => CoopInstantRerate(seed));
@@ -3111,6 +3193,711 @@ namespace CS2Econ.Harness
                   + $"owner-IR {ownerIrBad} (worst {worstOwnerIr:F3}), door↔parcel {ownerMoveBad} astray, "
                   + $"ratchet {ratchetBad} asks off the write identity (worst {worstRatchet:E1}); "
                   + $"engineered arm: {engWhy}");
+        }
+
+        // ====================================================================
+        // TASK #20 — the commercial mechanism, which nothing in this suite
+        // asserted anything about before. Measured at the design round:
+        // TestRunner.cs contained ZERO occurrences of "Commercial", "shop",
+        // "retail" or "capture" outside the three lines discussing MUT-L and
+        // known limit 4, against 26 for "residential". Both ledger arms run
+        // StoreLevelSpending = false (below), so the store-level branch's money
+        // was uncovered too, and MUT-L is a documented STILL-A-MISS.
+        //
+        // These two checks are what a flip of that flag would have to be
+        // classified against. Per MUT-D's own ratification in this file:
+        // coverage is necessary for a check to fail and never sufficient —
+        // what was missing was an ASSERTION.
+        // ====================================================================
+
+        // Every bound here is measured, never guessed, and names the run it
+        // came from. The measurement protocol: run `shopsweep --seeds 4` with
+        // the bounds wide, read the healthy distribution, set each bound with
+        // stated margin, then sweep 0–25. Numbers below are from
+        // `shopsweep --seeds 26` at this commit unless a line names another run.
+        // A COUNT of binding firm-ticks, not a share. The share is a nuisance
+        // quantity — it divides by however many shops the seed happens to carry
+        // — and the claim the floor makes is that the population is NON-EMPTY.
+        // Measured over `shopsweep --seeds 26` at this commit: 28, 71, 149, 163,
+        // 179, 189, 222, 224 ... on the eight thinnest seeds, i.e. every seed
+        // clears 20 and the worst clears it by 1.4×. The margin is thin and is
+        // stated rather than hidden; what makes it safe is that the mutant that
+        // must red this leg (CommercialServicePerSlot → 1e9) drives the count to
+        // exactly 0, not near the floor.
+        private const int BindFloor = 20;               // firm-ticks where the bound actually bound
+        private const int CeilingFloor = 10;            // high-traffic door-ticks the ceiling leg needs
+        private const int StarveFloor = 5;              // doorless staffless firm-ticks the mutant must make
+        private const double GuardLiveFloor = 20;       // clusters with a non-zero read
+        private const int ThinFloor = 4;                // clusters whose read rests on too few households
+        private const int SilentFloor = 3;              // clusters the counted read reports as dead
+        private const double CrowdFloor = 0.05;         // counted read's fall under 20× incumbent mass
+        private const double LocalityPooledFloor = 0.02;// the pooled field's distant move, same run
+        private const int CalibFloor = 2;               // shops born mid-run with enough trading
+        private const double CalibLo = 0.4, CalibHi = 4.0;
+
+        /// <summary>The task #20 fixture: an auction city with BOTH the labor
+        /// auction and store-level spending on. The labor flag is on because
+        /// half of this item is what a commercial door is worth, and that only
+        /// exists on the auction path.</summary>
+        private static Sim ShopFixture(ulong seed, EconParams p, int ticks, bool storeArm,
+                                       bool laborAuction, Action<Sim>? perTick = null,
+                                       int cols = 13, int rows = 13, int households = 8000)
+        {
+            // A much bigger city than the labor fixture's 8x8/2000, and the size
+            // is load-bearing rather than incidental. Every leg of both commerce
+            // checks carries a non-degeneracy FLOOR, and the floors are what the
+            // fixture has to produce. Measured on the way here:
+            //   8x8/2000  - the residential stock caps the seeded population well
+            //               under 2000 (SyntheticCity.SeedHouseholds takes
+            //               min(asked, 0.92 x vacancies), so asking for more there
+            //               changes nothing at all) and the city carries more shop
+            //               capacity than it presents custom for: the capacity
+            //               bound binds on 0.0% of firm-ticks.
+            //   11x11/4000 - binds on 3.0-11.5% at seeds 0-3, but across seeds
+            //               0-25 the thin populations run out: seed 4 reads 1.8%
+            //               against a 2.0% floor, 0 high-traffic door-ticks
+            //               against 10, 0 mid-run entrants against 3, and 1
+            //               evidence-thin cluster against 4.
+            // A floor that a fixture cannot reliably produce is not a floor, and
+            // lowering it to whatever one seed happens to yield is the vacuity
+            // this whole family of legs exists to prevent.
+            var cfg = new SyntheticCity.Config
+                      { Cols = cols, Rows = rows, SeedHouseholds = households, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags
+                                 { HousingAuction = true, LaborAuction = laborAuction,
+                                   StoreLevelSpending = storeArm });
+            sim.Run(ticks, perTick);
+            return sim;
+        }
+
+        /// <summary>A commercial firm's takings are bounded by the staff it
+        /// actually has, and the price it will pay for one more worker is a
+        /// technology ceiling rather than an EMA of the money the allocation
+        /// mechanism happened to hand it.
+        ///
+        /// WHAT WAS WRONG. Every other sector's output is linear in
+        /// WorkersFilled (EconomyEngine.ProductionAndTrade: extractor,
+        /// industrial, office). Commercial read RevenueThisTick and never
+        /// WorkersFilled at all, so a shop could not be understaffed and could
+        /// not be full; LaborAuction.BuildDoors therefore had no marginal
+        /// product to cap commercial doors with and fell back on
+        /// ProfitEma × (1 − BasketShare) / JobSlots — an AVERAGE product of a
+        /// revenue the worker did not produce.
+        ///
+        /// FIVE LEGS, and each names the mutant that reds it. BOUND recomputes
+        /// capacity from the raw recorded fields rather than reading the
+        /// engine's own capacity, so it is not the engine compared with itself.
+        /// BINDS is BOUND's non-degeneracy floor: without it an inert mechanism
+        /// (capacity → ∞) satisfies BOUND. CEILING is the leg that says the
+        /// revenue proxy is GONE, and it asserts the property that is not a
+        /// relabeling — a shop whose traffic per slot runs far above what a slot
+        /// can serve posts its cap AT the technology ceiling and no higher,
+        /// where the EMA rule's cap rises without limit in traffic. (An earlier
+        /// formulation compared two shops matched on presented-per-slot; that is
+        /// a structural tautology, since the new cap reduces algebraically to
+        /// min(perSlotCap, PresentedEma/JobSlots) × (1 − BasketShare) — a pure
+        /// function of the matching keys. A leg whose two sides are the same
+        /// function of the same inputs is not a check.) STARVATION protects the
+        /// load-bearing "presented, never served" decision. DEFAULTS is the
+        /// defaults rule: no household is ever served at a shop it ranks below
+        /// its OWN out-of-town option, taste draw included. MONEY compares the
+        /// firm-side record of what was served against the household-side record
+        /// of what was spent — two separately maintained accumulations.
+        ///
+        /// Every bound below is measured, and names the run it came from.</summary>
+        private static void CommercialStaffing(ulong seed)
+        {
+            var p = new EconParams();
+            double basketMargin = 1 - LaborAuction.BasketShare;
+
+            // ---- ARM 1: the SHIPPING commercial path ------------------------
+            // FeatureFlags.LaborAuction is false by default, so the market that
+            // ships routes staff through AssignWorkplaces. Capacity, rationing
+            // and money are asserted here. They are not asserted on the labor-
+            // auction arm because there the mechanism removes its own evidence:
+            // with a structural door cap a shop bids for exactly the staff its
+            // traffic needs, gets it, and the capacity bound then binds on 0.0%
+            // of firm-ticks (measured, 11x11/4000/150t, seeds 0-1). That is the
+            // mechanism working, and it is why BINDS lives on this arm.
+            long firmTicks = 0, bindTicks = 0, boundViolations = 0;
+            double worstBoundExcess = 0;
+            long belowDefault = 0, shortlistFallbacks = 0;
+            double servedInLaterRounds = 0, worstMoneyRel = 0;
+            long moneyTicks = 0;
+
+            // Three snapshots the CHECK keeps for itself, taken at the end of
+            // every tick. RefreshTick runs at the START of a Step, before
+            // condition decay, before any level change and before every phase
+            // that can move a household, so the end-of-tick-T-1 state IS the
+            // state ChooseShops read at tick T. Recomputing them at check time
+            // instead read 641-668 spurious "below default" entries per seed out
+            // of ~130000 — marginal shifts, not defects, and exactly what an
+            // integer-equality leg must not be built on.
+            int[] prevShop = Array.Empty<int>();
+            double[] prevMass = Array.Empty<double>();
+            int[] prevCluster = Array.Empty<int>();
+
+            var sim = ShopFixture(seed, p, 150, storeArm: true, laborAuction: false, perTick: s =>
+            {
+                var w = s.W; var eng = s.Engine; var acc = eng.Access;
+
+                foreach (var f in w.Firms)
+                {
+                    if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                    var pl = w.Parcels[f.Parcel];
+                    // RECOMPUTED here from WorkersFilled / condition / level.
+                    // Never EconomyEngine.CommercialServiceCapacity and never
+                    // Firm.RemainingCapacity: a leg that reads the engine's own
+                    // capacity back out is the engine agreeing with itself.
+                    double cap = p.CommercialServicePerSlot * f.WorkersFilled
+                                 * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level) / p.Quality(1);
+                    firmTicks++;
+                    if (f.ServedThisTick > cap + 1e-9)
+                    {
+                        boundViolations++;
+                        worstBoundExcess = Math.Max(worstBoundExcess,
+                                                    (f.ServedThisTick - cap) / Math.Max(1e-9, cap));
+                    }
+                    // The bound BINDS: a staffed shop had more custom at its
+                    // door than its staff could serve. Without this floor an
+                    // inert mechanism (capacity to infinity) satisfies BOUND at
+                    // every firm-tick and the check says nothing.
+                    if (cap > 1e-9 && f.PresentedThisTick > cap + 1e-9) bindTicks++;
+                }
+
+                // MONEY: the firm-side record against the household-side record.
+                // Dead firms included — bankruptcy settles in FirmLifecycle,
+                // AFTER consumption, so a shop that served custom this tick and
+                // died this tick still took that money. Excluding it read a
+                // 6.6E-3 gap on seed 2 that was this and not a defect.
+                double firmSide = 0;
+                foreach (var f in w.Firms)
+                    if (f.Sector == ZoneKind.Commercial) firmSide += f.ServedThisTick;
+                double spend = eng.ConsumptionSpendThisTick;
+                if (spend > 1e-9)
+                {
+                    moneyTicks++;
+                    worstMoneyRel = Math.Max(worstMoneyRel,
+                        Math.Abs(firmSide + eng.ConsumptionLeakedThisTick - spend) / spend);
+                }
+                for (int r = 1; r < eng.ShopServedByRound.Length; r++)
+                    servedInLaterRounds += eng.ShopServedByRound[r];
+
+                // DEFAULTS: nobody is ever offered — and so nobody can ever be
+                // served — a shop it ranks below its own out-of-town option. The
+                // comparison is re-derived here from the household's own id
+                // hashes, the shop's own mass and the same WShop the engine
+                // reads; only the shortlist itself, the thing under test, is
+                // read out of the engine.
+                // RefreshInterval == 1, not 0: EconomyEngine.Step ends with
+                // W.Tick++, so a perTick callback seeing W.Tick == 6 is the one
+                // that ran after the STEP at tick 5 — the refresh step. Testing
+                // for 0 here read the shortlist several ticks after the state
+                // that built it and produced 885-932 spurious "below default"
+                // entries per seed out of ~130000.
+                if (w.Tick % p.RefreshInterval == 1 && prevMass.Length > 0)
+                {
+                    int K = Math.Max(1, eng.ShopShortlistStride);
+                    var choices = eng.ShopChoices;
+                    double outU = Math.Log(Math.Max(1e-9,
+                        Math.Exp(-p.ThetaShopping * p.OutsideShopMinutes) * p.OutsideShopMass));
+                    foreach (var h in w.Households)
+                    {
+                        if (h.ExitedTick >= 0) continue;
+                        int at = h.Id * K;
+                        if (at + K > choices.Length || (uint)h.Id >= (uint)eng.ShopOrigin.Length) continue;
+                        // AssignWorkplaces runs inside the same RefreshTick and
+                        // BEFORE ChooseShops, so an unhoused household's origin
+                        // at choice time is a workplace assigned earlier in that
+                        // same tick and no end-of-tick snapshot can reconstruct
+                        // it — measured as 1-8 residual "violations" per seed,
+                        // all of them households with no home.
+                        int origin = eng.ShopOrigin[h.Id];
+                        double defaultU = outU + GumbelOf((ulong)h.Id * 2246822519UL + 7919UL);
+                        int was = (uint)h.Id < (uint)prevShop.Length ? prevShop[h.Id] : -1;
+                        for (int r = 0; r < K; r++)
+                        {
+                            int fi = choices[at + r];
+                            if (fi < 0 || (uint)fi >= (uint)prevMass.Length) continue;
+                            if (r > 0) shortlistFallbacks++;
+                            double mass = prevMass[fi];
+                            int fc = prevCluster[fi];
+                            if (mass <= 0 || (uint)fc >= (uint)acc.C) continue;
+                            double wgt = (origin >= 0 ? acc.WShop[origin, fc] : 1.0) * mass;
+                            if (wgt <= 1e-12) { belowDefault++; continue; }
+                            double u = Math.Log(wgt)
+                                + GumbelOf((ulong)h.Id * 2246822519UL + (ulong)fi * 40503UL + 13UL)
+                                + (fi == was ? p.ShopLoyalty : 0);
+                            if (u <= defaultU) belowDefault++;
+                        }
+                    }
+                }
+                if (prevShop.Length < w.Households.Count) prevShop = new int[w.Households.Count];
+                foreach (var h in w.Households)
+                    if ((uint)h.Id < (uint)prevShop.Length) prevShop[h.Id] = h.ShopFirm;
+                if (prevMass.Length < w.Firms.Count)
+                { prevMass = new double[w.Firms.Count]; prevCluster = new int[w.Firms.Count]; }
+                Array.Clear(prevMass, 0, prevMass.Length);
+                for (int i = 0; i < w.Firms.Count; i++)
+                {
+                    var f = w.Firms[i];
+                    if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) { prevCluster[i] = -1; continue; }
+                    var pl = w.Parcels[f.Parcel];
+                    prevMass[i] = f.JobSlots * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level);
+                    prevCluster[i] = pl.Cluster;
+                }
+            });
+            _ = sim;
+
+            // ---- ARM 2: the labor auction, where a door has a price ---------
+            // Shorter, for the same reason the Ward mutant arm is: the door
+            // posture is standing from the first clear, so this arm needs only
+            // enough run for the market to mature.
+            // The labor arm runs at a THIRD of the shipping service rate, on a
+            // smaller city. Both are stated rather than incidental.
+            //
+            // The rate: the ceiling leg is about door caps in the regime where
+            // the technology ceiling BINDS, i.e. where a shop's traffic per slot
+            // runs past what a slot can serve. At the shipping rate that regime
+            // is nearly empty on a healthy city — measured 0 qualifying
+            // door-ticks at 13x13/8000 and 0-52 at 11x11/4000 across seeds 0-25
+            // — and for a good reason: with a structural cap a shop bids for
+            // exactly the staff its traffic needs and gets it. A floor no
+            // fixture reliably produces is not a floor, so this arm puts the
+            // mechanism in its binding regime deliberately. The RELATION the leg
+            // asserts (cap ≤ perSlotCap × margin) holds at every rate; only the
+            // evidence for it depends on the regime.
+            //
+            // The size: the labor auction is the expensive fixture in this file,
+            // and the ceiling and starvation legs need doors, not population.
+            var pLabor = new EconParams
+                         { CommercialServicePerSlot = p.CommercialServicePerSlot / 3.0 };
+            long hiTrafficDoors = 0, ceilingViolations = 0;
+            double worstCeilingExcess = 0, worstCeilingCap = 0;
+            int starvedClean = 0, starvedMutant = 0;
+            // The ceiling must be recomputed from the state the SOLVE saw, not
+            // from the state at the end of the step: ConditionDecay runs inside
+            // the step, so a check-time recompute reads a condition one tick
+            // lower and every door then looks 0.3-0.4% over its ceiling
+            // (measured, 2-14 door-ticks per seed). Same snapshot discipline as
+            // the defaults leg.
+            double[] prevCap = Array.Empty<double>();
+            ShopFixture(seed, pLabor, 100, storeArm: true, laborAuction: true,
+                        cols: 11, rows: 11, households: 4000, perTick: s =>
+            {
+                var w = s.W; var a = s.Engine.Labor;
+                bool solved = a.D > 0 && w.Tick % pLabor.RefreshInterval == 1 && prevCap.Length > 0;
+                for (int d = 0; solved && d < a.D; d++)
+                {
+                    int fi = a.DoorFirm[d];
+                    if ((uint)fi >= (uint)w.Firms.Count || (uint)fi >= (uint)prevCap.Length) continue;
+                    var f = w.Firms[fi];
+                    if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                    double perSlotCap = prevCap[fi];
+                    if (perSlotCap <= 0) continue;
+                    // The high-traffic population: shops whose own observed
+                    // traffic per slot runs past what a slot can serve. The
+                    // revenue-EMA rule's cap grows with that traffic without
+                    // limit; the structural rule's cannot pass perSlotCap.
+                    if (f.PresentedEma <= perSlotCap * Math.Max(1, f.JobSlots)) continue;
+                    hiTrafficDoors++;
+                    double ceiling = perSlotCap * basketMargin;
+                    if (a.Cap[d] > ceiling + 1e-9)
+                    {
+                        ceilingViolations++;
+                        double ex = (a.Cap[d] - ceiling) / Math.Max(1e-9, ceiling);
+                        if (ex > worstCeilingExcess) { worstCeilingExcess = ex; worstCeilingCap = a.Cap[d]; }
+                    }
+                }
+                if (solved) starvedClean += StarvedDoors(w, a);
+                if (prevCap.Length < w.Firms.Count) prevCap = new double[w.Firms.Count];
+                Array.Clear(prevCap, 0, prevCap.Length);
+                for (int i = 0; i < w.Firms.Count; i++)
+                {
+                    var f = w.Firms[i];
+                    if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                    var pl = w.Parcels[f.Parcel];
+                    prevCap[i] = pLabor.CommercialServicePerSlot * Math.Max(0.2, pl.Condition)
+                                 * pLabor.Quality(pl.Level) / pLabor.Quality(1);
+                }
+            });
+
+            // The MUTANT ARM, the same shape the Ward refusal check uses and for
+            // the same reason: on a clean build the population this leg is about
+            // is nearly empty (0-2 firm-ticks per seed, measured) BECAUSE the
+            // mechanism works, so a clean arm alone would be vacuous. The mutant
+            // manufactures the state. Under it the door cap reads SERVED volume:
+            // a shop with no staff serves nothing, so it posts no door, so it
+            // never gets staff, so it never serves — permanently doorless, which
+            // is the spiral "presented, never served" exists to prevent.
+            try
+            {
+                LaborAuction.MutantServedCap = true;
+                ShopFixture(seed, pLabor, 100, storeArm: true, laborAuction: true,
+                            cols: 11, rows: 11, households: 4000, perTick: s =>
+                {
+                    if (s.W.Tick % pLabor.RefreshInterval == 1)
+                        starvedMutant += StarvedDoors(s.W, s.Engine.Labor);
+                });
+            }
+            finally { LaborAuction.MutantServedCap = false; }
+
+            double bindShare = firmTicks > 0 ? (double)bindTicks / firmTicks : 0;
+            Check("commercial takings are bounded by the staff the shop has, and the bound binds",
+                  boundViolations == 0 && bindTicks >= BindFloor && firmTicks > 2000,
+                  $"{firmTicks} commercial firm-ticks: {boundViolations} served above a capacity "
+                  + $"recomputed from WorkersFilled×cond×quality (worst excess {worstBoundExcess:E1}); "
+                  + $"the bound BOUND on {bindTicks} of them ({bindShare:P1}) vs floor {BindFloor} "
+                  + "(without this floor an inert mechanism passes)");
+
+            Check("a commercial door's cap is a technology ceiling, not an EMA of takings",
+                  ceilingViolations == 0 && hiTrafficDoors >= CeilingFloor,
+                  $"{hiTrafficDoors} door-ticks at shops whose traffic per slot runs past what a slot can "
+                  + $"serve, on an arm pinned to a third of the shipping service rate so that regime exists "
+                  + $"(floor {CeilingFloor}, or the leg asserts nothing): {ceilingViolations} posted a "
+                  + $"cap above perSlotCap×(1−BasketShare)"
+                  + (ceilingViolations > 0 ? $", worst {worstCeilingCap:F3} at +{worstCeilingExcess:P1}" : ""));
+
+            Check("a shop with no staff can still bid for staff — and MutantServedCap flips it red",
+                  starvedClean == 0 && starvedMutant >= StarveFloor,
+                  $"clean run: {starvedClean} staffless commercial firm-ticks posting no door at all; "
+                  + $"MutantServedCap run: {starvedMutant} (must be ≥ {StarveFloor} or the check is "
+                  + "vacuous — on a clean build this population is nearly empty because the mechanism "
+                  + "works, so the mutant arm is what makes the leg able to fail)");
+
+            Check("no household is offered a shop it ranks below its own out-of-town option",
+                  belowDefault == 0 && shortlistFallbacks > 0 && servedInLaterRounds > 0,
+                  $"{belowDefault} shortlist entries below the household's OWN realized outside utility, "
+                  + $"taste draw included (bound: exactly 0); {shortlistFallbacks} fallback entries offered "
+                  + $"and {servedInLaterRounds:F0} money served in rounds ≥ 1 — both must be > 0 or the leg "
+                  + "only tests the argmax, which beats the default by construction");
+
+            Check("store-level consumption conserves: what shops served plus what leaked is what households spent",
+                  worstMoneyRel < 1e-12 && moneyTicks > 100,
+                  $"worst |Σ_firms served + leaked − Σ_households spend| / spend = {worstMoneyRel:E1} "
+                  + $"over {moneyTicks} ticks (bound 1e-12; the two sides are separately accumulated — "
+                  + "the firms' own ServedThisTick against the household loop's own debit total)");
+        }
+
+        /// <summary>Staffless commercial firms posting no door at all, at the
+        /// solve that just ran. JobSlots ≥ 3 scopes this away from the slot
+        /// ROUNDING: a 1-slot shop's basic door is JobSlots × 0.7 = 0.7, which
+        /// the deterministic per-(firm,class) hash rounds to zero doors whatever
+        /// the firm would pay. Firms born during the step that just ran are
+        /// excluded — they did not exist at its solve. (perTick sees W.Tick
+        /// already incremented, hence w.Tick − 1.)</summary>
+        private static int StarvedDoors(WorldState w, LaborAuction a)
+        {
+            if (a.D <= 0) return 0;
+            var hasDoor = new HashSet<int>();
+            for (int d = 0; d < a.D; d++) hasDoor.Add(a.DoorFirm[d]);
+            int n = 0;
+            foreach (var f in w.Firms)
+            {
+                if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                if (f.JobSlots < 3 || f.WorkersFilled > 1e-9 || f.EnteredTick >= w.Tick - 1) continue;
+                if (!hasDoor.Contains(f.Id)) n++;
+            }
+            return n;
+        }
+
+        /// <summary>Gumbel(0,1) from the same stable hash the engine uses, so
+        /// the defaults leg re-derives each household's own taste draws rather
+        /// than reading them back out of the engine.</summary>
+        private static double GumbelOf(ulong key)
+        {
+            double e = SplitMix64.Hash01(key);
+            return -Math.Log(-Math.Log(Math.Min(1 - 1e-12, Math.Max(1e-12, e))));
+        }
+
+        /// <summary>The entry signal a developer reads is a COUNT of individual
+        /// shop intents, and it discriminates places the pooled field it
+        /// replaced structurally cannot.
+        ///
+        /// WHAT WAS WRONG. AccessState.PhantomCommercialCapture is
+        ///   Σ_i SpendMass[i] × wNew_i / (IncumbentShopWeight[i] + wNew_i),
+        /// and IncumbentShopWeight[i] is a citywide convolution over every
+        /// destination cluster. That expression IS the pooled allocation rule —
+        /// the mechanism StoreLevelSpending replaced — re-served as one
+        /// developer's forecast. On the store-level path the market that runs is
+        /// discrete: each household walks into ONE shop. So the forecast
+        /// predicts a market that does not exist, it promises every entrant a
+        /// share of the same money, and developers keep building shops the
+        /// discrete market cannot feed.
+        ///
+        /// FIVE LEGS. GUARD is a precondition for wiring the field into a bid at
+        /// all: the standing circularity guard asserts on a RESIDENTIAL parcel's
+        /// land rent and structurally cannot see a commercial-side leak.
+        /// DISCRIMINATION is the structural contrast, and it is the one property
+        /// the pooled field cannot have at any parameter setting — its
+        /// denominator keeps it strictly positive at every cluster, so it can
+        /// never tell a developer that nobody would come. CROWDING and LOCALITY
+        /// are the two response properties, each measured as a controlled
+        /// perturbation with the pooled field computed in the SAME run from the
+        /// SAME world, so the contrast is not two worlds that diverged for other
+        /// reasons. CALIBRATION is the leg with no identity behind it at all: it
+        /// relates the read at entry to takings that actually happened. THIN is
+        /// the #30 thin-market argument transposed.
+        ///
+        /// WHAT IS NOT ASSERTED, AND WHY. The design claimed the counted read
+        /// would fall MORE than the pooled read when a place gets crowded. It
+        /// does not, and the reason is structural rather than a tuning miss: a
+        /// household's taste for a new store at c (ε_hc) is independent of its
+        /// taste for the incumbent standing there, so a household that would
+        /// love a new shop at c keeps counting however large the incumbent
+        /// grows. Measured at 20× incumbent mass (seeds 0-1): counted falls
+        /// 12.1% and 38.9%, pooled falls 24.3% and 53.7%. So the leg asserts the
+        /// counted read falls, with a measured floor, and REPORTS the pooled
+        /// number instead of asserting an ordering the evidence contradicts.
+        ///
+        /// Every "small" bound is paired with a floor proving its population is
+        /// non-empty. Precedent in this file: the auction's leg 6a reached its
+        /// own revenue test 0 times out of 45 doors, and #30's own THIN leg
+        /// leaves worstThin at 0 when no cluster is thin.</summary>
+        private static void CountedShopIntents(ulong seed)
+        {
+            var p = new EconParams();
+
+            // CALIBRATION is recorded during the run: the read a developer would
+            // have had at a shop's cluster the tick it appeared, against what
+            // that shop actually took over its first ticks of trading.
+            var readAtBirth = new Dictionary<int, (double read, long born, double served, int ticks)>();
+            var sim = ShopFixture(seed, p, 320, storeArm: true, laborAuction: false, perTick: s =>
+            {
+                var w = s.W; var acc = s.Engine.Access;
+                foreach (var f in w.Firms)
+                {
+                    if (f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                    var pl = w.Parcels[f.Parcel];
+                    double mass = f.JobSlots * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level);
+                    if (!f.Dead && f.EnteredTick > 20 && !readAtBirth.ContainsKey(f.Id)
+                        && w.Tick - f.EnteredTick <= 1)
+                        readAtBirth[f.Id] = (acc.CommercialCapture(pl.Cluster, mass), f.EnteredTick, 0, 0);
+                    // Shops that later died stay in the sample. Dropping them
+                    // would keep only entrants the read got RIGHT, which is the
+                    // selection this leg exists to measure.
+                    if (readAtBirth.TryGetValue(f.Id, out var rec)
+                        && w.Tick - rec.born > 5 && w.Tick - rec.born <= 70 && !f.Dead)
+                        readAtBirth[f.Id] = (rec.read, rec.born, rec.served + f.ServedThisTick, rec.ticks + 1);
+                }
+            });
+            var W = sim.W; var eng = sim.Engine; var acc0 = eng.Access;
+            int C = acc0.C;
+
+            var ratios = new List<double>(); var weights = new List<double>();
+            foreach (var kv in readAtBirth)
+            {
+                var (read, _, served, ticks) = kv.Value;
+                if (ticks < 5 || read <= 1e-6) continue;
+                ratios.Add(served / ticks / read); weights.Add(read);
+            }
+            double calib = 0, wsum = 0;
+            for (int i = 0; i < ratios.Count; i++) { calib += ratios[i] * weights[i]; wsum += weights[i]; }
+            calib = wsum > 0 ? calib / wsum : 0;
+
+            // Every rebuild below starts from the SAME prior shop choices.
+            // ChooseShops is not idempotent — the loyalty bonus follows whatever
+            // was chosen last time — so running it twice in a row moves the field
+            // on its own, which read as 23-31 of 64 clusters "responding" to a
+            // perturbation that touches nothing the field reads.
+            var savedShop = new int[W.Households.Count];
+            var savedRent = new double[W.Households.Count];
+            foreach (var h in W.Households)
+                if ((uint)h.Id < (uint)savedShop.Length)
+                { savedShop[h.Id] = h.ShopFirm; savedRent[h.Id] = h.ChargedAssessment; }
+            void Rebuild()
+            {
+                foreach (var h in W.Households)
+                    if ((uint)h.Id < (uint)savedShop.Length) h.ShopFirm = savedShop[h.Id];
+                eng.RebuildShopSignals();
+            }
+
+            // ---- GUARD: no realized rent reaches the valuation field ---------
+            // The intent weight is income × (1 − the household's OWN rent share)
+            // × BaseConsumptionShare. Built instead from the realized spend of
+            // ConsumptionFlows — which nets ChargedAssessment — the entry field
+            // would be a function of the rents the assessment charged, which is
+            // the §3 circularity violation.
+            Rebuild();
+            var before = SnapshotIntents(acc0, C);
+            foreach (var h in W.Households)
+                if ((uint)h.Id < (uint)savedRent.Length) h.ChargedAssessment *= 17.5;
+            Rebuild();
+            var after = SnapshotIntents(acc0, C);
+            foreach (var h in W.Households)
+                if ((uint)h.Id < (uint)savedRent.Length) h.ChargedAssessment = savedRent[h.Id];
+            Rebuild();
+            long guardMoved = 0; int guardLive = 0;
+            for (int c = 0; c < C; c++)
+            {
+                if (before[c] > 1e-9) guardLive++;
+                if (before[c] != after[c]) guardMoved++;
+            }
+
+            // ---- DISCRIMINATION and THIN -------------------------------------
+            int silent = 0, pooledSilent = 0, thinClusters = 0, thinNonZero = 0;
+            for (int c = 0; c < C; c++)
+            {
+                if (acc0.CommercialCapture(c, 6.0) <= 1e-12)
+                {
+                    silent++;
+                    if (acc0.PhantomCommercialCapture(c, 6.0) <= 1e-12) pooledSilent++;
+                }
+                if (acc0.IntentHeadsFor(c, 6.0) >= p.IntentHeadFloor) continue;
+                thinClusters++;
+                if (acc0.CountedIntent(c, 6.0) > 1e-12) thinNonZero++;
+            }
+
+            // ---- CROWDING and LOCALITY ---------------------------------------
+            // ONE perturbation: twenty times the commercial mass at the cluster
+            // carrying the LARGEST counted read — the cluster a developer would
+            // actually build at. Picking the cluster with the most standing mass
+            // instead picks one whose counted read has already fallen to ~0,
+            // where no further fall is possible and the leg reads 0.0% on a
+            // correct build.
+            var hasShop = new bool[C];
+            foreach (var f in W.Firms)
+                if (!f.Dead && f.Sector == ZoneKind.Commercial && f.Parcel >= 0
+                    && (uint)W.Parcels[f.Parcel].Cluster < (uint)C)
+                    hasShop[W.Parcels[f.Parcel].Cluster] = true;
+            // Among clusters that HAVE a shop to enlarge. The largest counted
+            // read overall is typically at a cluster with no shop at all — which
+            // is the signal working — and scaling JobSlots there changes nothing,
+            // so the perturbation was a no-op and the leg read 0.0%.
+            // The FIVE largest reads among clusters that have a shop to
+            // enlarge, perturbed together and averaged. One site is too noisy a
+            // statistic: measured across seeds 0-25, a single site's read falls
+            // 0.0% on several of them — its counted money comes from households
+            // whose own best is set somewhere else entirely — and a floor a
+            // correct build fails is not a floor.
+            var cand = new List<int>();
+            for (int c = 0; c < C; c++) if (hasShop[c] && acc0.CountedIntent(c, 6.0) > 1e-9) cand.Add(c);
+            cand.Sort((x, y) => acc0.CountedIntent(y, 6.0).CompareTo(acc0.CountedIntent(x, 6.0)));
+            var sites = cand.GetRange(0, Math.Min(5, cand.Count));
+            int site = sites.Count > 0 ? sites[0] : 0;
+            double bestRead = sites.Count > 0 ? acc0.CountedIntent(site, 6.0) : 0;
+            var order = new List<int>();
+            for (int c = 0; c < C; c++)
+                if (!sites.Contains(c) && acc0.CountedIntent(c, 6.0) > 1e-9) order.Add(c);
+            order.Sort((x, y) => acc0.WShop[x, site].CompareTo(acc0.WShop[y, site]));
+            int farN = Math.Max(1, order.Count / 4);           // the farthest quartile, by shopping reach
+
+            var countedA = new double[C]; var pooledA = new double[C];
+            for (int c = 0; c < C; c++)
+            { countedA[c] = acc0.CountedIntent(c, 6.0); pooledA[c] = acc0.PhantomCommercialCapture(c, 6.0); }
+
+            var slotsSaved = new Dictionary<int, int>();
+            foreach (var f in W.Firms)
+            {
+                if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                if (!sites.Contains(W.Parcels[f.Parcel].Cluster)) continue;
+                slotsSaved[f.Id] = f.JobSlots; f.JobSlots *= 20;
+            }
+            acc0.Refresh(W, sim.Access, p, sim.Flags);
+            Rebuild();
+            var countedB = new double[C]; var pooledB = new double[C];
+            for (int c = 0; c < C; c++)
+            { countedB[c] = acc0.CountedIntent(c, 6.0); pooledB[c] = acc0.PhantomCommercialCapture(c, 6.0); }
+            foreach (var kv in slotsSaved) W.Firms[kv.Key].JobSlots = kv.Value;
+            acc0.Refresh(W, sim.Access, p, sim.Flags);
+            Rebuild();
+
+            double crowdCounted = 0, crowdPooled = 0;
+            foreach (int c in sites)
+            {
+                crowdCounted += countedA[c] > 1e-9 ? 1 - countedB[c] / countedA[c] : 0;
+                crowdPooled += pooledA[c] > 1e-9 ? 1 - pooledB[c] / pooledA[c] : 0;
+            }
+            if (sites.Count > 0) { crowdCounted /= sites.Count; crowdPooled /= sites.Count; }
+            double locCounted = 0, locPooled = 0;
+            for (int i = 0; i < farN; i++)
+            {
+                int c = order[i];
+                locCounted += Math.Abs(countedB[c] - countedA[c]) / Math.Max(1e-9, countedA[c]);
+                locPooled += Math.Abs(pooledB[c] - pooledA[c]) / Math.Max(1e-9, pooledA[c]);
+            }
+            locCounted /= farN; locPooled /= farN;
+            // Decay: the response at distance against the response at the site.
+            double decayCounted = crowdCounted > 1e-9 ? locCounted / crowdCounted : 1;
+            double decayPooled = crowdPooled > 1e-9 ? locPooled / crowdPooled : 1;
+
+            Check("the counted entry signal is blind to realized rent (commercial-side circularity guard)",
+                  guardMoved == 0 && guardLive >= GuardLiveFloor,
+                  $"{guardMoved} of {C} clusters' counted reads moved under a 17.5× perturbation of every "
+                  + $"household's ChargedAssessment (bound: exactly 0); {guardLive} clusters carry a "
+                  + $"non-zero read vs floor {GuardLiveFloor} — without that the comparison is 0 == 0");
+
+            Check("a thin cluster's counted intents are not a retail forecast",
+                  thinNonZero == 0 && thinClusters >= ThinFloor,
+                  $"{thinClusters} clusters whose read at the reference size rests on fewer than "
+                  + $"{p.IntentHeadFloor:F0} households (floor {ThinFloor} such clusters, or the leg asserts "
+                  + $"nothing): {thinNonZero} returned a non-zero read");
+
+            Check("the entry signal can say nobody would come; the pooled field it replaced cannot",
+                  silent >= SilentFloor && pooledSilent == 0,
+                  $"the counted read is zero at {silent} of {C} clusters (floor {SilentFloor}); the pooled "
+                  + $"field is zero at {pooledSilent} of them — it cannot be, at any parameter setting, "
+                  + "because its denominator keeps every cluster's share strictly positive. That is the "
+                  + "defect: it promises every entrant a slice of the same money");
+
+            Check("the counted entry signal falls when a place gets crowded",
+                  crowdCounted >= CrowdFloor && locPooled >= LocalityPooledFloor,
+                  $"20× commercial mass at the {sites.Count} largest-read clusters that have a shop to "
+                  + $"enlarge (top read {bestRead:F0}): their counted reads fall {crowdCounted:P1} on average "
+                  + $"vs floor {CrowdFloor:P0}. Over the farthest quartile of the remaining reading clusters "
+                  + $"({farN}) the "
+                  + $"same perturbation moves it {locCounted:P1}, i.e. {decayCounted:F2}× the response at "
+                  + $"the site. The pooled field in the SAME run: "
+                  + $"{crowdPooled:P1} at the site, {locPooled:P1} at distance ({decayPooled:F2}×, floor "
+                  + $"≥{LocalityPooledFloor:P1} on the distant move or the perturbation was inert). "
+                  + "The distance profile is REPORTED, not asserted: measured 0.48-2.09× across seeds 0-3, "
+                  + "so the counted read's response is NOT confined to the perturbed place. That is not a "
+                  + "defect — a household's own best alternative may be a shop anywhere, which is its own "
+                  + "information — but it means no locality ORDERING against the pooled field survives "
+                  + "measurement, and the design's claim that one would is retired here");
+
+            Check("the counted read at entry predicts what a new shop actually takes",
+                  ratios.Count >= CalibFloor && calib >= CalibLo && calib <= CalibHi,
+                  $"{ratios.Count} shops born mid-run with ≥5 ticks of trading (floor {CalibFloor}): "
+                  + $"evidence-weighted realized-takings ÷ counted-read-at-entry = {calib:F3} "
+                  + $"vs band [{CalibLo:F2}, {CalibHi:F2}]");
+        }
+
+        private static double[] SnapshotIntents(AccessState acc, int C)
+        {
+            var r = new double[C];
+            for (int c = 0; c < C; c++) r[c] = acc.CountedIntent(c, 6.0);
+            return r;
+        }
+
+        /// <summary>The two task #20 commerce checks alone across seeds — same
+        /// rationale as <see cref="Canary"/> (one fixture each, many seeds).
+        /// This is the instrument for every mutant demonstration in this item
+        /// and for the flip inventory it is a precondition of.</summary>
+        public static int ShopSweep(List<ulong> seeds)
+        {
+            Console.WriteLine($"shop sweep: {seeds.Count} seeds"
+                + (LaborAuction.MutantRevenueEmaCap ? " [MUTANT: revenue-EMA door cap]" : "")
+                + (LaborAuction.MutantUncappedUtil ? " [MUTANT: uncapped door util]" : "")
+                + (LaborAuction.MutantServedCap ? " [MUTANT: served-driven door cap]" : "")
+                + (AccessState.MutantPooledEntry ? " [MUTANT: pooled entry signal]" : "")
+                + (AccessState.MutantIntentUnsaturated ? " [MUTANT: unsaturated intent probe]" : ""));
+            var failed = new List<ulong>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var seed in seeds)
+            {
+                int before = Results.Count;
+                Console.WriteLine($"--- seed {seed}");
+                CommercialStaffing(seed);
+                CountedShopIntents(seed);
+                bool ok = Results.Count > before;
+                for (int i = before; i < Results.Count; i++) ok &= Results[i].pass;
+                if (!ok) failed.Add(seed);
+            }
+            Console.WriteLine($"shop sweep: {seeds.Count - failed.Count}/{seeds.Count} seeds pass "
+                + $"({sw.Elapsed.TotalSeconds:F0}s)"
+                + (failed.Count > 0 ? " — FAILED: " + string.Join(", ", failed) : ""));
+            return Math.Min(failed.Count, 100);
         }
 
         /// <summary>The labor-auction fixture: the auction-arm city with the

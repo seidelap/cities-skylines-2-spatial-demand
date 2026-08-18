@@ -168,7 +168,7 @@ namespace CS2Econ.Core
 
             AssignWorkplaces();
             }
-            if (Flags.StoreLevelSpending) ChooseShops();
+            if (Flags.StoreLevelSpending) { ChooseShops(); Access.CountShopIntents(W, P, _shopBestU); }
             if (Flags.HousingAuction) SolveHousingMarket();
 
             // Seekers = unhoused + sheltered now, EMA-smoothed (expected near-term demand).
@@ -337,7 +337,7 @@ namespace CS2Econ.Core
         /// lag).</summary>
         private void SolveLaborMarket()
         {
-            Labor.Solve(W, Access, Costs, Trade, P, _participants, _earnerFirm, _maxAdults);
+            Labor.Solve(W, Access, Costs, Trade, P, Flags, _participants, _earnerFirm, _maxAdults);
             foreach (var f in W.Firms) f.Members.Clear();
 
             // The base comp each firm's class door cleared at, snapshotted
@@ -671,9 +671,69 @@ namespace CS2Econ.Core
         /// The Layer-3 capture field (CaptureIncumbentPerMass) stays as it was:
         /// that is the expectation a PROSPECTIVE entrant forms about a location
         /// before it exists, which is legitimately an aggregate about a firm that
-        /// has no customers yet. Realized takings are these households.</summary>
+        /// has no customers yet. Realized takings are these households.
+        ///
+        /// Each household also keeps a SHORTLIST — the top ShopShortlist shops
+        /// it ranks above its own out-of-town option, best first — so a shop
+        /// that cannot serve it (task #20 capacity) hands it back to its own
+        /// next-best choice rather than straight out of town.</summary>
+        /// <summary>Engine-owned flat shortlist, households × ShopShortlist,
+        /// best first. Entry −1 means "no shop here"; a household created since
+        /// the last refresh has a whole row of −1 and leaks its basket, which is
+        /// what Household.ShopFirm = −1 already meant.</summary>
+        private int[] _shopChoices = Array.Empty<int>();
+        private double[] _shopBestU = Array.Empty<double>();
+        private double[] _shopRemaining = Array.Empty<double>();
+        private readonly List<int> _shopActive = new List<int>();
+        private double[] _shopTopU = Array.Empty<double>();
+        private int[] _shopTopF = Array.Empty<int>();
+        private int _shopK;
+
+        /// <summary>Each household's own REALIZED utility of what it settled
+        /// for — its chosen shop or the out-of-town option, taste draw included.
+        /// What CountShopIntents compares a hypothetical shop against. Exposed
+        /// for the harness's probes and checks, which rebuild the counted read
+        /// independently of the engine's histogram.</summary>
+        public double[] ShopBestUtility => _shopBestU;
+        /// <summary>Shortlist stride and the flat shortlist itself, for the
+        /// harness's defaults-rule leg: it re-derives every household's own
+        /// realized outside utility and asserts nobody was served below it.</summary>
+        public int ShopShortlistStride => _shopK;
+        public int[] ShopChoices => _shopChoices;
+        /// <summary>Each household's shopping ORIGIN cluster as of the last
+        /// ChooseShops, or −1. Exposed because it cannot be reconstructed from
+        /// outside: AssignWorkplaces runs inside the same RefreshTick, BEFORE
+        /// ChooseShops, so an unhoused household's origin at choice time is a
+        /// workplace assigned earlier in the same tick and no end-of-tick
+        /// snapshot can see it. It is an input the shortlist was built from, not
+        /// a verdict about the shortlist.</summary>
+        public int[] ShopOrigin => _shopOrigin;
+        private int[] _shopOrigin = Array.Empty<int>();
+        /// <summary>Money served in each rationing round this tick. Round 0 is
+        /// the household's own chosen shop; anything in a later round is a
+        /// household improving on its default at its own next-best shop, and a
+        /// check asserting the shortlist never places anyone BELOW their default
+        /// is vacuous unless these are nonzero.</summary>
+        public double[] ShopServedByRound = Array.Empty<double>();
+        /// <summary>Per-tick consumption totals, recorded at the end of
+        /// ConsumptionFlows: what households were debited, and the two
+        /// destinations. The firm-side record (Firm.ServedThisTick) is
+        /// accumulated separately, so the two can be compared.</summary>
+        public double ConsumptionSpendThisTick, ConsumptionCapturedThisTick, ConsumptionLeakedThisTick;
+
+        /// <summary>Rounds of rationing, clamped to the shortlist depth.</summary>
+        private int ShopRounds => Math.Max(1, Math.Min(P.ShopRationingRounds, Math.Max(1, P.ShopShortlist)));
+
         private void ChooseShops()
         {
+            int K = Math.Max(1, P.ShopShortlist);
+            _shopK = K;
+            int need = W.Households.Count * K;
+            if (_shopChoices.Length < need) { _shopChoices = new int[need]; }
+            Array.Fill(_shopChoices, -1);
+            if (_shopBestU.Length < W.Households.Count) _shopBestU = new double[W.Households.Count];
+            if (_shopOrigin.Length < W.Households.Count) _shopOrigin = new int[W.Households.Count];
+            if (_shopTopU.Length != K) { _shopTopU = new double[K]; _shopTopF = new int[K]; }
             // Candidate shops, with the mass each offers a shopper.
             var idx = new List<int>(); var mass = new List<double>(); var cl = new List<int>();
             for (int i = 0; i < W.Firms.Count; i++)
@@ -694,7 +754,7 @@ namespace CS2Econ.Core
 
             foreach (var h in W.Households)
             {
-                if (h.ExitedTick >= 0) { h.ShopFirm = -1; continue; }
+                if (h.ExitedTick >= 0) { h.ShopFirm = -1; _shopOrigin[h.Id] = -1; continue; }
                 // Shopping origin: home, or the workplace for a household that
                 // has not found housing yet. An unhoused household still eats,
                 // and it is in the city — sending it home-less straight to the
@@ -706,9 +766,22 @@ namespace CS2Econ.Core
                 int origin = h.HomeParcel >= 0 ? W.Parcels[h.HomeParcel].Cluster
                            : h.WorkplaceParcel >= 0 ? W.Parcels[h.WorkplaceParcel].Cluster : -1;
                 if ((uint)origin >= (uint)Access.C) origin = -1;
+                _shopOrigin[h.Id] = origin;
 
-                double bestU = outU + Gumbel((ulong)h.Id * 2246822519UL + 7919UL);
+                // THIS household's own realized value of its own default — the
+                // out-of-town option INCLUDING its permanent taste for it. Every
+                // shop on the shortlist must beat this, not the bare systematic
+                // outU: a household with a large positive outside draw would
+                // otherwise be handed, in a rationing round, a shop it ranks
+                // BELOW its own default. The mechanism may only improve on each
+                // individual's default.
+                double defaultU = outU + Gumbel((ulong)h.Id * 2246822519UL + 7919UL);
+                int prevShop = h.ShopFirm;
+                double bestU = defaultU;
                 int best = -1;
+                // Top-K by utility, best first, ties to the lower firm id. K is
+                // 3 by default, so an insertion is a handful of compares.
+                for (int r = 0; r < K; r++) { _shopTopU[r] = double.NegativeInfinity; _shopTopF[r] = -1; }
                 for (int j = 0; j < idx.Count; j++)
                 {
                     double w = (origin >= 0 ? Access.WShop[origin, cl[j]] : 1.0) * mass[j];
@@ -722,11 +795,63 @@ namespace CS2Econ.Core
                     // the goods market down with them — measured as extractors
                     // mis-siting on 2 of 6 seeds through the price signal they
                     // read at entry.
-                    if (idx[j] == h.ShopFirm) u += P.ShopLoyalty;
+                    if (idx[j] == prevShop) u += P.ShopLoyalty;
                     if (u > bestU) { bestU = u; best = idx[j]; }
+                    if (u <= defaultU) continue;   // below its own default: never shortlisted
+                    for (int r = 0; r < K; r++)
+                    {
+                        if (u <= _shopTopU[r] && !(u == _shopTopU[r] && idx[j] < _shopTopF[r])) continue;
+                        for (int q = K - 1; q > r; q--) { _shopTopU[q] = _shopTopU[q - 1]; _shopTopF[q] = _shopTopF[q - 1]; }
+                        _shopTopU[r] = u; _shopTopF[r] = idx[j];
+                        break;
+                    }
                 }
                 h.ShopFirm = best;
+                // Position 0 is the argmax (the head of the list is
+                // Household.ShopFirm, so the loyalty term and the closed-shop
+                // reset in ConsumptionFlows keep working unchanged); positions
+                // 1.. are the fallbacks a rationing round may reach.
+                int at = h.Id * K;
+                for (int r = 0; r < K; r++) _shopChoices[at + r] = _shopTopF[r];
+                // What this household actually GETS: the shop it picked or the
+                // out-of-town option, including its own permanent taste for
+                // whichever won. This is the counted-intent probe's threshold —
+                // the household's own realized default, the same object the
+                // shortlist is cut against, so a counted intent means "this
+                // person would really switch" and not "this person would switch
+                // if nobody had tastes".
+                //
+                // The hypothetical shop is given its OWN draw on the other side
+                // (AccessState.CountShopIntents), so both sides carry one.
+                // Measured, `shopprobe --seeds 2 --service 1e9` at task #20,
+                // against realized presented per filled slot of 33.3–46.9:
+                //  - threshold = the SYSTEMATIC utility of the household's
+                //    taste-argmax choice, hypothetical with no draw: read 155.9
+                //    per filled slot, a 4.7× over-count — it counts switchers
+                //    who would not switch;
+                //  - threshold = realized bestU, hypothetical with no draw:
+                //    read 0.00 at every cluster, the signal dead — it asks the
+                //    newcomer to beat the max of ~130 draws with none of its own;
+                //  - both sides systematic: read 0.00 at p90, max 66.2 — with
+                //    ~130 similar shops standing, almost nobody's best on size
+                //    and distance alone is one more mass-6 store.
+                // Only the both-sides-drawn comparison is symmetric, and it is
+                // the one this repo already blesses: a count of individual
+                // argmaxes, each with that individual's own permanent taste.
+                _shopBestU[h.Id] = bestU;
             }
+        }
+
+        /// <summary>Re-derive the shop choices and the counted-intent field
+        /// without running a tick. Exposed for the same reason
+        /// AccessState.RebuildDemandShares is: a check must be able to perturb
+        /// ONE input — a cluster's commercial mass, a household's charged
+        /// assessment — and re-read the field, instead of stepping a whole tick
+        /// and comparing two worlds that have diverged for other reasons.</summary>
+        public void RebuildShopSignals()
+        {
+            ChooseShops();
+            Access.CountShopIntents(W, P, _shopBestU);
         }
 
         /// <summary>Gumbel(0,1) from a stable hash — the same inverse-CDF trick
@@ -1024,12 +1149,33 @@ namespace CS2Econ.Core
             // Spending = share of income after taxes-and-housing. Where it lands
             // depends on FeatureFlags.StoreLevelSpending: at each household's own
             // chosen shop, or pooled and handed back out pro-rata (see the flag).
-            double totalCaptured = 0, totalLeaked = 0;
+            double totalCaptured = 0, totalLeaked = 0, totalSpend = 0;
             double wOutside = Math.Exp(-P.ThetaShopping * P.OutsideShopMinutes) * P.OutsideShopMass;
             bool perStore = Flags.StoreLevelSpending;
             if (perStore)
+            {
+                if (_shopRemaining.Length < W.Households.Count) _shopRemaining = new double[W.Households.Count];
+                _shopActive.Clear();
                 foreach (var f in W.Firms)
-                    if (!f.Dead && f.Sector == ZoneKind.Commercial) f.RevenueThisTick = 0;
+                {
+                    // Dead firms have their per-tick scratch cleared too. A firm
+                    // that dies keeps whatever it last served forever otherwise,
+                    // and anything summing the sector's takings then double-counts
+                    // every shop that ever closed — measured as a 7.8E-2 to
+                    // 1.6E-1 gap against what households were debited.
+                    if (f.Sector != ZoneKind.Commercial) continue;
+                    f.RevenueThisTick = 0; f.PresentedThisTick = 0; f.ServedThisTick = 0;
+                    if (f.Dead) { f.RemainingCapacity = 0; continue; }
+                    // What this shop can SERVE this tick: its own technology at
+                    // its own building, times the staff it actually has. The
+                    // same linear-in-labor form the other three sectors use
+                    // (ProductionAndTrade); commercial was the only hole, which
+                    // is why the labor auction had to cap its doors with an EMA
+                    // of realized takings instead of a marginal product.
+                    f.RemainingCapacity = f.Parcel >= 0
+                        ? CommercialServiceCapacity(f, W.Parcels[f.Parcel], P) : 0;
+                }
+            }
 
             foreach (var h in W.Households)
             {
@@ -1041,6 +1187,7 @@ namespace CS2Econ.Core
                 double spend = Math.Min(h.Money, P.BaseConsumptionShare * disposable * cut);
                 if (spend <= 0) continue;
                 h.Money -= spend;
+                totalSpend += spend;
 
                 if (!perStore)
                 {
@@ -1052,19 +1199,21 @@ namespace CS2Econ.Core
                     continue;
                 }
 
-                // Its own shop takes the whole basket, or it goes out of town.
-                Firm? shop = null;
+                // Its own shop serves what it can, then this household's own
+                // next-best shop, then out of town. The rounds are run after
+                // this loop so the pro-rata ratio is computed from totals before
+                // anyone is served — nobody loses a basket to whoever had a
+                // lower household id.
                 if ((uint)h.ShopFirm < (uint)W.Firms.Count)
                 {
                     var cand = W.Firms[h.ShopFirm];
-                    if (!cand.Dead && cand.Sector == ZoneKind.Commercial && cand.Parcel >= 0) shop = cand;
-                    else h.ShopFirm = -1;      // it closed; re-picked next refresh
+                    if (cand.Dead || cand.Sector != ZoneKind.Commercial || cand.Parcel < 0)
+                        h.ShopFirm = -1;      // it closed; re-picked next refresh
                 }
-                if (shop == null) { totalLeaked += spend; continue; }
-                shop.Money += spend;
-                shop.RevenueThisTick += spend;
-                totalCaptured += spend;
+                _shopRemaining[h.Id] = spend;
+                _shopActive.Add(h.Id);
             }
+            if (perStore) RationShopping(ref totalCaptured, ref totalLeaked);
 
             if (!perStore)
             {
@@ -1090,8 +1239,122 @@ namespace CS2Econ.Core
                         f.RevenueThisTick = totalCaptured * share;
                     }
             }
+            ConsumptionSpendThisTick = totalSpend;
+            ConsumptionCapturedThisTick = totalCaptured;
+            ConsumptionLeakedThisTick = totalLeaked;
             W.Ledger.Transfer(Account.Households, Account.OutsideWorld, totalLeaked);
             W.Ledger.Transfer(Account.Households, Account.Firms, totalCaptured);
+        }
+
+        /// <summary>What a commercial firm can serve this tick: its own
+        /// technology (CommercialServicePerSlot) applied to its own roster
+        /// (WorkersFilled, recomputed each tick by FillFirm from the real people
+        /// placed there) at its own building (condition, level quality). Every
+        /// term is a fact about this firm; nothing about other shops, the sector
+        /// or the city enters. Units of Res.Services, which sits at the numeraire
+        /// anchor 1.0, so this is money of sales per tick.</summary>
+        public static double CommercialServiceCapacity(Firm f, Parcel pl, EconParams p)
+            => p.CommercialServicePerSlot * f.WorkersFilled
+               * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level) / p.Quality(1);
+
+        /// <summary>Rationing: what happens to custom a shop cannot serve.
+        ///
+        /// Each round, every household with money left presents it at the shop
+        /// sitting at that position on its OWN shortlist; each shop then serves
+        /// pro-rata to what it can. Pro-rata WITHIN a round is what keeps this
+        /// free of the defect the housing auction exists to prevent — the ratio
+        /// is computed from round totals before anyone is served, so nobody
+        /// loses a basket to whoever had a lower household id. WHICH of a full
+        /// shop's customers gets served is below this mechanism's resolution,
+        /// exactly as within-cluster pro-rata is the goods statistic's grain.
+        ///
+        /// Rank priority across rounds IS an allocation rule and is stated
+        /// rather than hidden: a shop serves its first-choice customers before
+        /// another household's second choice, because round 0 runs first. It is
+        /// order-free in household id, which is the property that matters.
+        ///
+        /// Households never learn a shop was full. The shopping logit gains no
+        /// congestion term: a congestion field computed by the system and read
+        /// inside an individual's choice is the shape the charter forbids. The
+        /// legitimate version is the household's OWN experience of being
+        /// rationed, and it is not added speculatively — anything that slows
+        /// catchment adjustment has measured form here (staggered review took
+        /// commercial deaths 217 → 680).</summary>
+        private void RationShopping(ref double totalCaptured, ref double totalLeaked)
+        {
+            int K = ShopRounds, S = Math.Max(1, _shopK);
+            if (ShopServedByRound.Length != K) ShopServedByRound = new double[K];
+            Array.Clear(ShopServedByRound, 0, K);
+            for (int r = 0; r < K; r++)
+            {
+                foreach (var f in W.Firms)
+                    if (!f.Dead && f.Sector == ZoneKind.Commercial) f.RoundPresented = 0;
+                // Pass 1: who shows up at whose door this round.
+                foreach (int hid in _shopActive)
+                {
+                    double rem = _shopRemaining[hid];
+                    if (rem <= 0) continue;
+                    var shop = ShortlistShop(hid, r, S);
+                    if (shop == null) continue;
+                    shop.RoundPresented += rem;
+                    shop.PresentedThisTick += rem;
+                }
+                // Pass 2: each shop's ratio, from THIS round's totals, fixed
+                // BEFORE anybody is served. That is the whole point of pro-rata
+                // and it has to be a separate pass: recomputing the ratio per
+                // customer against a capacity that is already being drawn down
+                // makes the split order-dependent — the household the loop
+                // reaches last gets a smaller share than the one it reached
+                // first, which is the defect the housing auction exists to
+                // prevent, and it leaves the shop short of its own capacity
+                // (measured: served peaked at 0.9985 of capacity where 1.0 was
+                // available). It also masked a capacity mutant: at 1.5x capacity
+                // the bound leg still read zero violations.
+                //
+                // RoundPresented, not PresentedThisTick: the latter is the
+                // tick-cumulative figure the labor cap consumes, and dividing
+                // capacity by it would under-serve every round after the first.
+                foreach (var f in W.Firms)
+                    if (!f.Dead && f.Sector == ZoneKind.Commercial)
+                        f.RoundRatio = f.RoundPresented <= 0 || f.RemainingCapacity >= f.RoundPresented
+                                       ? 1.0 : f.RemainingCapacity / f.RoundPresented;
+                // Pass 3: serve.
+                foreach (int hid in _shopActive)
+                {
+                    double rem = _shopRemaining[hid];
+                    if (rem <= 0) continue;
+                    var shop = ShortlistShop(hid, r, S);
+                    if (shop == null) continue;
+                    double ratio = shop.RoundRatio;
+                    // One double, five uses. Never credit a shop from a
+                    // separately-computed aggregate (ratio × presented): that is
+                    // where a rounding residue would strand, and the shop's
+                    // takings are meant to be literally the sum of its own
+                    // customers' money.
+                    double served = Math.Min(rem * ratio, shop.RemainingCapacity);
+                    if (served <= 0) continue;
+                    shop.Money += served;
+                    shop.RevenueThisTick += served;
+                    shop.ServedThisTick += served;
+                    shop.RemainingCapacity -= served;
+                    _shopRemaining[hid] -= served;
+                    totalCaptured += served;
+                    ShopServedByRound[r] += served;
+                }
+            }
+            // Whatever no shop on this household's own shortlist could serve
+            // takes the household's own default: the out-of-town option.
+            foreach (int hid in _shopActive) totalLeaked += _shopRemaining[hid];
+        }
+
+        private Firm? ShortlistShop(int hid, int rank, int stride)
+        {
+            int fi = rank == 0 ? W.Households[hid].ShopFirm
+                   : (uint)(hid * stride + rank) < (uint)_shopChoices.Length
+                     ? _shopChoices[hid * stride + rank] : -1;
+            if ((uint)fi >= (uint)W.Firms.Count) return null;
+            var f = W.Firms[fi];
+            return !f.Dead && f.Sector == ZoneKind.Commercial && f.Parcel >= 0 ? f : null;
         }
 
         private void HousingPayments()
@@ -1377,6 +1640,17 @@ namespace CS2Econ.Core
                     RouteLandCharge(pl, pay - sPaid - structPaid, fromFirm: true);
                 }
                 f.ProfitEma = MathUtil.Ema(f.ProfitEma, f.RevenueThisTick, 0.05);
+                if (Flags.StoreLevelSpending && f.Sector == ZoneKind.Commercial)
+                {
+                    // Rate inherited from ProfitEma's 0.05 — no new parameter.
+                    // The FIRST strictly-positive observation seeds the EMA
+                    // instead of being averaged against a zero history the firm
+                    // never lived (Firm.PresentedObserved records why).
+                    f.PresentedEma = f.PresentedObserved
+                        ? MathUtil.Ema(f.PresentedEma, f.PresentedThisTick, 0.05)
+                        : f.PresentedThisTick;
+                    if (f.PresentedThisTick > 0) f.PresentedObserved = true;
+                }
                 f.RevenueThisTick = 0; f.OutputThisTick = 0;
 
                 // Worker-collective distribution: surplus above the working

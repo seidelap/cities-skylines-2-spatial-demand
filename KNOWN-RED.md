@@ -11,7 +11,7 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (41 checks)
+## verify (51 checks)
 
 29 at the per-cluster prospect-odds commit (28 plus prospect-local-odds;
 seeds 0–7 and 25 measured 29/29 there, canary 39/39) plus the three
@@ -196,18 +196,66 @@ seed 25, canary 39/39, laborcanary 39/39, fingerprint lanes unmoved (no
 new stanza). The occupancy row below now carries the 57-seed `occsweep`
 inventory the previous row said had not been run.
 
+The 36th to 45th are the task #20 commerce legs — five in the commercial-staffing
+fixture (capacity bound + its binding floor, the door-cap technology ceiling,
+staffless-shop bidding with its embedded MutantServedCap arm, the defaults rule,
+and store-level money conservation) and five in the counted-shop-intents fixture
+(the commercial-side circularity guard, thin evidence, discrimination against the
+pooled field, the crowding response, and calibration against realized takings),
+added at the real-staffing commit. `shopsweep` runs both fixtures
+alone across seeds; `shopprobe` is the census every bound in them was set from.
+They are the first assertions in this suite that name the commercial sector at
+all — measured at the start of that item, `grep -c Commercial TestRunner.cs`
+read **0**, with no occurrence of "shop", "retail" or "capture" either, against
+26 for "residential". At that commit: verify **45/45** on seeds 1, 9 and 13 and
+**44/45** on seed 25 (the standing occupancy red, unchanged leg and unchanged
+numbers — FillEma worst err 0.663, price leg responding 2.333 → 0.534), canary
+39/39, laborcanary 39/39, goodssweep 7/7, and `fingerprint --check` all lanes
+matching with no accept. Cost: the two fixtures add ~50 s per seed to a suite
+the labor round measured at ~120 s. That is the price of testing a fifth
+mechanism, stated the way the labor fixture's was.
+
+**THE STORE-LEVEL FLAG DID NOT FLIP, AND THE BLOCKER IS MEASURED.**
+`FeatureFlags.StoreLevelSpending` still ships FALSE. Task #20 landed both
+mechanisms the flag's own doc comment was waiting on — commercial production
+became linear in the staff the shop has, and the pooled phantom-entrant entry
+field was replaced on that path by counted individual shop intents — and the
+census gap narrowed without closing: on the store-level path commercial firms
+alive **98.0 → 103.5** and commercial-parcel vacancy **42% → 39%**
+(`shopprobe --seeds 4`, 300 ticks, against `firmdiag` at 58cab48 on the same
+seeds), against a pooled path this item leaves BIT-IDENTICAL at 130.2 alive and
+26% vacancy. It was not free: commercial deaths rose **44.2 → 77.5**,
+concentrated entirely in entry — **141 of 161** shops born mid-run die within 40
+ticks against **0 of 48** on the pooled path. That is a NEW measured fact about
+this path and it is the first thing the inventory has to classify. The flip decision was not taken on that number. It was not taken
+because a flip inventory classifies changed verdicts, and until this commit
+nothing in the suite could see a commercial verdict change at all — every one
+would have classified as "unchanged by construction". WHAT WOULD UNBLOCK IT,
+in order: (1) the two new checks green across the 26-seed `shopsweep` on the ON
+arm, (2) `webersweep` on the ON arm no worse than the OFF arm's record on the
+same seeds — the flag comment's own stated blocker, still unmeasured on the ON
+arm here, (3) the census gap closed or explained per number rather than as one
+band over two numbers that move in opposite directions, (4) both canaries 39/39
+on the ON arm, (5) ledger conservation and per-sector reconciliation exact on
+both arms with a pooled arm added to those checks, (6) the mechanical pins:
+`--pooled`, `vanillaMode`, flags-off smoke, the occupancy pin, a pooled
+fingerprint arm.
+
 **AT THE TWO-TRACK MERGE** (housing: outside-access anchor, per-cluster ties
 and calibration, owner doors; goods: the Weber investigation, per-cluster goods
-prices and its fix round) the registry's rows are re-derived from runs on the
-MERGED tree, because neither branch's rows could be textually correct about the
-combination — each track healed reds the other left standing, and one red exists
-only in the combination. Measured here: verify **41 checks**; seed 1 40/41, seed
-9 41/41, seed 13 40/41 (the two rows below; the fingerprint red at merge time is
-the expected lane move, accepted in this commit). `canary` 39/39 and
-`laborcanary` 39/39 — both markets' equilibrium guarantees survive the union
-untouched. `webersweep` 24/26 (red 0, 5 — both on the diversity leg) against 13
-red at the flip. `occsweep --seeds 50` 51/57. The per-branch numbers each row
-retains are kept for ATTRIBUTION, not as current state.
+prices and its fix round, commerce) the registry's rows are re-derived from runs
+on the MERGED tree, because neither branch's rows could be textually correct
+about the combination — each track healed reds the other left standing, and one
+red exists only in the combination. Measured at the campaign's final tree:
+verify **51 checks** — seed 9 **51/51** (a seed that carried a standing red
+since before the auction era), seed 1 50/51 and seed 13 50/51, both on the rows
+below. `canary` 39/39 and `laborcanary` 39/39: both markets' equilibrium
+guarantees survive the union untouched. `webersweep` 24/26 (red 0, 5 — both on
+the diversity leg) against 13 red at the flip. `occsweep --seeds 50` 51/57.
+`fingerprint --check` all lanes match at the commerce merge with no accept,
+which is the flag-gating of task #20 measured rather than asserted. The
+per-branch numbers each row retains are kept for ATTRIBUTION, not as current
+state.
 
 | Seed | Check | Status | Attribution |
 |---|---|---|---|
