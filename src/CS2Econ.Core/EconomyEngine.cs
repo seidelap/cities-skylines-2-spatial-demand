@@ -50,6 +50,14 @@ namespace CS2Econ.Core
         /// <summary>Firms that moved to land they could carry rather than
         /// exiting — the firm side of the household pipeline's SortDown stage.</summary>
         public int FirmRelocationsTotal;
+        /// <summary>Live firms observed holding no site, and how each of them
+        /// resolved. Counted where the outcome is decided, so
+        /// Displaced == Resited + Exits holds by construction every tick and a
+        /// firm that reached NO outcome is the difference — which is exactly
+        /// what the defect looked like before there was a pass to see it.</summary>
+        public int FirmDisplacedSeenTotal;
+        public int FirmDisplacedResitedTotal;
+        public int FirmDisplacedExitsTotal;
 
         /// <summary>MUTANT SWITCH: restores office and extractor production
         /// WITHOUT the level and condition terms their assessment prices them
@@ -59,6 +67,24 @@ namespace CS2Econ.Core
         /// land charge — the firm keeps the parcel however long it fails to
         /// pay. Never a shipping mode.</summary>
         public static bool MutantForgiveFirmArrears;
+        /// <summary>MUTANT SWITCH: restores the state this codebase shipped
+        /// before ResolveDisplacedFirms — a firm that loses its site reaches no
+        /// outcome at all. Every firm loop in the engine is guarded by
+        /// `f.Dead || f.Parcel &lt; 0`, so such a firm produces nothing, hires
+        /// nobody, owes no land charge and — because the exit block itself sits
+        /// inside one of those loops — cannot even go bankrupt, while its money
+        /// stays on the books forever. Never a shipping mode.</summary>
+        public static bool MutantDisplacedFirmNoExit;
+        /// <summary>MUTANT SWITCH: DisplaceFirm unlinks only the PARCEL's side
+        /// of the pointer and leaves the firm still naming the site. This is
+        /// not a hypothetical — it is the exact shape EconReader.SyncParcels
+        /// shipped when a building despawned under a company: the parcel went
+        /// Empty with Units == 0 and OccupantFirm == -1, while the firm went on
+        /// naming it. That firm is NOT siteless, so the displacement pass never
+        /// sees it; it reads a demolished ruin, owes a levy on zero units, and
+        /// the parcel is meanwhile free to be re-let to somebody else. Never a
+        /// shipping mode.</summary>
+        public static bool MutantHalfUnlinkDisplacement;
         /// <summary>(tick, household, reason): reason 0 = voluntary cost-driven
         /// relocation within the city, 1 = insolvency-pipeline emigration.</summary>
         public readonly List<(long tick, int household, int reason)> DisplacementExits
@@ -1667,6 +1693,10 @@ namespace CS2Econ.Core
 
         private void FirmLifecycle()
         {
+            // A firm that holds no site is resolved BEFORE the loop below,
+            // because the loop below is one of the many that cannot see it.
+            ResolveDisplacedFirms();
+
             // Firm assessments + profit tracking + bankruptcy + entry.
             foreach (var f in W.Firms)
             {
@@ -1853,15 +1883,21 @@ namespace CS2Econ.Core
         /// Cheaper land genuinely exists for firms for the same reason it does
         /// for households: the charge is per parcel and the assessment varies by
         /// cluster (measured, parityprobe seed 1: vacant office land ran from a
-        /// bill of 94.5 to 441 against 480 at the occupied median).</summary>
-        private bool RelocateFirm(Firm f, Parcel from)
+        /// bill of 94.5 to 441 against 480 at the occupied median).
+        ///
+        /// `from` is null for a firm that holds no site. Then the value to beat
+        /// is not a site's arithmetic but ZERO — the firm's default once it has
+        /// been displaced is to leave, and a site only holds it if the firm's
+        /// own forecast there beats leaving. That is the same rule with a
+        /// different incumbent, not a second mechanism.</summary>
+        private bool RelocateFirm(Firm f, Parcel? from)
         {
             double BidAt(Parcel q) => LandAccounting.FirmBidPerSlot(
                     Access, Trade, q.Cluster, q.Use, q.Level, P, out _, W.Clusters)
                 * P.CondFactor(q.Condition) * q.Units
                 - LandAccounting.UnitAssessment(q, P) * q.Units;
 
-            double here = BidAt(from);
+            double here = from != null ? BidAt(from) : 0.0;
             Parcel? best = null; double bestV = here;
             foreach (var q in W.Parcels)
             {
@@ -1871,12 +1907,95 @@ namespace CS2Econ.Core
                 if (v > bestV) { bestV = v; best = q; }
             }
             if (best == null || bestV <= 0) return false;
-            from.OccupantFirm = -1;
+            if (from != null) from.OccupantFirm = -1;
             best.OccupantFirm = f.Id;
             f.Parcel = best.Id;
             f.JobSlots = best.Units;
             FirmRelocationsTotal++;
             return true;
+        }
+
+        /// <summary>Take a live firm's site away. THE single entry point for
+        /// displacement, so that every producer of it — the reader when the
+        /// game demolishes or unlinks a building underneath a company, and the
+        /// non-residential site market when a firm is outbid — leaves the world
+        /// in one state that ResolveDisplacedFirms knows how to finish. The
+        /// firm and the parcel are unlinked TOGETHER: half-unlinking is the
+        /// shape the defect took (EconReader.SyncParcels cleared the parcel's
+        /// OccupantFirm on a demolished building and left the firm pointing at
+        /// it, so the firm went on reading a Units == 0 ruin and owed nothing on
+        /// it, forever).</summary>
+        public bool DisplaceFirm(Firm f)
+        {
+            if (f.Dead || f.Parcel < 0) return false;
+            var pl = W.Parcels[f.Parcel];
+            if (pl.OccupantFirm == f.Id) pl.OccupantFirm = -1;
+            if (MutantHalfUnlinkDisplacement) return true;   // firm keeps naming the site
+            f.Parcel = -1;
+            return true;
+        }
+
+        /// <summary>DISPLACEMENT: every live firm holding no site reaches a
+        /// stated outcome, in the tick it loses one.
+        ///
+        /// This exists because "no outcome" was previously indistinguishable
+        /// from "no such firm". Every firm loop in the engine opens
+        /// `if (f.Dead || f.Parcel &lt; 0) continue;` — Access.cs:467,
+        /// EconomyEngine.cs:770/903/1021/1035/1110/1238/1256/1263/1385/1481/1617/1673,
+        /// LaborAuction.cs:317, Trade.cs:221, EconWriter.cs:244 — and the
+        /// working-capital exit at the bottom of FirmLifecycle sits INSIDE the
+        /// last of those, so a siteless firm could not produce, hire, be
+        /// charged, or go bankrupt, while its money stayed on the books. A
+        /// missing exit was therefore silent under ledger conservation: the
+        /// money balanced precisely because nobody ever asked the firm to leave.
+        ///
+        /// The outcome follows the defaults rule the household pipeline already
+        /// obeys. The default for a firm that has lost its premises is to be
+        /// gone — a firm without premises is not a firm, and there is no
+        /// analogue of sleeping rough — so the only direction to move from that
+        /// default is a site the firm's OWN forecast says beats leaving.
+        /// RelocateFirm with a null incumbent is exactly that test, and it is
+        /// the same arithmetic the arrears path and a fresh entrant both run.
+        ///
+        /// It runs at the TOP of FirmLifecycle, before the levy, so a firm
+        /// displaced earlier in the tick is charged at whatever site it ends the
+        /// tick holding, and never charged for one it does not hold.</summary>
+        private void ResolveDisplacedFirms()
+        {
+            // The mutant restores the pre-fix world wholesale: no pass at all.
+            if (MutantDisplacedFirmNoExit) return;
+            foreach (var f in W.Firms)
+            {
+                if (f.Dead || f.Parcel >= 0) continue;
+                FirmDisplacedSeenTotal++;
+                if (RelocateFirm(f, null))
+                {
+                    // The clock is a record of failing to pay AT A SITE. The
+                    // firm did not fail to pay here; it has not been billed
+                    // here yet. Carrying the old site's clock over would let a
+                    // displacement finish an arrears sentence the new site
+                    // never handed down.
+                    f.LevyShortTicks = 0;
+                    FirmDisplacedResitedTotal++;
+                    continue;
+                }
+                f.Dead = true;
+                f.DiedOfDisplacement = true;
+                FirmDisplacedExitsTotal++;
+                // Identical settlement to the two exits already in the file:
+                // whatever the firm still holds leaves with it, and a negative
+                // balance is written off, so the exit does not open a hole in
+                // the books. That is NOT the same as saying conservation would
+                // have caught the missing exit — measured, it would not, and
+                // could not: while a firm is merely stranded its money sits in
+                // its own pocket AND in the Firms account, so both records
+                // agree and nothing is out of balance. See the DisplacedFirm
+                // check for the numbers.
+                double residual = Math.Max(0, f.Money);
+                if (residual > 0) W.Ledger.Transfer(Account.Firms, Account.PhantomBank, residual);
+                else W.Ledger.Transfer(Account.PhantomBank, Account.Firms, -f.Money);
+                f.Money = 0;
+            }
         }
 
         private void AllocationAndInsolvency()

@@ -2391,5 +2391,82 @@ namespace CS2Econ.Harness
                 + $"stale ladder n(seg0) {stale.Ladder[0][0].Length} vs rebuilt {post.Ladder[0][0].Length}");
             return 0;
         }
+
+        /// <summary>Task #49 measurement aid: what actually happens to a firm
+        /// that loses its site. The pure simulation cannot strand a firm on its
+        /// own (the scrape path gates on `OccupantFirm &lt; 0`, and the abandon
+        /// path only touches parcels under construction, which no firm occupies)
+        /// — but the mod arm can (EconReader) and the coming non-residential
+        /// site market will, so the displacement is injected here through the
+        /// engine's own DisplaceFirm entry point, which is the same one those
+        /// two producers use.
+        ///
+        /// Prints, for a run with displacement injected: how many firms were
+        /// displaced, how they resolved, how much money the exits carried out,
+        /// and — under `--mutant-displaced-no-exit` — how many live firms are
+        /// left holding no site, together with the ledger drift and sector
+        /// reconciliation at that moment. The last pair is the point: the money
+        /// still balances while the firms are stranded.</summary>
+        public static int DisplaceProbe(ulong seed, int ticks, double rate, long atTick)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            var w = sim.W;
+
+            int injected = 0;
+            double moneyAtInjection = 0;
+            var rng = new System.Random(unchecked((int)seed) ^ 0x5EED);
+            sim.Run(ticks, s =>
+            {
+                if (s.W.Tick != atTick) return;
+                foreach (var f in s.W.Firms)
+                {
+                    if (f.Dead || f.Parcel < 0) continue;
+                    if (rng.NextDouble() >= rate) continue;
+                    double m = f.Money;
+                    if (s.Engine.DisplaceFirm(f)) { injected++; moneyAtInjection += m; }
+                }
+            });
+
+            int liveSiteless = 0, liveSited = 0, deadDisp = 0, deadArr = 0, deadOther = 0;
+            double siteless = 0;
+            foreach (var f in w.Firms)
+            {
+                if (f.Dead)
+                {
+                    if (f.DiedOfDisplacement) deadDisp++;
+                    else if (f.DiedOfArrears) deadArr++;
+                    else deadOther++;
+                    continue;
+                }
+                if (f.Parcel < 0) { liveSiteless++; siteless += f.Money; }
+                else liveSited++;
+            }
+            // The pointer between a firm and its site is TWO fields that must
+            // agree; counted in both directions because a half-unlink shows up
+            // in only one of them.
+            int fwdBreak = 0, revBreak = 0;
+            foreach (var f in w.Firms)
+                if (!f.Dead && f.Parcel >= 0 && w.Parcels[f.Parcel].OccupantFirm != f.Id) fwdBreak++;
+            foreach (var pl in w.Parcels)
+                if (pl.OccupantFirm >= 0
+                    && (w.Firms[pl.OccupantFirm].Dead || w.Firms[pl.OccupantFirm].Parcel != pl.Id)) revBreak++;
+
+            var e = sim.Engine;
+            Console.WriteLine($"seed {seed} ticks {ticks} inject t={atTick} rate {rate:P0} "
+                + $"mutant={EconomyEngine.MutantDisplacedFirmNoExit} halfUnlink={EconomyEngine.MutantHalfUnlinkDisplacement}");
+            Console.WriteLine($"  injected {injected} firms holding {moneyAtInjection:F0} at the moment of displacement");
+            Console.WriteLine($"  engine counters: seen {e.FirmDisplacedSeenTotal}, resited {e.FirmDisplacedResitedTotal}, "
+                + $"exits {e.FirmDisplacedExitsTotal}, arrears exits {e.FirmArrearsExitsTotal}, "
+                + $"relocations {e.FirmRelocationsTotal}");
+            Console.WriteLine($"  end state: {liveSited} live firms sited, {liveSiteless} live firms SITELESS "
+                + $"holding {siteless:F0}; dead: {deadDisp} displacement, {deadArr} arrears, {deadOther} other");
+            Console.WriteLine($"  link breaks: {fwdBreak} live firms naming a site that does not name them back, "
+                + $"{revBreak} sites naming a firm that is dead or elsewhere");
+            Console.WriteLine($"  ledger drift {Math.Abs(w.Ledger.Drift()):E2} — "
+                + "the existing conservation invariant, at the same moment");
+            return 0;
+        }
     }
 }

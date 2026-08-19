@@ -11,7 +11,7 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (60 checks)
+## verify (63 checks)
 
 29 at the per-cluster prospect-odds commit (28 plus prospect-local-odds;
 seeds 0–7 and 25 measured 29/29 there, canary 39/39) plus the three
@@ -494,6 +494,60 @@ and exit **1** after the promotion. Neither this nor the occupancy rewrite moves
 the model: `fingerprint --check` reads all thirteen lanes matching stanza 11
 with no accept.
 
+
+**THE 61st TO 63rd ARE TASK #49's DISPLACED-FIRM LEGS**, added at the
+displaced-firm commit: a floor (the displacement event is real and both
+outcomes occur), a settlement leg (no live firm holds no site, and every
+displacement exit settled its books), and a link leg (a firm and its site never
+disagree about holding each other). One fixture, one injected displacement
+event, through `EconomyEngine.DisplaceFirm` — the entry point `EconReader` and
+task #48's site market both use, not a private test path.
+
+WHY THREE AND NOT ONE. The two defects have different shapes and one leg cannot
+see both. `--mutant-displaced-no-exit` (no resolution pass — the shipped state
+before this item) leaves 13–29 live firms holding no site; `--mutant-half-unlink`
+(the parcel's pointer cleared, the firm's left naming the site — the exact shape
+`EconReader.SyncParcels` shipped for a despawned building) leaves ZERO siteless
+firms and passes the settlement leg clean, and is caught only by the link leg, at
+12–28 breaks against a bound of 0.
+
+WHAT THE FLOOR IS FOR, MEASURED. `displaceprobe`, seeds {0, 1, 5, 9, 13}: 13/18/
+13/22/14 firms displaced at t=150, re-sited 26/12/11/12/4, exits 3/6/2/10/10,
+siteless at t=300 **0 on every seed**. Both branches are exercised on every seed,
+which is what the floor's `>= 1` of each asserts and why "displace nobody" or
+"exit everything" cannot pass it.
+
+**THE FINDING THIS ITEM EXISTS FOR: A MISSING FIRM EXIT IS INVISIBLE TO
+CONSERVATION, AND THAT IS STRUCTURAL, NOT AN OVERSIGHT.** Under
+`--mutant-displaced-no-exit` the same runs read 13–29 stranded live firms holding
+27,325–80,489 of frozen money while ledger drift reads **1.7E-7 to 4.3E-6** — the
+same order as the clean arm — and the per-sector reconciliation is untouched.
+`Ledger.Transfer` debits and credits in one statement, so a firm that never exits
+posts no transfer and drift cannot move; and `SectorAudit.Sample`
+(`TestRunner.cs:5158-5175`) sums every firm with no `Dead`/`Parcel` filter, so the
+stranded firm's money is on BOTH sides of the reconciliation at once. Conservation
+is an invariant about arithmetic; this is an invariant about agency, and it needed
+its own check. Do not "strengthen conservation" to cover this — it cannot be done
+from that side.
+
+TWO BLIND LEGS FOUND BY THE SAME AUDIT AND FIXED IN THIS COMMIT. (1) The nonres
+parity ARREARS leg skipped live `Parcel < 0` firms (`if (f.Parcel < 0) continue;`)
+on the live arm while its DEAD arm read the same field as evidence of release —
+one branch treating the fact as data, the other as absence. `stuck` feeds an UPPER
+bound (`aOn.stuck == 0`), so the skip moved the verdict toward GREEN: a firm
+stranded past the arrears clock satisfied "no firm sits past the clock" by not
+being counted. Now counted as a fifth state and asserted at 0 in both legs.
+(2) The ENTRANT-SURVIVAL leg gated both its birth and its death registration on
+`Parcel >= 0`, so a cohort member that lost its site kept `deathAge == -1` and was
+scored a SURVIVOR against an upper bound — the exact selection its own comment
+warns about, reintroduced through a different door, and it would have got WORSE
+once displacement existed, because a `DiedOfDisplacement` exit also has
+`Parcel < 0`. The site test now gates the birth branch only, on both the clean and
+the mutant arm. Neither change moves a number on the shipping arm today, because
+nothing in the pure simulation strands a firm (`Leveling.cs:76` refuses to
+redevelop an occupied parcel; `Construction.cs:396` only touches parcels under
+construction, which no firm occupies) — they are tripwires against a state
+`EconReader` can already reach and `#48` will produce by design.
 
 **RECONCILED AT THE REGISTRY-FIX COMMIT.** The two-track and four-track merges each carried their own branch's row table into this file, and a union merge left BOTH standing — two tables making contradictory claims about the same seeds (one said seed 5's Weber leg was red, the other that it was green; one carried an occupancy row and a seed-13 collapse row that two other tracks had already fixed). That is precisely the failure this file exists to prevent, and it was self-inflicted by the merge, not by any item. Every row below is now re-derived from runs on the MERGED tree `234d1c3`: `verify` seeds 0/1/5/9/13, `occsweep --seeds 50`, `clearsweep --seeds 300`, and `webersweep`. What those runs read at `234d1c3`: verify 60/60 on seeds 1, 9 and 13 and 59/60 on seeds 0 (Weber) and 5 (nonres parity); `occsweep` **57/57**, which CLOSED the occupancy row; `clearsweep --seeds 300` **291/300** red on exactly {4, 6, 96, 100, 148, 266, 268, 272, 297}, which is the union of the two clearing-price rows below and confirms both; `webersweep` **25/26** red on **seed 0 alone**, which confirms the Weber row and settles the contradiction — seed 5's Weber leg is genuinely GREEN, the diversity-leg demotion having done what it claimed. Rows the measurement closed moved to Closed with the run that closed them; rows it confirmed kept their original attribution text, which is the per-item history and is worth more than a restatement.
 

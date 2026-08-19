@@ -96,6 +96,13 @@ namespace CS2Econ.Harness
                 // MUTANT SWITCH (see EconomyEngine.MutantForgiveFirmArrears):
                 // an unmet land charge is forgiven forever again.
                 if (args[i] == "--mutant-forgive-arrears") { EconomyEngine.MutantForgiveFirmArrears = true; continue; }
+                // MUTANT SWITCH (see EconomyEngine.MutantDisplacedFirmNoExit):
+                // a firm that loses its site reaches no outcome at all again.
+                if (args[i] == "--mutant-displaced-no-exit") { EconomyEngine.MutantDisplacedFirmNoExit = true; continue; }
+                // MUTANT SWITCH (see EconomyEngine.MutantHalfUnlinkDisplacement):
+                // displacement unlinks the parcel's side only, so the firm goes
+                // on naming a site it no longer holds — the EconReader defect.
+                if (args[i] == "--mutant-half-unlink") { EconomyEngine.MutantHalfUnlinkDisplacement = true; continue; }
                 // MUTANT SWITCH (see LandAccounting.MutantEntryReferenceMass):
                 // the store-level commercial entry read goes back to asking the
                 // counted field about a 6-slot condition-1 shop whatever
@@ -511,6 +518,20 @@ namespace CS2Econ.Harness
                     for (int i = 1; i + 1 < args.Length; i += 2)
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.ParityProbe(seed, ticks);
+                }
+                case "displaceprobe":
+                {
+                    // Task #49 measurement aid (see Debugging.DisplaceProbe):
+                    // every number the displaced-firm check's bounds rest on
+                    // comes from here.
+                    int ticks = 300; double rate = 0.25; long at = 150;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                    {
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                        else if (args[i] == "--rate") rate = double.Parse(args[i + 1]);
+                        else if (args[i] == "--at") at = long.Parse(args[i + 1]);
+                    }
+                    return Debugging.DisplaceProbe(seed, ticks, rate, at);
                 }
                 case "firmdiag":
                 {

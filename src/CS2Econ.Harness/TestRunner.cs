@@ -777,6 +777,7 @@ namespace CS2Econ.Harness
             Timed("circularity-guard", () => CircularityGuard(seed));
             Timed("nonres-parity", () => NonResidentialParity(seed));
             Timed("assessment-tracks-price", () => AssessmentTracksPrice(seed));
+            Timed("displaced-firm", () => DisplacedFirm(seed));
             Timed("ledger-conservation", () => LedgerConservation(seed));
             Timed("shadow-mode", () => ShadowMode(seed));
             Timed("insolvency", () => InsolvencyPipeline(seed));
@@ -4012,8 +4013,18 @@ namespace CS2Econ.Harness
                 var w = s.W;
                 foreach (var f in w.Firms)
                 {
-                    if (f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
-                    if (!f.Dead && f.EnteredTick > 20 && f.EnteredTick <= FixtureTicks - SurvivalHorizon
+                    // `Parcel >= 0` gates the BIRTH registration only, because
+                    // "is this an entrant occupying a building" is the question
+                    // there. Gating the DEATH branch with it too — as this loop
+                    // did — reintroduced through a different door the exact
+                    // selection the comment above warns about: a cohort member
+                    // that loses its site keeps deathAge == -1 and is scored a
+                    // SURVIVOR against an upper bound. Displacement exits set
+                    // Dead and leave Parcel < 0, so once firms can be displaced
+                    // at all, a real death would be counted as survival.
+                    if (f.Sector != ZoneKind.Commercial) continue;
+                    if (!f.Dead && f.Parcel >= 0 && f.EnteredTick > 20
+                        && f.EnteredTick <= FixtureTicks - SurvivalHorizon
                         && !entrantAge.ContainsKey(f.Id) && w.Tick - f.EnteredTick <= 1)
                         entrantAge[f.Id] = (f.EnteredTick, -1);
                     if (f.Dead && entrantAge.TryGetValue(f.Id, out var ea) && ea.deathAge < 0)
@@ -4046,8 +4057,11 @@ namespace CS2Econ.Harness
                     var w = s.W;
                     foreach (var f in w.Firms)
                     {
-                        if (f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
-                        if (!f.Dead && f.EnteredTick > 20 && f.EnteredTick <= MutantArmTicks - SurvivalHorizon
+                        // Same split as the clean arm above, for the same reason:
+                        // the site test belongs to the birth branch only.
+                        if (f.Sector != ZoneKind.Commercial) continue;
+                        if (!f.Dead && f.Parcel >= 0 && f.EnteredTick > 20
+                            && f.EnteredTick <= MutantArmTicks - SurvivalHorizon
                             && !mAge.ContainsKey(f.Id) && w.Tick - f.EnteredTick <= 1)
                             mAge[f.Id] = (f.EnteredTick, -1);
                         if (f.Dead && mAge.TryGetValue(f.Id, out var ma) && ma.deathAge < 0)
@@ -5422,37 +5436,189 @@ namespace CS2Econ.Harness
                   + $"over {oOn.n} staffed offices (bound 2%; level-free production reads ~51%)");
 
             // ---- LEG 4: an unmet land charge reaches a stated outcome --------
-            (int alive, int stuck, int dead, int released) Arrears(Sim s, EconParams p)
+            //
+            // FOUR states, not three, and the fourth is why this signature has
+            // a fifth field. A LIVE firm holding no site is neither "standing"
+            // nor "gone". The old body dropped it (`if (f.Parcel < 0) continue;`)
+            // on the live arm while the DEAD arm read the same field as evidence
+            // of release — one branch treating the fact as data, the other as
+            // absence. That skip removed the state from both the numerator and
+            // the denominator this leg gates on, and `stuck` is an UPPER bound
+            // (aOn.stuck == 0), so it moved the verdict toward GREEN: a firm
+            // stranded while past the arrears clock satisfied "no firm sits past
+            // the clock" by not being counted.
+            //
+            // `siteless` is reported, and asserted at 0. Note what that
+            // assertion is and is not: it is a GUARD against the skip coming
+            // back, not a check in its own right — on a build where nothing
+            // strands a firm it reads 0 == 0. The property "a firm that loses
+            // its site reaches a stated outcome" has its own check with its own
+            // mutant and its own non-degeneracy floor (DisplacedFirm).
+            (int alive, int stuck, int dead, int released, int siteless) Arrears(Sim s, EconParams p)
             {
-                int al = 0, st = 0, dd = 0, rel = 0;
+                int al = 0, st = 0, dd = 0, rel = 0, sl = 0;
                 foreach (var f in s.W.Firms)
                 {
                     if (f.Dead)
                     {
+                        // `Parcel < 0` HERE is a release test, not a skip: an
+                        // exit that left no link to its parcel is an exit that
+                        // gave the land up. That reading stays.
                         if (!f.DiedOfArrears) continue;
                         dd++;
                         if (f.Parcel < 0 || s.W.Parcels[f.Parcel].OccupantFirm != f.Id) rel++;
                         continue;
                     }
-                    if (f.Parcel < 0) continue;
+                    if (f.Parcel < 0) { sl++; continue; }   // counted, never skipped
                     al++;
                     if (f.LevyShortTicks >= p.LandArrearsTicks) st++;
                 }
-                return (al, st, dd, rel);
+                return (al, st, dd, rel, sl);
             }
             var aOff = Arrears(sim, pOff);
             var aOn = Arrears(simOn, pOn);
             Check("nonres parity floor: with the outcome off, firms really do sit past the arrears clock",
-                  aOff.stuck >= 1 && aOff.alive >= 20 && aOff.dead == 0,
+                  aOff.stuck >= 1 && aOff.alive >= 20 && aOff.dead == 0 && aOff.siteless == 0,
                   $"{aOff.stuck} of {aOff.alive} standing firms have missed the land charge for "
-                  + $"{pOff.LandArrearsTicks}+ consecutive ticks under the shipped default, and none is asked to leave");
+                  + $"{pOff.LandArrearsTicks}+ consecutive ticks under the shipped default, and none is asked to leave; "
+                  + $"{aOff.siteless} live firms hold no site (bound 0 — a firm this leg cannot describe)");
             Check("nonres parity: with the outcome on, no firm sits past the arrears clock and every exit released its parcel",
-                  aOn.stuck == 0 && aOn.dead >= 1 && aOn.released == aOn.dead && aOn.alive >= 20,
+                  aOn.stuck == 0 && aOn.dead >= 1 && aOn.released == aOn.dead && aOn.alive >= 20
+                  && aOn.siteless == 0,
                   $"{aOn.stuck} standing firms past the clock (bound 0); {aOn.released}/{aOn.dead} arrears exits "
                   + $"left their parcel unoccupied; {simOn.Engine.FirmRelocationsTotal} firms sorted down instead; "
-                  + $"{aOn.alive} firms still standing");
+                  + $"{aOn.alive} firms still standing; {aOn.siteless} live firms holding no site (bound 0)");
         }
 
+
+        /// <summary>Task #49. A firm that loses its site must reach a stated
+        /// outcome, and the firm and the site must never disagree about whether
+        /// they hold each other.
+        ///
+        /// WHY THE DISPLACEMENT IS INJECTED. The pure simulation cannot strand
+        /// a firm on its own: the scrape path refuses to redevelop an occupied
+        /// parcel (Leveling.cs:76 gates on `OccupantFirm &lt; 0`) and the
+        /// milestone-abandon path only touches parcels still under construction
+        /// (Construction.cs:396), which no firm occupies. The state is
+        /// nonetheless REACHABLE TODAY on the mod arm — EconReader resolves a
+        /// company's PropertyRenter through ParcelIndex and hands a live firm
+        /// `Parcel = -1` on a miss (EconReader.cs:537/541, :645) — and the
+        /// non-residential site market of task #48 will produce it by design,
+        /// because being outbid is what an auction does to a loser. So the
+        /// fixture injects it through EconomyEngine.DisplaceFirm, which IS the
+        /// entry point those two producers use; nothing here is a private test
+        /// path around the mechanism.
+        ///
+        /// WHY IT NEEDS ITS OWN CHECK RATHER THAN CONSERVATION. Measured, this
+        /// seed set, `displaceprobe --mutant-displaced-no-exit`: 13 to 29 live
+        /// firms end the run holding no site and 27,325 to 80,489 of frozen
+        /// money — while ledger drift reads 1.7E-7 to 4.3E-6, the same order as
+        /// the clean arm, and the sector reconciliation is untouched. That is
+        /// the whole finding. A missing exit CANNOT show up in conservation,
+        /// because the money balances precisely for as long as nobody asks the
+        /// firm to leave: it is still in the firm's pocket and still in the
+        /// Firms account. Conservation is an invariant about arithmetic; this
+        /// is an invariant about agency.
+        ///
+        /// IT CAN FAIL, two ways, both wired:
+        ///   MUT-49a `--mutant-displaced-no-exit` — no resolution pass at all
+        ///     (the shipped state before this item). Reds the settlement leg:
+        ///     13-29 siteless live firms against a bound of 0.
+        ///   MUT-49b `--mutant-half-unlink` — displacement clears the PARCEL's
+        ///     pointer and leaves the firm naming the site, which is the exact
+        ///     shape EconReader.SyncParcels shipped for a despawned building.
+        ///     This mutant leaves ZERO siteless firms, so the settlement leg
+        ///     passes it clean; only the link leg catches it, at 12-28 breaks
+        ///     against a bound of 0. Two mutants because one leg could not see
+        ///     both defects.</summary>
+        private static void DisplacedFirm(ulong seed)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+
+            // One displacement event, a quarter of the standing firms, at a tick
+            // by which the city has a real firm population to displace. A
+            // one-shot event rather than a trickle, because that is what a
+            // demolition or a re-let round looks like and because it lets the
+            // count of what was injected be compared against the count of what
+            // the engine saw.
+            const long AtTick = 150;
+            const double Rate = 0.25;
+            int injected = 0;
+            var rng = new Random(unchecked((int)seed) ^ 0x5EED);
+            var audit = new SectorAudit();
+            double maxDrift = 0;
+            sim.Run(300, s =>
+            {
+                maxDrift = Math.Max(maxDrift, Math.Abs(s.W.Ledger.Drift()));
+                audit.Sample(s);
+                if (s.W.Tick != AtTick) return;
+                foreach (var f in s.W.Firms)
+                {
+                    if (f.Dead || f.Parcel < 0) continue;
+                    if (rng.NextDouble() >= Rate) continue;
+                    if (s.Engine.DisplaceFirm(f)) injected++;
+                }
+            });
+
+            var w = sim.W;
+            var e = sim.Engine;
+            int siteless = 0, unsettledExit = 0;
+            double stranded = 0;
+            foreach (var f in w.Firms)
+            {
+                if (!f.Dead && f.Parcel < 0) { siteless++; stranded += f.Money; }
+                if (f.Dead && f.DiedOfDisplacement && Math.Abs(f.Money) > 1e-9) unsettledExit++;
+            }
+            // Both directions of the pointer. A half-unlink shows up in exactly
+            // one of them, so counting only one direction would be a leg that
+            // cannot see the defect it exists for.
+            int fwdBreak = 0, revBreak = 0;
+            foreach (var f in w.Firms)
+                if (!f.Dead && f.Parcel >= 0 && w.Parcels[f.Parcel].OccupantFirm != f.Id) fwdBreak++;
+            foreach (var pl in w.Parcels)
+                if (pl.OccupantFirm >= 0
+                    && (w.Firms[pl.OccupantFirm].Dead || w.Firms[pl.OccupantFirm].Parcel != pl.Id)) revBreak++;
+
+            // ---- FLOOR: the population is real and BOTH branches were taken --
+            // Without this the settlement leg reads 0 == 0 on an empty set, and
+            // "displace nobody" would pass it. The two-outcome requirement is
+            // the second half: a run in which every displaced firm exited would
+            // leave the re-siting branch untested and vice versa. Measured over
+            // seeds {0,1,5,9,13}: injected 13-29, re-sited 4-26, exits 2-10 —
+            // so the bounds below sit an order of magnitude inside the
+            // observations on the tightest of them.
+            Check("displaced firm floor: the displacement event is real and both outcomes occur",
+                  injected >= 8 && e.FirmDisplacedResitedTotal >= 1 && e.FirmDisplacedExitsTotal >= 1,
+                  $"{injected} firms displaced at t={AtTick} ({Rate:P0} of those standing); "
+                  + $"{e.FirmDisplacedResitedTotal} re-sited to land their own forecast carries, "
+                  + $"{e.FirmDisplacedExitsTotal} left the city (bounds: 8 displaced, 1 of each outcome)");
+
+            // ---- SETTLEMENT: nobody is left in limbo, and the exits paid out -
+            // `injected` and FirmDisplacedSeenTotal are two independently kept
+            // records — the fixture counts what it took away, the engine counts
+            // what its own pass found — so their agreement is a real identity
+            // and not a restatement. If the pass ever ran at a point in the tick
+            // where some displacements had not happened yet, this is the leg
+            // that would say so.
+            Check("displaced firm: no live firm holds no site, and every displacement exit settled its books",
+                  siteless == 0 && unsettledExit == 0 && e.FirmDisplacedSeenTotal == injected
+                  && maxDrift < 1e-3 && audit.Worst < 1e-9,
+                  $"{siteless} live firms hold no site at t=300 holding {stranded:F0} (bound 0); the pass saw "
+                  + $"{e.FirmDisplacedSeenTotal} of {injected} displacements; {unsettledExit} exits kept money "
+                  + $"(bound 0); ledger drift {maxDrift:E2} (bound 1e-3), reconciliation {audit} (bound 1e-9) "
+                  + "— and those last two read the same on the mutant arm, which is why they are not the check");
+
+            // ---- LINK: the firm and the site agree about each other ----------
+            // Exact, not statistical: the two fields are one pointer written in
+            // two places, so any disagreement at all is a defect. Measured 0/0
+            // on every seed of the set above, and 12-28/0 under MUT-49b.
+            Check("displaced firm: a firm and its site never disagree about holding each other",
+                  fwdBreak == 0 && revBreak == 0,
+                  $"{fwdBreak} live firms name a site that does not name them back, {revBreak} sites name a firm "
+                  + $"that is dead or elsewhere (bound 0 each, over {w.Firms.Count} firms and {w.Parcels.Count} parcels)");
+        }
 
         private static void LedgerConservation(ulong seed)
         {

@@ -350,6 +350,13 @@ namespace CS2Econ.Core
         /// working-capital bankruptcy at CompanyBankruptcyLimit). Telemetry for
         /// the parity checks' attribution leg.</summary>
         public bool DiedOfArrears;
+        /// <summary>Set when this firm exited because it lost its site and no
+        /// site it could carry was open to it — the firm analog of the
+        /// household that is displaced and emigrates rather than being rehoused.
+        /// Distinct from DiedOfArrears (which is a failure to PAY at a site the
+        /// firm still held) and from the working-capital bankruptcy, so no
+        /// check can confuse the three.</summary>
+        public bool DiedOfDisplacement;
     }
 
     /// <summary>One outside connection with its own supply/demand law
