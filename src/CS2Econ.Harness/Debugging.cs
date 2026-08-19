@@ -2970,7 +2970,24 @@ namespace CS2Econ.Harness
                     // mechanism is being exercised here — nothing named FirmSite
                     // exists at this commit — these are reads of the same value
                     // table the ladder already uses, under two definitions of A.
-                    double aAll = double.NegativeInfinity, aStanding = double.NegativeInfinity;
+                    // A EXCLUDES THE DOOR UNDER TEST. This is not a refinement,
+                    // it is the difference between a measurement and a
+                    // tautology: with the door left in, A ≥ value_c(5) − S(5,1)
+                    // holds by construction for every cluster, so
+                    // `value_c(5) − A ≤ S(5,1.0)` is true everywhere and the
+                    // only clusters that ever read unbounded are the argmax
+                    // itself failing an equality test on floating point. The
+                    // first cut of this block did exactly that and printed
+                    // 11/12, 111/112, 31/31 — numbers that look like findings
+                    // and are arithmetic. It is also the economically right
+                    // reading: a bidder's alternative is its best OTHER door,
+                    // which is the exclusion the design's own rule is built on.
+                    // Implemented as top-two, so the excluded max falls back to
+                    // the runner-up rather than rescanning per door.
+                    double a1All = double.NegativeInfinity, a2All = double.NegativeInfinity;
+                    int a1AllC = -1, a1AllL = -1;
+                    double a1St = double.NegativeInfinity, a2St = double.NegativeInfinity;
+                    int a1StC = -1, a1StL = -1;
                     var standingDoor = new bool[C, p.MaxLevel + 1];
                     foreach (var pl in w.Parcels)
                         if (pl.State == ParcelState.Built && pl.Use == s
@@ -2983,12 +3000,16 @@ namespace CS2Econ.Harness
                         {
                             double surplus = LandAccounting.FirmBidPerSlot(acc, trade, c, s, l, p, out _, w.Clusters)
                                              - LandAccounting.SPerUnit(l, 1.0, p);
-                            if (surplus > aAll) aAll = surplus;
-                            if (standingDoor[c, l] && surplus > aStanding) aStanding = surplus;
+                            if (surplus > a1All) { a2All = a1All; a1All = surplus; a1AllC = c; a1AllL = l; }
+                            else if (surplus > a2All) a2All = surplus;
+                            if (standingDoor[c, l])
+                            {
+                                if (surplus > a1St) { a2St = a1St; a1St = surplus; a1StC = c; a1StL = l; }
+                                else if (surplus > a2St) a2St = surplus;
+                            }
                         }
                     }
-                    if (double.IsNegativeInfinity(aAll)) aAll = 0;
-                    if (double.IsNegativeInfinity(aStanding)) aStanding = 0;
+                    double Fin(double v) => double.IsNegativeInfinity(v) ? 0 : v;
                     double s5 = LandAccounting.SPerUnit(p.MaxLevel, 1.0, p);
                     int bcAll = 0, bcStand = 0, bpAll = 0, bpStand = 0, parcelsHere = 0;
                     var margin = new List<double>();
@@ -2996,10 +3017,14 @@ namespace CS2Econ.Harness
                     {
                         if (!present[c]) continue;
                         double v5 = LandAccounting.FirmBidPerSlot(acc, trade, c, s, p.MaxLevel, p, out _, w.Clusters);
-                        bool bAll = v5 - aAll <= s5, bStand = v5 - aStanding <= s5;
+                        // The alternative this cluster's ℓ5 door faces is the
+                        // best door that is NOT it.
+                        double aA = Fin(a1AllC == c && a1AllL == p.MaxLevel ? a2All : a1All);
+                        double aS = Fin(a1StC == c && a1StL == p.MaxLevel ? a2St : a1St);
+                        bool bAll = v5 - aA <= s5, bStand = v5 - aS <= s5;
                         if (bAll) bcAll++;
                         if (bStand) bcStand++;
-                        margin.Add(v5 - aAll - s5);
+                        margin.Add(v5 - aA - s5);
                         int here = 0;
                         foreach (var pl in w.Parcels)
                             if (pl.State == ParcelState.Built && pl.Use == s && pl.Cluster == c) here++;
@@ -3008,8 +3033,9 @@ namespace CS2Econ.Harness
                         if (bStand) bpStand += here;
                     }
                     margin.Sort();
-                    Console.WriteLine($"              Q12 cross-cluster: A(all doors)={aAll:F3} A(standing doors)={aStanding:F3} " +
-                                      $"S(5,1.0)={s5:F3}");
+                    Console.WriteLine($"              Q12 cross-cluster (A excludes the door under test): " +
+                                      $"A1(all)={Fin(a1All):F3} A2(all)={Fin(a2All):F3} " +
+                                      $"A1(standing)={Fin(a1St):F3} A2(standing)={Fin(a2St):F3} S(5,1.0)={s5:F3}");
                     Console.WriteLine($"              Q12 BOUNDED by value_c(5)−A ≤ S(5,1.0): " +
                                       $"all-doors {bcAll}/{nc} clusters ({bpAll}/{parcelsHere} parcels), " +
                                       $"standing-doors {bcStand}/{nc} clusters ({bpStand}/{parcelsHere} parcels) " +
