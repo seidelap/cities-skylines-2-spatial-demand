@@ -5520,17 +5520,37 @@ namespace CS2Econ.Harness
         /// Firms account. Conservation is an invariant about arithmetic; this
         /// is an invariant about agency.
         ///
-        /// IT CAN FAIL, two ways, both wired:
+        /// IT CAN FAIL, two ways, both wired. THE MAPPING BELOW IS MEASURED —
+        /// `verify --seed 0` under each mutant — and it is not what the first
+        /// version of this comment claimed. That version said MUT-49b "passes
+        /// the settlement leg clean; only the link leg catches it", which was
+        /// inferred from displaceprobe's siteless count and never run. Run, it
+        /// is wrong in both directions, so the table is the artifact and the
+        /// prose is not:
+        ///
+        ///                        | floor | settlement | link
+        ///     MUT-49a no-exit    | FAIL  |   FAIL     | PASS
+        ///     MUT-49b half-unlink| FAIL  |   FAIL     | FAIL
+        ///
         ///   MUT-49a `--mutant-displaced-no-exit` — no resolution pass at all
-        ///     (the shipped state before this item). Reds the settlement leg:
-        ///     13-29 siteless live firms against a bound of 0.
+        ///     (the shipped state before this item): 29 siteless live firms
+        ///     holding 80,489 against a bound of 0. The LINK leg passes it,
+        ///     because a firm that was cleanly unlinked and then abandoned is
+        ///     still consistent with its parcel — nobody is lying, nobody is
+        ///     resolved.
         ///   MUT-49b `--mutant-half-unlink` — displacement clears the PARCEL's
-        ///     pointer and leaves the firm naming the site, which is the exact
-        ///     shape EconReader.SyncParcels shipped for a despawned building.
-        ///     This mutant leaves ZERO siteless firms, so the settlement leg
-        ///     passes it clean; only the link leg catches it, at 12-28 breaks
-        ///     against a bound of 0. Two mutants because one leg could not see
-        ///     both defects.</summary>
+        ///     pointer and leaves the firm naming the site: the exact shape
+        ///     EconReader.SyncParcels shipped for a despawned building. 28 link
+        ///     breaks, AND the settlement leg reds too, on the conjunct the
+        ///     first comment did not think through: the pass reports seeing
+        ///     0 of 29 displacements, because a firm that kept its parcel never
+        ///     becomes siteless and the pass never counts it. That is the
+        ///     `seen == injected` cross-record identity doing exactly what it
+        ///     was put there for.
+        ///
+        /// So the LINK leg is the discriminator — clean under one defect, red
+        /// under the other — and it is what makes these three legs rather than
+        /// one, on evidence rather than on the story told first.</summary>
         private static void DisplacedFirm(ulong seed)
         {
             var p = new EconParams();
@@ -5609,6 +5629,21 @@ namespace CS2Econ.Harness
                   + $"{e.FirmDisplacedSeenTotal} of {injected} displacements; {unsettledExit} exits kept money "
                   + $"(bound 0); ledger drift {maxDrift:E2} (bound 1e-3), reconciliation {audit} (bound 1e-9) "
                   + "— and those last two read the same on the mutant arm, which is why they are not the check");
+
+            // ---- GUARD: nothing here is an UNPLACED firm ---------------------
+            // A tripwire, not a check, and labelled so nobody mistakes it for
+            // one: in the pure simulation every siteless firm got that way
+            // through DisplaceFirm, which marks it, so this reads 0 == 0. It
+            // exists because the pass now deliberately LEAVES a class of firm
+            // standing — one the adapter could not place, whose default is to
+            // stay put — and a class the engine declines to act on must at
+            // least be counted where somebody will see it. On the mod arm the
+            // same counter is the reader's coverage gauge.
+            Check("displaced firm guard: every siteless firm here lost a site it held",
+                  e.FirmUnplacedSeenTotal == 0,
+                  $"{e.FirmUnplacedSeenTotal} live siteless firms had never held a site (bound 0 — structural "
+                  + "in the pure sim, where DisplaceFirm is the only producer; on the mod arm a non-zero "
+                  + "reading is EconReader coverage to go fix, not firms to go kill)");
 
             // ---- LINK: the firm and the site agree about each other ----------
             // Exact, not statistical: the two fields are one pointer written in

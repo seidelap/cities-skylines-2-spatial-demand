@@ -58,6 +58,14 @@ namespace CS2Econ.Core
         public int FirmDisplacedSeenTotal;
         public int FirmDisplacedResitedTotal;
         public int FirmDisplacedExitsTotal;
+        /// <summary>Live firms the pass found siteless that had NOT lost a site
+        /// it held — the adapter could not place them. Left standing on
+        /// purpose (Firm.SiteLostTick says why) and counted here so that
+        /// "the engine is not modelling this company" is a number somebody can
+        /// read rather than silence. Structurally 0 in the pure simulation,
+        /// which is what the check's guard leg asserts; on the mod arm a rising
+        /// count means the reader's coverage is the thing to go fix.</summary>
+        public int FirmUnplacedSeenTotal;
 
         /// <summary>MUTANT SWITCH: restores office and extractor production
         /// WITHOUT the level and condition terms their assessment prices them
@@ -85,6 +93,13 @@ namespace CS2Econ.Core
         /// the parcel is meanwhile free to be re-let to somebody else. Never a
         /// shipping mode.</summary>
         public static bool MutantHalfUnlinkDisplacement;
+        /// <summary>MUTANT SWITCH: the pass acts on EVERY siteless firm, not
+        /// only on one that lost a site it held — the regression task #49
+        /// shipped before Firm.SiteLostTick existed. On the mod arm that
+        /// relocates or PERMANENTLY kills a company the reader merely failed to
+        /// place, which is an agent moved against its own default on the
+        /// strength of the engine's own ignorance. Never a shipping mode.</summary>
+        public static bool MutantResolveUnplacedFirms;
         /// <summary>(tick, household, reason): reason 0 = voluntary cost-driven
         /// relocation within the city, 1 = insolvency-pipeline emigration.</summary>
         public readonly List<(long tick, int household, int reason)> DisplacementExits
@@ -1673,10 +1688,24 @@ namespace CS2Econ.Core
             double sellerRevenue = localVolume * price + clear.ExportRevenue;
             double buyerCost = localVolume * price + clear.ImportCost;
 
+            // BOTH LOOPS TEST Parcel, as SettleResourceClustered above already
+            // does. They did not, and that made them the exception to
+            // "every firm loop skips a firm with no site" — the premise task
+            // #49 was written on. `supply` and `demand` here are _supplyTotal
+            // and _demandTotal, both accumulated in ProductionAndTrade over
+            // SITED firms only, so a siteless firm taking a share of either
+            // makes the shares sum past 1 against a ledger posting that did
+            // not move: money appears or disappears off-ledger. The buyer half
+            // was the live one — InputNeedByRes is cleared only inside
+            // ProductionAndTrade's own Parcel-guarded loop, so a siteless firm
+            // kept paying for inputs to a factory it no longer had. Fixed at
+            // the source too (DisplaceFirm clears the flows), and here as well,
+            // because a guard that matches its sibling is what stops the next
+            // reader having to re-derive which of the two is authoritative.
             if (supply > 1e-9 && sellerRevenue > 0)
                 foreach (var f in W.Firms)
                 {
-                    if (f.Dead || f.Output != r || f.OutputThisTick <= 0) continue;
+                    if (f.Dead || f.Parcel < 0 || f.Output != r || f.OutputThisTick <= 0) continue;
                     double share = f.OutputThisTick / supply;
                     f.Money += sellerRevenue * share;
                     f.RevenueThisTick += sellerRevenue * share;
@@ -1684,7 +1713,7 @@ namespace CS2Econ.Core
             if (demand > 1e-9 && buyerCost > 0)
                 foreach (var f in W.Firms)
                 {
-                    if (f.Dead || f.InputNeedByRes[(int)r] <= 0) continue;
+                    if (f.Dead || f.Parcel < 0 || f.InputNeedByRes[(int)r] <= 0) continue;
                     f.Money -= buyerCost * (f.InputNeedByRes[(int)r] / demand);
                 }
             W.Ledger.Transfer(Account.OutsideWorld, Account.Firms, clear.ExportRevenue);
@@ -1932,6 +1961,20 @@ namespace CS2Econ.Core
             if (pl.OccupantFirm == f.Id) pl.OccupantFirm = -1;
             if (MutantHalfUnlinkDisplacement) return true;   // firm keeps naming the site
             f.Parcel = -1;
+            // The mark that separates "lost a site it held" from "the adapter
+            // cannot place it" (Firm.SiteLostTick carries why that matters).
+            // Set HERE and not in the pass, because only the caller knows an
+            // economic event happened; the pass sees only the empty field.
+            f.SiteLostTick = W.Tick;
+            // Per-tick flows belong to the site the firm no longer has. Left
+            // standing they are read by loops that do NOT test Parcel —
+            // SettleResourceFlat's buyer loop on the TierD_Trade-off path
+            // debits from InputNeedByRes, which ProductionAndTrade clears only
+            // for SITED firms — so a displaced firm went on paying for inputs
+            // to a factory it had lost. Clearing them here is the fix at the
+            // source: no stale flow can outlive the site that generated it.
+            f.OutputThisTick = 0;
+            Array.Clear(f.InputNeedByRes, 0, f.InputNeedByRes.Length);
             return true;
         }
 
@@ -1967,6 +2010,15 @@ namespace CS2Econ.Core
             foreach (var f in W.Firms)
             {
                 if (f.Dead || f.Parcel >= 0) continue;
+                // NOT EVERY SITELESS FIRM WAS DISPLACED. A firm the adapter
+                // could not place is still standing in its building, and its
+                // default is to stay there; resolving it would move it — or
+                // permanently kill it — on the strength of the engine's own
+                // ignorance. Counted so the state is never silent, which was
+                // the original defect, but not acted on, which would be a
+                // worse one. Firm.SiteLostTick carries the full reasoning.
+                if (f.SiteLostTick < 0 && !MutantResolveUnplacedFirms)
+                { FirmUnplacedSeenTotal++; continue; }
                 FirmDisplacedSeenTotal++;
                 if (RelocateFirm(f, null))
                 {

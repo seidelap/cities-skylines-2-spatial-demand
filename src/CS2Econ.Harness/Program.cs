@@ -103,6 +103,11 @@ namespace CS2Econ.Harness
                 // displacement unlinks the parcel's side only, so the firm goes
                 // on naming a site it no longer holds — the EconReader defect.
                 if (args[i] == "--mutant-half-unlink") { EconomyEngine.MutantHalfUnlinkDisplacement = true; continue; }
+                // MUTANT SWITCH (see EconomyEngine.MutantResolveUnplacedFirms):
+                // the pass acts on every siteless firm again, so a company the
+                // reader merely could not place is relocated or killed.
+                if (args[i] == "--mutant-resolve-unplaced")
+                { EconomyEngine.MutantResolveUnplacedFirms = true; continue; }
                 // MUTANT SWITCH (see LandAccounting.MutantEntryReferenceMass):
                 // the store-level commercial entry read goes back to asking the
                 // counted field about a 6-slot condition-1 shop whatever
@@ -546,7 +551,14 @@ namespace CS2Econ.Harness
                     // every number the displaced-firm check's bounds rest on
                     // comes from here.
                     int ticks = 300; double rate = 0.25; long at = 150;
-                    for (int i = 1; i + 1 < args.Length; i += 2)
+                    // Stride by ONE, not two. The i += 2 shape the older probe
+                    // cases use assumes every argument is half of a name/value
+                    // pair, so one preceding boolean flag (any --mutant-*)
+                    // shifts the parity and every option after it is read at
+                    // the wrong index and silently ignored — a measurement run
+                    // with a mutant AND an explicit --ticks would quietly use
+                    // the default instead, and report as though it had not.
+                    for (int i = 1; i + 1 < args.Length; i++)
                     {
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                         else if (args[i] == "--rate") rate = double.Parse(args[i + 1]);

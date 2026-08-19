@@ -11,7 +11,7 @@ A failure is *bisected* when the introducing commit is known, *bounded* when
 only a range is known. "Predates 2eeefc3" means it fails at the oldest commit
 tested and the true origin is older — bounded, not explained.
 
-## verify (63 checks)
+## verify (64 checks)
 
 29 at the per-cluster prospect-odds commit (28 plus prospect-local-odds;
 seeds 0–7 and 25 measured 29/29 there, canary 39/39) plus the three
@@ -503,13 +503,28 @@ disagree about holding each other). One fixture, one injected displacement
 event, through `EconomyEngine.DisplaceFirm` — the entry point `EconReader` and
 task #48's site market both use, not a private test path.
 
-WHY THREE AND NOT ONE. The two defects have different shapes and one leg cannot
-see both. `--mutant-displaced-no-exit` (no resolution pass — the shipped state
-before this item) leaves 13–29 live firms holding no site; `--mutant-half-unlink`
-(the parcel's pointer cleared, the firm's left naming the site — the exact shape
-`EconReader.SyncParcels` shipped for a despawned building) leaves ZERO siteless
-firms and passes the settlement leg clean, and is caught only by the link leg, at
-12–28 breaks against a bound of 0.
+WHY THREE AND NOT ONE — AND A CORRECTION. The first version of this paragraph
+said `--mutant-half-unlink` "leaves ZERO siteless firms and passes the settlement
+leg clean, and is caught only by the link leg". That was INFERRED from
+`displaceprobe`'s siteless count and never run against the check. Run
+(`verify --seed 0` under each mutant) it is wrong in both directions:
+
+|                       | floor | settlement | link |
+|---|---|---|---|
+| MUT-49a no-exit       | FAIL  | FAIL       | **PASS** |
+| MUT-49b half-unlink   | FAIL  | FAIL       | FAIL |
+
+MUT-49a reds settlement at 29 siteless firms holding 80,489 against a bound of 0,
+and the LINK leg passes it — a firm cleanly unlinked and then abandoned is still
+consistent with its parcel; nobody is lying. MUT-49b reds the link leg at 28
+breaks AND the settlement leg, on the conjunct the first version did not think
+through: the pass reports seeing **0 of 29** displacements, because a firm that
+kept its parcel never becomes siteless and is never counted. That is the
+`seen == injected` cross-record identity working exactly as intended. So the LINK
+leg is the discriminator — clean under one defect, red under the other — and the
+check is stronger than the paragraph that described it. Writing a mutant-to-leg
+mapping without running it is the same class of error as the seed-0 count above,
+from the same commit.
 
 WHAT THE FLOOR IS FOR, MEASURED. `displaceprobe`, seeds {0, 1, 5, 9, 13}: 29/18/
 13/22/14 firms displaced at t=150, re-sited 26/12/11/12/4, exits 3/6/2/10/10,
@@ -616,6 +631,63 @@ was actually found on, which was the open question when the two halves were spli
 
 AT THE MERGED TREE: verify **63/63** on seed 1, `fingerprint --check` all 13 lanes
 matching with no accept, `modsync` 6/6.
+
+## verify (64 checks) — the displaced-firm follow-ups
+
+**THE MERGED PAIR HAD A REGRESSION ON THE MOD ARM, FOUND BY ADVERSARIAL REVIEW OF
+THE COMMIT ABOVE AND NOT BY ANY CHECK.** `ResolveDisplacedFirms` treated every
+live `Parcel < 0` firm as displaced. In the pure simulation that is sound —
+`DisplaceFirm` is the only producer of the state. On the mod arm it is not:
+`EconReader.AddFirm`'s own comment names three other causes (a prefab without
+`SpawnableBuildingData`, a building spawned since the last sync, a claim
+`EconSiteLink.Attach` refused because another firm holds the site), and in every
+one of them the company is STILL STANDING IN ITS BUILDING and only the adapter
+lost track. The pass relocated it or killed it — and the kill is PERMANENT, since
+`SyncFirms` skips a dead firm forever and `FirmIndex.ContainsKey` blocks
+re-creation. That is an agent moved against its own default on the strength of the
+engine's own ignorance, which the defaults rule forbids: a firm whose building the
+reader could not resolve has "stay put" as its default.
+
+THE FIX IS A DISTINCTION, NOT A GRACE PERIOD. `Firm.SiteLostTick` records the tick
+a firm lost a site IT HELD; the pass resolves only those, and counts the rest in
+`FirmUnplacedSeenTotal` so the state it declines to act on is never silent. Of the
+four ways the reader can leave a firm unsited, exactly ONE is an economic event —
+`EconSiteLink.ReleaseSite`, the demolished building — and it is the only one that
+sets the mark.
+
+MEASURED, `modsync` (which now runs one engine tick between the two populations it
+creates): **8/8**, 59 unplaceable firms all alive and all exactly where the engine
+found them, 59 site-losers all resolved. Under `--mutant-resolve-unplaced`, which
+drops the distinction and restores the shipped behaviour: **58 of 59 unplaceable
+firms are killed** (1 survives, re-sited) — the regression measured rather than
+argued.
+
+TWO MORE FROM THE SAME REVIEW. (1) The #49 commit message claimed every firm loop
+opens `if (f.Dead || f.Parcel < 0) continue;`. FALSE at `SettleResourceFlat`
+(`EconomyEngine.cs:1679/1687`, the `TierD_Trade = false` path), whose two loops
+guarded on `f.Dead` alone while its sibling `SettleResourceClustered` (`:1643`)
+guards on both. The seller half is inert (`OutputThisTick` is zeroed at `:1736` in
+the last sited tick and `ProductionAndTrade` never re-sets it for a siteless firm),
+but the buyer half was live: `InputNeedByRes` is cleared only inside
+`ProductionAndTrade`'s own Parcel-guarded loop, so a siteless firm kept paying for
+inputs to a factory it no longer had, and since `_demandTotal` accumulates over
+sited firms only the debits exceed `buyerCost` — money destroyed off-ledger against
+`Account.Firms`. Fixed in both places AND at the source (`DisplaceFirm` now clears
+the per-tick flows). Reachable only with `TierD_Trade` off plus a displacement, a
+combination no harness arm runs; recorded as a coverage gap rather than claimed as
+covered. (2) `displaceprobe`'s option parser strode by two over raw argv, so any
+`--mutant-*` flag before `--ticks`/`--rate`/`--at` silently discarded them. No
+measurement in this file was affected (every mutant run used defaults), but a
+future one would have been, silently.
+
+A FOURTH FINDING IS FILED AND NOT FIXED: `RelocateFirm`'s `BidAt` discards
+`FirmBidPerSlot`'s `out chosen`, so for industrial and extractor a firm is moved on
+a bid for the destination cluster's BEST output rather than the one it produces
+(`f.Output` is unchanged by the move). Pre-existing on the arrears path; #49
+extended it to displacement. It violates the models principle — the forecast is not
+one the agent could hold about its own business — and it is fingerprint-safe to fix,
+since the arrears path needs `NonResLandParity` (off) and displacement never occurs
+in the pure sim. Unowned.
 
 **RECONCILED AT THE REGISTRY-FIX COMMIT.** The two-track and four-track merges each carried their own branch's row table into this file, and a union merge left BOTH standing — two tables making contradictory claims about the same seeds (one said seed 5's Weber leg was red, the other that it was green; one carried an occupancy row and a seed-13 collapse row that two other tracks had already fixed). That is precisely the failure this file exists to prevent, and it was self-inflicted by the merge, not by any item. Every row below is now re-derived from runs on the MERGED tree `234d1c3`: `verify` seeds 0/1/5/9/13, `occsweep --seeds 50`, `clearsweep --seeds 300`, and `webersweep`. What those runs read at `234d1c3`: verify 60/60 on seeds 1, 9 and 13 and 59/60 on seeds 0 (Weber) and 5 (nonres parity); `occsweep` **57/57**, which CLOSED the occupancy row; `clearsweep --seeds 300` **291/300** red on exactly {4, 6, 96, 100, 148, 266, 268, 272, 297}, which is the union of the two clearing-price rows below and confirms both; `webersweep` **25/26** red on **seed 0 alone**, which confirms the Weber row and settles the contradiction — seed 5's Weber leg is genuinely GREEN, the diversity-leg demotion having done what it claimed. Rows the measurement closed moved to Closed with the run that closed them; rows it confirmed kept their original attribution text, which is the per-item history and is worth more than a restatement.
 

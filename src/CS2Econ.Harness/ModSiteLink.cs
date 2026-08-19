@@ -190,6 +190,51 @@ namespace CS2Econ.Harness
                   + $"leg to {evictFirms} firms still pointing at a site they do not hold / {evictSites} sites "
                   + $"naming an absent firm (bound: no rise)");
 
+            // ---- LEG 3: the engine tells the two unsited populations apart ---
+            // Both legs above leave firms unsited, for OPPOSITE reasons, and
+            // this is where that distinction is worth something. The contest
+            // leg's newcomers are companies the adapter could not place: they
+            // are still standing in their buildings and the engine has no
+            // business touching them. The demolition leg's firms genuinely lost
+            // the building they held, and MUST reach an outcome or they are the
+            // invisible state task #49 exists to abolish.
+            //
+            // One engine tick separates them. Without Firm.SiteLostTick the
+            // pass could not, and it resolved both — which on the mod arm means
+            // relocating or PERMANENTLY killing a live game company over a
+            // reader miss (EconReader.SyncFirms skips a dead firm forever and
+            // FirmIndex blocks re-creation), an agent moved against its own
+            // default on the strength of the engine's own ignorance.
+            var unplaced = new List<Firm>();
+            foreach (var f in w.Firms)
+                if (!f.Dead && f.Parcel < 0 && f.SiteLostTick < 0) unplaced.Add(f);
+            var lostSite = new List<Firm>();
+            foreach (var f in evicted) if (!f.Dead && f.SiteLostTick >= 0) lostSite.Add(f);
+
+            sim.Step();
+
+            int unplacedSurvived = 0, unplacedUntouched = 0;
+            foreach (var f in unplaced)
+            {
+                if (!f.Dead) unplacedSurvived++;
+                if (!f.Dead && f.Parcel < 0) unplacedUntouched++;
+            }
+            int lostResolved = 0;
+            foreach (var f in lostSite) if (f.Dead || f.Parcel >= 0) lostResolved++;
+
+            Check("site-link floor: the tick had both an unplaceable and a site-losing population to tell apart",
+                  unplaced.Count >= 20 && lostSite.Count >= 20,
+                  $"{unplaced.Count} firms the adapter could not place and {lostSite.Count} firms that lost a "
+                  + "building they held went into one engine tick (bound 20 each, or the leg below compares "
+                  + "empty sets)");
+            Check("site-link: an unplaceable firm survives the tick untouched, while a firm that lost its building is resolved",
+                  unplacedSurvived == unplaced.Count && unplacedUntouched == unplaced.Count
+                  && lostResolved == lostSite.Count,
+                  $"{unplacedSurvived}/{unplaced.Count} unplaceable firms still alive and "
+                  + $"{unplacedUntouched}/{unplaced.Count} still exactly where the engine found them; "
+                  + $"{lostResolved}/{lostSite.Count} site-losers reached an outcome (re-sited or exited). "
+                  + "--mutant-resolve-unplaced drops the distinction and reds this");
+
             int failed = 0;
             foreach (var r in Results) if (!r.pass) failed++;
             Console.WriteLine($"  {Results.Count - failed}/{Results.Count} passed");

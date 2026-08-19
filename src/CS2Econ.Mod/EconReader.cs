@@ -177,7 +177,19 @@ namespace CS2Econ.Mod
             int fid = pl.OccupantFirm;
             if (!MutantDemolitionKeepsFirmSite && fid >= 0 && fid < w.Firms.Count
                 && w.Firms[fid].Parcel == pl.Id)
+            {
                 w.Firms[fid].Parcel = -1;
+                // THE ONE PATH HERE THAT IS AN ECONOMIC EVENT. Of the four ways
+                // this class leaves a firm unsited, three are the adapter
+                // failing to place a company that is still standing in its
+                // building — Attach refusing a contested claim, Attach on an
+                // unresolved pid in AddFirm, the same in the SyncFirms re-link.
+                // This one is different: the building is GONE. So this is the
+                // only one that marks the firm as having lost a site it held,
+                // which is what makes the engine's reconciliation pass resolve
+                // it rather than leave it standing (Firm.SiteLostTick).
+                w.Firms[fid].SiteLostTick = w.Tick;
+            }
             pl.OccupantFirm = -1;
         }
 

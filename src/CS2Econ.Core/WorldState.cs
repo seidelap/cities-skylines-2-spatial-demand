@@ -357,6 +357,26 @@ namespace CS2Econ.Core
         /// firm still held) and from the working-capital bankruptcy, so no
         /// check can confuse the three.</summary>
         public bool DiedOfDisplacement;
+        /// <summary>The tick this firm LOST A SITE IT HELD, or −1 if it never
+        /// has. This is the difference between two states that look identical
+        /// in `Parcel &lt; 0` and must not be treated alike.
+        ///
+        /// A firm that lost a held site suffered an economic event — the
+        /// building came down, or another bidder took it — and its default is
+        /// to be gone, so the reconciliation pass resolves it at once.
+        ///
+        /// A firm that is siteless for any OTHER reason has suffered nothing.
+        /// On the mod arm that is the common case, and EconReader.AddFirm's own
+        /// comment names the causes: a prefab without SpawnableBuildingData, a
+        /// building spawned since the last sync, a claim refused because
+        /// another firm holds the site. In every one of those the company is
+        /// still standing in its building and only the ADAPTER lost track of
+        /// it. Its default is to stay put, and an engine that relocated or
+        /// killed it would be moving an agent against its own default on the
+        /// strength of its own ignorance — and killing it is permanent, since
+        /// EconReader.SyncFirms skips a dead firm forever and FirmIndex blocks
+        /// re-creation. So the pass counts those and leaves them alone.</summary>
+        public long SiteLostTick = -1;
     }
 
     /// <summary>One outside connection with its own supply/demand law
