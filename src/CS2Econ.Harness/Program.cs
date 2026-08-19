@@ -109,6 +109,20 @@ namespace CS2Econ.Harness
                 // building the entrant would occupy — the entrant death mode
                 // restored verbatim.
                 if (args[i] == "--mutant-entry-reference-mass") { LandAccounting.MutantEntryReferenceMass = true; continue; }
+                // MUTANT SWITCH (see CS2Econ.Mod.EconSiteLink.MutantSiteStealing):
+                // a firm claiming an occupied site overwrites the incumbent's
+                // claim instead of being refused — EconReader's AddFirm and
+                // SyncFirms wrote Parcels[pid].OccupantFirm unconditionally.
+                // Reds the `modsync` contest leg. Never a shipping mode.
+                if (args[i] == "--mutant-site-steal")
+                { CS2Econ.Mod.EconSiteLink.MutantSiteStealing = true; continue; }
+                // MUTANT SWITCH (see CS2Econ.Mod.EconSiteLink
+                // .MutantDemolitionKeepsFirmSite): a despawned building clears
+                // only the parcel end and leaves the firm pointing at the
+                // rubble — EconReader's SyncParcels, verbatim. Reds the
+                // `modsync` demolition leg. Never a shipping mode.
+                if (args[i] == "--mutant-demolition-keeps-site")
+                { CS2Econ.Mod.EconSiteLink.MutantDemolitionKeepsFirmSite = true; continue; }
                 if (i + 1 >= args.Length) continue;
                 if (args[i] == "--seed") seed = ulong.Parse(args[i + 1]);
                 if (args[i] == "--only") only = args[i + 1];
@@ -308,6 +322,13 @@ namespace CS2Econ.Harness
                     }
                     return Debugging.EntryDiag(start, n, ticks);
                 }
+                case "modsync":
+                    // The mod arm's ONLY out-of-game check (see ModSiteLink):
+                    // the firm↔site link EconReader maintains. Not part of
+                    // `verify` — it exercises CS2Econ.Mod, which TestRunner's
+                    // coverage note still lists as uncovered, and it is run
+                    // with its two --mutant- switches to show it can fail.
+                    return ModSiteLink.Run(seed);
                 case "assesscheck": // assessment-tracks-price fixture alone (see TestRunner.AssessCheck)
                     return TestRunner.AssessCheck(seed);
                 case "pulsesweep": // uniform-pulse check alone across seeds (see TestRunner.PulseSweep)

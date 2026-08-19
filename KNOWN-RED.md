@@ -553,17 +553,69 @@ construction, which no firm occupies) — they are tripwires against a state
 `EconReader` can already reach and `#48` will produce by design.
 
 AT THE DISPLACED-FIRM COMMIT the gate is: verify **62/63** on seed 0, **63/63**
-on seed 1, **62/63** on seed 5 — and both failures are the standing reds in the
-table below, named in the run output rather than assumed (seed 0 Weber; seed 5
-`nonres parity: office product`). All three new legs are green on all three, and
-the two amended legs (the arrears floor and its partner, now carrying the
-`siteless == 0` conjunct) are green on all three. Seeds 9 and 13 were still
-running at commit time and are recorded when they land; `fingerprint --check`,
-`canary`, `laborcanary` and a `shopsweep` re-measurement of the entrant-survival
-constants are OWED at this commit and not yet run — the entrant leg's cohort
-composition moved slightly when the death branch stopped being gated on the site
-test (seed 0 clean arm reads 0 of 1 where the pre-change tree read 0 of 0), and a
-measured constant whose population moved must be re-measured, not assumed.
+on seed 1, **62/63** on seed 5, **63/63** on seed 9, **63/63** on seed 13 — and
+both failures are the standing reds in the table below, named in the run output
+rather than assumed (seed 0 Weber; seed 5 `nonres parity: office product`). All
+three new legs are green on all five, and the two amended legs (the arrears floor
+and its partner, now carrying the `siteless == 0` conjunct) are green on all five.
+`fingerprint --check` reads **all 13 lanes matching with no accept**, which is the
+claim that matters: `ResolveDisplacedFirms` is a no-op on a world with no siteless
+firms, and the default world has none, so the model is byte-identical.
+`canary` 39/39, `laborcanary` 39/39.
+
+THE ENTRANT-SURVIVAL CONSTANTS WERE RE-MEASURED, NOT ASSUMED. Moving the site
+test off that leg's DEATH branch changes its cohort composition (seed 0's clean
+arm reads 0 of 1 where the pre-change tree read 0 of 0), and `EntrantYoungDeathMax`
+and `EntrantMutantFloor` are measured constants — a measured constant whose
+population has moved has to be re-measured. `shopsweep` **4/4** at this commit,
+clean arm 1 of 1 against the bound of 8 and the mutant arm 33 against its floor of
+5. Note for whoever touches this leg next: the clean cohort is tiny by design (the
+leg's own comment says the population is nearly empty because the mechanism works),
+so the mutant arm is carrying the falsifiability, not the clean bound.
+
+**THE MOD ARM'S HALF, merged from the site-link track.** The core pass can only
+resolve a firm the world admits is siteless, so the reader had to stop lying about
+which firms hold which sites. Five desync paths, all in `EconReader.cs`: `AddFirm`
+and the `SyncFirms` re-link both claimed a parcel UNCONDITIONALLY (so a second
+company could take a held site, leaving the incumbent pointing at a parcel naming
+the newcomer); the company-despawn branch cleared the parcel end and left the dead
+firm naming a parcel that may since have been re-let; the entity-despawn branch in
+`SyncParcels` evicted households but never cleared `f.Parcel`. THE FIFTH IS THE ONE
+THAT MATTERED AND WAS NOT IN THE BRIEF: `ParcelIndex` was never pruned of despawned
+entities, and `SyncTick` runs `SyncParcels` → `SyncHouseholds` → `SyncFirms`
+(`EconReader.cs:159-162`), both of the latter re-linking renters through that index
+— so clearing a firm's parcel on demolition was UNDONE ONE PASS LATER, ON THE SAME
+TICK. Without that, the fourth fix was inert. All five now route through a new
+`EconSiteLink` (leaving clears both ends; taking is REFUSED when a live firm holds
+the site, and the loser ends unsited — the state the core pass can see — rather
+than half-linked; a claim held by a dead or absent firm is stale and is taken over).
+
+`modsync`, a new command, is the coverage: a real synthetic city run 120 ticks so
+the audited population is the ENGINE's, then the reader's claim and demolition
+paths replayed over it. **6/6**, with `--mutant-site-steal` and
+`--mutant-demolition-keeps-site` each reddening exactly ONE leg (0/59 refused and
+0/59 unsited respectively, audit +59 in both) and no floor moving. Floor bound 20
+is measured: sited firms across seeds {0, 1, 9, 13, 25, 138, 549, 910, 20260806}
+read 55-67, so the bound sits under the observed minimum of 55.
+
+TWO THINGS ABOUT THAT TRACK THAT CORRECT THIS REPO'S OWN FOLKLORE. (1) **The mod
+project has no shims and `dotnet build` type-checks none of it.**
+`CS2Econ.Mod.csproj:22` defines `OUT_OF_GAME_BUILD` and every game-facing class is
+`#if OUT_OF_GAME_BUILD` → a stub that THROWS / `#else` → the real body, so the
+default build compiles the stub halves only. The in-game halves were type-checked
+here through a scratch project compiling them against hand-written stubs of the
+Colossal/Unity shapes, whose own ability to fail was demonstrated by swapping two
+arguments until it errored. (2) **`ParcelIndex.Remove` has no automated check** —
+it lives inside the `#if` and its consequence is only observable in-game. Recorded
+as a known gap, not as coverage.
+
+THE FIX DOES REACH THE MOD ARM, VERIFIED RATHER THAN ASSUMED: `EconBridgeSystem.cs:217`
+calls `_engine.Step()`, and `Step()` (`EconomyEngine.cs:114`) is the tick method
+containing `FirmLifecycle()`. So `ResolveDisplacedFirms` runs on the arm the defect
+was actually found on, which was the open question when the two halves were split.
+
+AT THE MERGED TREE: verify **63/63** on seed 1, `fingerprint --check` all 13 lanes
+matching with no accept, `modsync` 6/6.
 
 **RECONCILED AT THE REGISTRY-FIX COMMIT.** The two-track and four-track merges each carried their own branch's row table into this file, and a union merge left BOTH standing — two tables making contradictory claims about the same seeds (one said seed 5's Weber leg was red, the other that it was green; one carried an occupancy row and a seed-13 collapse row that two other tracks had already fixed). That is precisely the failure this file exists to prevent, and it was self-inflicted by the merge, not by any item. Every row below is now re-derived from runs on the MERGED tree `234d1c3`: `verify` seeds 0/1/5/9/13, `occsweep --seeds 50`, `clearsweep --seeds 300`, and `webersweep`. What those runs read at `234d1c3`: verify 60/60 on seeds 1, 9 and 13 and 59/60 on seeds 0 (Weber) and 5 (nonres parity); `occsweep` **57/57**, which CLOSED the occupancy row; `clearsweep --seeds 300` **291/300** red on exactly {4, 6, 96, 100, 148, 266, 268, 272, 297}, which is the union of the two clearing-price rows below and confirms both; `webersweep` **25/26** red on **seed 0 alone**, which confirms the Weber row and settles the contradiction — seed 5's Weber leg is genuinely GREEN, the diversity-leg demotion having done what it claimed. Rows the measurement closed moved to Closed with the run that closed them; rows it confirmed kept their original attribution text, which is the per-item history and is worth more than a restatement.
 

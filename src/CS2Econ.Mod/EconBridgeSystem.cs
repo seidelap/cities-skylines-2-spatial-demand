@@ -264,8 +264,18 @@ namespace CS2Econ.Mod
             double drift = 0; int n = 0;
             foreach (var kv in e.W.Calibration.ByUse) { drift += Math.Abs(kv.Value.Factor - 1.0); n++; }
             if (n > 0) drift /= n;
+            // Site-link audit (EconSiteLink): live firms pointing at a site they
+            // do not hold, and sites naming a firm that is not standing on them.
+            // BOTH MUST READ ZERO — a non-zero left leg is the silent mode this
+            // instrument exists for (the firm stays inside every engine loop,
+            // including the one its own exit check sits in). This is telemetry,
+            // not a check: the mod arm has no in-game test to fail, so the
+            // bring-up log is where the invariant is observed. The out-of-game
+            // check that CAN fail is the harness `modsync` fixture.
+            int siteDrift = EconSiteLink.Audit(e.W, out int badFirms, out int badSites);
             var wtr = _writer;
             return $"[CS2Econ] tick={e.W.Tick} pop={pop} firms={firms} drift={drift:F3} "
+                 + (siteDrift > 0 ? $"SITELINK[firms={badFirms} sites={badSites}] " : "sitelink=ok ")
                  + $"landRev={e.LandRevenueThisTick:F1} shelter={e.ShelterOccupied}/{e.ShelterCapacity} "
                  + $"shadow={Mod.Flags.ShadowAccountingOnly} clusters={e.Costs.ClusterCount} costsV={e.Costs.Version} "
                  + $"writes[rent={wtr?.RentWrites ?? 0} cond={wtr?.ConditionWrites ?? 0} "
