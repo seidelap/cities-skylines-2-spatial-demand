@@ -511,9 +511,12 @@ before this item) leaves 13–29 live firms holding no site; `--mutant-half-unli
 firms and passes the settlement leg clean, and is caught only by the link leg, at
 12–28 breaks against a bound of 0.
 
-WHAT THE FLOOR IS FOR, MEASURED. `displaceprobe`, seeds {0, 1, 5, 9, 13}: 13/18/
+WHAT THE FLOOR IS FOR, MEASURED. `displaceprobe`, seeds {0, 1, 5, 9, 13}: 29/18/
 13/22/14 firms displaced at t=150, re-sited 26/12/11/12/4, exits 3/6/2/10/10,
-siteless at t=300 **0 on every seed**. Both branches are exercised on every seed,
+siteless at t=300 **0 on every seed**. (The seed-0 count read 13 here when this
+paragraph was first committed at 3861683 — a transcription error, caught by a
+reader checking it against the engine's own `Displaced == Resited + Exits`
+identity, which 26 + 3 satisfies at 29 and not at 13. The other four agreed.) Both branches are exercised on every seed,
 which is what the floor's `>= 1` of each asserts and why "displace nobody" or
 "exit everything" cannot pass it.
 
@@ -548,6 +551,19 @@ nothing in the pure simulation strands a firm (`Leveling.cs:76` refuses to
 redevelop an occupied parcel; `Construction.cs:396` only touches parcels under
 construction, which no firm occupies) — they are tripwires against a state
 `EconReader` can already reach and `#48` will produce by design.
+
+AT THE DISPLACED-FIRM COMMIT the gate is: verify **62/63** on seed 0, **63/63**
+on seed 1, **62/63** on seed 5 — and both failures are the standing reds in the
+table below, named in the run output rather than assumed (seed 0 Weber; seed 5
+`nonres parity: office product`). All three new legs are green on all three, and
+the two amended legs (the arrears floor and its partner, now carrying the
+`siteless == 0` conjunct) are green on all three. Seeds 9 and 13 were still
+running at commit time and are recorded when they land; `fingerprint --check`,
+`canary`, `laborcanary` and a `shopsweep` re-measurement of the entrant-survival
+constants are OWED at this commit and not yet run — the entrant leg's cohort
+composition moved slightly when the death branch stopped being gated on the site
+test (seed 0 clean arm reads 0 of 1 where the pre-change tree read 0 of 0), and a
+measured constant whose population moved must be re-measured, not assumed.
 
 **RECONCILED AT THE REGISTRY-FIX COMMIT.** The two-track and four-track merges each carried their own branch's row table into this file, and a union merge left BOTH standing — two tables making contradictory claims about the same seeds (one said seed 5's Weber leg was red, the other that it was green; one carried an occupancy row and a seed-13 collapse row that two other tracks had already fixed). That is precisely the failure this file exists to prevent, and it was self-inflicted by the merge, not by any item. Every row below is now re-derived from runs on the MERGED tree `234d1c3`: `verify` seeds 0/1/5/9/13, `occsweep --seeds 50`, `clearsweep --seeds 300`, and `webersweep`. What those runs read at `234d1c3`: verify 60/60 on seeds 1, 9 and 13 and 59/60 on seeds 0 (Weber) and 5 (nonres parity); `occsweep` **57/57**, which CLOSED the occupancy row; `clearsweep --seeds 300` **291/300** red on exactly {4, 6, 96, 100, 148, 266, 268, 272, 297}, which is the union of the two clearing-price rows below and confirms both; `webersweep` **25/26** red on **seed 0 alone**, which confirms the Weber row and settles the contradiction — seed 5's Weber leg is genuinely GREEN, the diversity-leg demotion having done what it claimed. Rows the measurement closed moved to Closed with the run that closed them; rows it confirmed kept their original attribution text, which is the per-item history and is worth more than a restatement.
 
