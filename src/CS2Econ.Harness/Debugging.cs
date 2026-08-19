@@ -2673,6 +2673,31 @@ namespace CS2Econ.Harness
                                   $"hist[L1..L5]={hist[1]}/{hist[2]}/{hist[3]}/{hist[4]}/{hist[5]} " +
                                   $"| occupied-only clusters={occNc,4} meanMaxRung=" +
                                   $"{(occNc > 0 ? occSum / occNc : 0):F2}");
+
+                // Q13: THE SAME QUESTION AT PARCEL GRAIN, which is the grain the
+                // benefit is actually felt at. Counting CLUSTERS answers "where
+                // would Option L bind"; it cannot answer "how much". A sector
+                // whose ladder is capped in one thin cluster and uncapped in
+                // eleven fat ones reads the same per-cluster mean as the
+                // reverse. `moved` is the parcel count Option L would actually
+                // pull down — ℓ* strictly above the parcel's own column max —
+                // and `rungsSaved` is by how much in total, so a benefit of
+                // "two parcels by one rung" cannot be reported as if it were
+                // the sector.
+                int built = 0, occupied = 0, moved = 0, rungsSaved = 0;
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || pl.Use != s) continue;
+                    if ((uint)pl.Cluster >= (uint)C) continue;
+                    built++;
+                    if (Live(pl)) occupied++;
+                    int cap = maxRung[pl.Cluster];
+                    if (pl.TargetLevel > cap) { moved++; rungsSaved += pl.TargetLevel - cap; }
+                }
+                Console.WriteLine($"              Q13 parcel grain: built={built} occupied={occupied} " +
+                                  $"| Option L would move {moved} ({(built > 0 ? 100.0 * moved / built : 0):F1} % of built) " +
+                                  $"by {rungsSaved} rungs total " +
+                                  $"({(moved > 0 ? (double)rungsSaved / moved : 0):F2} per moved parcel)");
             }
 
             // ---- E. the bill, decomposed, and at LR = 0 ----------------------
@@ -2929,6 +2954,67 @@ namespace CS2Econ.Harness
                                       $"{argmaxHist[1]}/{argmaxHist[2]}/{argmaxHist[3]}/{argmaxHist[4]}/{argmaxHist[5]}");
                     Console.WriteLine($"              D(5,L0) at m={m:F2} (clusters BOUNDED): " + string.Join(" ", dmRow));
                     Console.WriteLine($"              D(5,L0) at m=0.00 (clusters BOUNDED): " + string.Join(" ", d0Row));
+
+                    // Q12: THE CROSS-CLUSTER CRITERION. Everything above tests a
+                    // cluster against its OWN slope X_c, which is the top-cluster
+                    // special case. A bidder with an alternative taken over doors
+                    // ANYWHERE nets that alternative off every bid it makes, so
+                    // the question at a door is not "is this column steep" but
+                    // "does this door still clear its own structure floor once
+                    // the bidder's best alternative elsewhere is netted off":
+                    //     value_c(5) − A ≤ S(5,1.0)   ⇒ the ℓ5 door is bounded.
+                    // A is reported under BOTH candidate scopes because the
+                    // design has not settled which it means and the two give
+                    // different answers: over every door in the city, and over
+                    // only those doors a built parcel actually stands at. No
+                    // mechanism is being exercised here — nothing named FirmSite
+                    // exists at this commit — these are reads of the same value
+                    // table the ladder already uses, under two definitions of A.
+                    double aAll = double.NegativeInfinity, aStanding = double.NegativeInfinity;
+                    var standingDoor = new bool[C, p.MaxLevel + 1];
+                    foreach (var pl in w.Parcels)
+                        if (pl.State == ParcelState.Built && pl.Use == s
+                            && (uint)pl.Cluster < (uint)C && pl.Level >= 1 && pl.Level <= p.MaxLevel)
+                            standingDoor[pl.Cluster, pl.Level] = true;
+                    for (int c = 0; c < C; c++)
+                    {
+                        if (!present[c]) continue;
+                        for (int l = 1; l <= p.MaxLevel; l++)
+                        {
+                            double surplus = LandAccounting.FirmBidPerSlot(acc, trade, c, s, l, p, out _, w.Clusters)
+                                             - LandAccounting.SPerUnit(l, 1.0, p);
+                            if (surplus > aAll) aAll = surplus;
+                            if (standingDoor[c, l] && surplus > aStanding) aStanding = surplus;
+                        }
+                    }
+                    if (double.IsNegativeInfinity(aAll)) aAll = 0;
+                    if (double.IsNegativeInfinity(aStanding)) aStanding = 0;
+                    double s5 = LandAccounting.SPerUnit(p.MaxLevel, 1.0, p);
+                    int bcAll = 0, bcStand = 0, bpAll = 0, bpStand = 0, parcelsHere = 0;
+                    var margin = new List<double>();
+                    for (int c = 0; c < C; c++)
+                    {
+                        if (!present[c]) continue;
+                        double v5 = LandAccounting.FirmBidPerSlot(acc, trade, c, s, p.MaxLevel, p, out _, w.Clusters);
+                        bool bAll = v5 - aAll <= s5, bStand = v5 - aStanding <= s5;
+                        if (bAll) bcAll++;
+                        if (bStand) bcStand++;
+                        margin.Add(v5 - aAll - s5);
+                        int here = 0;
+                        foreach (var pl in w.Parcels)
+                            if (pl.State == ParcelState.Built && pl.Use == s && pl.Cluster == c) here++;
+                        parcelsHere += here;
+                        if (bAll) bpAll += here;
+                        if (bStand) bpStand += here;
+                    }
+                    margin.Sort();
+                    Console.WriteLine($"              Q12 cross-cluster: A(all doors)={aAll:F3} A(standing doors)={aStanding:F3} " +
+                                      $"S(5,1.0)={s5:F3}");
+                    Console.WriteLine($"              Q12 BOUNDED by value_c(5)−A ≤ S(5,1.0): " +
+                                      $"all-doors {bcAll}/{nc} clusters ({bpAll}/{parcelsHere} parcels), " +
+                                      $"standing-doors {bcStand}/{nc} clusters ({bpStand}/{parcelsHere} parcels) " +
+                                      $"| margin v5−A(all)−S(5,1) p10={Pct(margin, 0.1):F3} p50={Pct(margin, 0.5):F3} " +
+                                      $"p90={Pct(margin, 0.9):F3}");
                 }
             }
 
