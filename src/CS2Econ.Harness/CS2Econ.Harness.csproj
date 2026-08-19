@@ -15,6 +15,15 @@
 
   <ItemGroup>
     <ProjectReference Include="../CS2Econ.Core/CS2Econ.Core.csproj" />
+    <!-- The mod project, in its OUT_OF_GAME_BUILD configuration: every game
+         touchpoint compiles as a stub, so this links no Colossal Order code and
+         the rule above still holds. Three classes in CS2Econ.Mod are compiled
+         OUTSIDE the #if precisely so the harness can pin them — EconAssess
+         ("compiled in both builds so the harness can pin it"), EconSeams ("the
+         system-disable seam as DATA … harness-testable") and EconSiteLink — and
+         until this reference existed, nothing could. ModSiteLink.cs is the
+         first fixture to use it; the other two remain unpinned. -->
+    <ProjectReference Include="../CS2Econ.Mod/CS2Econ.Mod.csproj" />
   </ItemGroup>
 
 </Project>

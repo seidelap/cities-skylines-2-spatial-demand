@@ -449,10 +449,19 @@ namespace CS2Econ.Mod
         ///   3. Renter survival. If renters do NOT survive an external swap:
         ///      EVICT-REHOUSE FALLBACK (the documented contract) — before
         ///      swapping, clear each renter's PropertyRenter and let the
-        ///      engine's allocation machinery re-house them next tick;
-        ///      core-side the occupants keep their parcel assignment, so the
-        ///      round trip is invisible to the economy (same recovery path
-        ///      SyncParcels already uses for demolitions).</summary>
+        ///      engine's allocation machinery re-house them next tick.
+        ///      CORE-SIDE THE OCCUPANTS DO NOT KEEP THEIR ASSIGNMENT, and an
+        ///      earlier draft of this note claimed they did. EconReader re-links
+        ///      renters every SyncTick by resolving PropertyRenter.m_Property
+        ///      through ParcelIndex: a cleared m_Property resolves to −1, so
+        ///      SyncHouseholds sets HomeParcel = −1 and SyncFirms unsites the
+        ///      firm (EconSiteLink.Attach with −1) on the very next sync. The
+        ///      round trip is therefore a real eviction on both sides, not a
+        ///      no-op — which is survivable (both are states the engine's
+        ///      allocation and the reconciliation pass act on) but it is a
+        ///      vacancy event the leveling clock will see, and whoever
+        ///      implements this fallback owes the swap either a same-tick
+        ///      re-rent or an explicit decision to accept the churn.</summary>
         private bool Verify_SwapLevelPrefab(EntityManager em, Entity building, Entity currentPrefab, byte targetLevel)
         {
             // Lazy prefab catalog index over §3-verified prefab data:

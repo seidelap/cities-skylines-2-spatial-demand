@@ -42,6 +42,14 @@ with the game works.
 dotnet build -c Release
 dotnet run -c Release --project src/CS2Econ.Harness -- verify
 
+# the mod arm's ONLY out-of-game check (src/CS2Econ.Harness/ModSiteLink.cs):
+# the firm<->site link EconReader maintains, driven through EconSiteLink — the
+# part of the reader deliberately compiled outside the #if so it can be tested
+# here. 6/6 expected; each mutant must red exactly one leg.
+dotnet run -c Release --project src/CS2Econ.Harness -- modsync
+dotnet run -c Release --project src/CS2Econ.Harness -- modsync --mutant-site-steal
+dotnet run -c Release --project src/CS2Econ.Harness -- modsync --mutant-demolition-keeps-site
+
 # the in-game build (flips off OUT_OF_GAME_BUILD, imports Mod.props/Mod.targets):
 dotnet build src/CS2Econ.Mod/CS2Econ.Mod.csproj -c Release -p:InGame=true
 ```
@@ -115,6 +123,18 @@ Ordered by architectural risk; each gate changes the plan if it fails.
    the Tier D injection point.
 9. **UI toolchain end-to-end** (§9 item 9) — template → webpack → Mods folder
    → binding visible in-game. UI phase only.
+10. **Site-link audit stays at `sitelink=ok`** — watch `EconBridgeSystem`'s
+    `StatusLine` (logged every `LogEveryTicks`) across a session that
+    demolishes buildings, bulldozes a district and lets vanilla relocate
+    companies. `SITELINK[firms=… sites=…]` in place of `sitelink=ok` means the
+    reader has let a live firm and a parcel disagree, and the LEFT number is
+    the dangerous one: `f.Dead || f.Parcel < 0` is what every engine firm loop
+    guards on, so a firm pointing at a site it does not hold is not skipped —
+    it produces off a building that is gone and cannot reach its own exit
+    check (`EconomyEngine.cs:1673`/`:1782`). `EconSiteLink` is what keeps this
+    at zero and `modsync` (§2) is the out-of-game half of the same assertion;
+    this checklist item is the in-game half, because the ECS traversal around
+    those calls is not testable on a build machine.
 
 ## 5. Flipping from shadow to live, one tier at a time
 

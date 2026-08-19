@@ -67,6 +67,144 @@ namespace CS2Econ.Mod
     // split) and the duplicate was removed — reconciliation rationale is
     // documented at the fold table in ResourceMap.cs.
 
+    /// <summary>The firm↔site link — Firm.Parcel on one side, Parcel
+    /// .OccupantFirm on the other — as one small set of PAIRED mutations.
+    /// Compiled in BOTH builds on purpose (the discipline EconWriter.EconAssess
+    /// and EconSeams already follow): the game-facing halves of this file do not
+    /// compile out-of-game, so anything that has to be testable has to live
+    /// outside the #if. Every place the reader moves a firm on or off a site
+    /// goes through here, so the invariant has exactly one implementation.
+    ///
+    /// THE INVARIANT, both directions:
+    ///   (1) a LIVE firm never points at a site it does not hold —
+    ///       !f.Dead ∧ f.Parcel ≥ 0  ⇒  Parcels[f.Parcel].OccupantFirm == f.Id
+    ///   (2) a site never points at a firm that is not standing on it —
+    ///       pl.OccupantFirm ≥ 0  ⇒  Firms[pl.OccupantFirm] is live ∧ its
+    ///       Parcel is pl.Id
+    ///
+    /// WHY IT MUST HOLD ON THE READER SIDE SPECIFICALLY. Every firm loop in the
+    /// engine is guarded by `if (f.Dead || f.Parcel &lt; 0) continue;` —
+    /// Access.cs:467, EconomyEngine.cs:770/903/1021/1035/1110/1238/1256/1263/
+    /// 1385/1481/1617/1673, LaborAuction.cs:317, Trade.cs:221, and the writer's
+    /// own EconWriter.cs:244. That predicate is a SITE test standing in for a
+    /// liveness test, so breaking (1) does not hide the firm — it does the
+    /// opposite. A live firm still pointing at a demolished or re-let parcel
+    /// keeps producing off that parcel's level and condition, keeps its slots in
+    /// the labor market, keeps its money inside ledger conservation, and owes
+    /// the levy on land it does not hold; and because the firm exit path sits
+    /// INSIDE the loop guarded at EconomyEngine.cs:1673 (the exit itself is at
+    /// :1782-1792), it reads the same stale site and can never die of running
+    /// out of money. The failure is silent in the strongest sense: no loop skips
+    /// it, so no count moves.
+    ///
+    /// Breaking (2) is quieter but real: a parcel naming a firm that stands
+    /// elsewhere is neither vacant to the entry rule (EconomyEngine.cs:1798)
+    /// nor a relocation candidate (EconomyEngine.cs:1868), so the site is
+    /// withdrawn from the non-residential market with nothing on it.
+    ///
+    /// THE RULE THESE METHODS ENFORCE. Leaving a site always clears BOTH ends.
+    /// Taking a site is REFUSED when a live firm already holds it, and the
+    /// firm that loses the claim is left UNSITED (Parcel = −1) rather than
+    /// half-linked. Unsited is a state FirmLifecycle's reconciliation pass sees
+    /// and gives a stated outcome to (re-site, or exit with the residual
+    /// booked); half-linked is the state nothing can see.</summary>
+    public static class EconSiteLink
+    {
+        /// <summary>MUTANT SWITCH (harness `modsync --mutant-site-steal`):
+        /// restores the pre-fix "last writer wins" claim — EconReader's AddFirm
+        /// and SyncFirms both wrote `Parcels[pid].OccupantFirm = f.Id`
+        /// unconditionally, so a second company resolving onto a site another
+        /// firm already held silently left the incumbent pointing at a parcel
+        /// that named someone else. Never a shipping mode.</summary>
+        public static bool MutantSiteStealing;
+
+        /// <summary>MUTANT SWITCH (harness `modsync --mutant-demolition-keeps-site`):
+        /// restores the pre-fix demolition path — SyncParcels cleared the PARCEL
+        /// end (`pl.OccupantFirm = -1`) and left the firm still pointing at the
+        /// parcel it had just been evicted from. Never a shipping mode.</summary>
+        public static bool MutantDemolitionKeepsFirmSite;
+
+        /// <summary>Is this claim real? A parcel id on a firm, or a firm id on a
+        /// parcel, is only meaningful while the other end agrees; an id that
+        /// fails this test is a stale claim and may be taken over rather than
+        /// respected. Total: out-of-range ids answer false instead of throwing,
+        /// because the reader runs against a world the engine also appends
+        /// to.</summary>
+        private static bool HoldsSite(WorldState w, int firmId, int parcelId)
+            => firmId >= 0 && firmId < w.Firms.Count
+               && !w.Firms[firmId].Dead && w.Firms[firmId].Parcel == parcelId;
+
+        /// <summary>The firm gives up whatever site it holds; both ends end
+        /// consistent. Idempotent, and safe on a firm that holds nothing. The
+        /// parcel end is cleared only when it actually names THIS firm — a
+        /// parcel that names somebody else is that firm's claim, not ours to
+        /// revoke.</summary>
+        public static void Detach(WorldState w, Firm f)
+        {
+            int pid = f.Parcel;
+            if (pid >= 0 && pid < w.Parcels.Count && w.Parcels[pid].OccupantFirm == f.Id)
+                w.Parcels[pid].OccupantFirm = -1;
+            f.Parcel = -1;
+        }
+
+        /// <summary>Put the firm on parcelId, or leave it UNSITED. Total on
+        /// every input: parcelId &lt; 0 (or out of range) simply detaches, and a
+        /// site a live firm already holds is refused. The caller learns which
+        /// happened from the return value and must not assume the firm moved —
+        /// that assumption is what the AddFirm hole was.</summary>
+        public static bool Attach(WorldState w, Firm f, int parcelId)
+        {
+            Detach(w, f);
+            if (parcelId < 0 || parcelId >= w.Parcels.Count) return false;
+            var pl = w.Parcels[parcelId];
+            // A claim whose firm is dead, gone, or standing somewhere else is
+            // stale — taking it over REPAIRS invariant (2) rather than
+            // violating it. Only a live firm actually standing here wins.
+            if (!MutantSiteStealing && HoldsSite(w, pl.OccupantFirm, parcelId)) return false;
+            pl.OccupantFirm = f.Id;
+            f.Parcel = parcelId;
+            return true;
+        }
+
+        /// <summary>The site loses its firm — demolition, despawn, any event
+        /// that ends the tenancy from the PARCEL's side. Mirrors what
+        /// SyncParcels already does for households (HomeParcel = −1 on every
+        /// occupant, then the list cleared): the firm end is cleared too, so
+        /// what is left behind is an unsited firm the reconciliation pass can
+        /// act on rather than a firm reading a building that is gone.</summary>
+        public static void ReleaseSite(WorldState w, Parcel pl)
+        {
+            int fid = pl.OccupantFirm;
+            if (!MutantDemolitionKeepsFirmSite && fid >= 0 && fid < w.Firms.Count
+                && w.Firms[fid].Parcel == pl.Id)
+                w.Firms[fid].Parcel = -1;
+            pl.OccupantFirm = -1;
+        }
+
+        /// <summary>Count live violations of (1) and (2). Read-only; O(firms +
+        /// parcels). The harness asserts on it (ModSiteLink), and
+        /// EconBridgeSystem.StatusLine prints it during bring-up, where it is
+        /// the only instrument the mod arm has.</summary>
+        public static int Audit(WorldState w, out int firmsOnSitesTheyDoNotHold,
+                                out int sitesNamingAbsentFirms)
+        {
+            firmsOnSitesTheyDoNotHold = 0;
+            sitesNamingAbsentFirms = 0;
+            foreach (var f in w.Firms)
+            {
+                if (f.Dead || f.Parcel < 0) continue;
+                if (f.Parcel >= w.Parcels.Count || w.Parcels[f.Parcel].OccupantFirm != f.Id)
+                    firmsOnSitesTheyDoNotHold++;
+            }
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.OccupantFirm < 0) continue;
+                if (!HoldsSite(w, pl.OccupantFirm, pl.Id)) sitesNamingAbsentFirms++;
+            }
+            return firmsOnSitesTheyDoNotHold + sitesNamingAbsentFirms;
+        }
+    }
+
 #if OUT_OF_GAME_BUILD
     /// <summary>Out-of-game placeholder keeping the seam type-checked (same
     /// discipline as Mod.cs). The real implementation is the
@@ -586,7 +724,17 @@ namespace CS2Econ.Mod
                 Id = w.Firms.Count,
                 Sector = sector,
                 Output = output,
-                Parcel = pid,
+                // Born UNSITED and sited below through EconSiteLink.Attach,
+                // never here. Writing pid straight into the field was the older
+                // shape and it had two ways to lie: pid < 0 (the vanilla
+                // property did not resolve — a service building, a prefab
+                // without SpawnableBuildingData, a building spawned since the
+                // last sync) produced a live firm pointing at nothing that the
+                // block below then never registered anywhere; and pid ≥ 0 onto a
+                // site another firm already held produced two firms claiming one
+                // parcel, with the incumbent left pointing at a parcel that
+                // named the newcomer. Attach is total over both.
+                Parcel = -1,
                 Money = Verify_CompanyMoney(em, e, p.FirmSeedCapital),
                 JobSlots = slots,
                 EnteredTick = w.Tick,
@@ -596,15 +744,19 @@ namespace CS2Econ.Mod
             if (em.HasComponent<Game.Companies.Profitability>(e))                      // §3: byte
                 f.ProfitEma = ProfitabilityToFlow(
                     em.GetComponentData<Game.Companies.Profitability>(e).m_Profitability, slots);
-            if (pid >= 0)
-            {
-                w.Parcels[pid].OccupantFirm = f.Id;
-                w.Parcels[pid].Units = Math.Max(w.Parcels[pid].Units, slots);  // job slots = the assessment unit basis
-            }
             FirmIndex[e] = f.Id;
             FirmEntities.Add(e);
             FirmIds.Add(f.Id);
+            // Registered BEFORE the claim: EconSiteLink checks the incumbent by
+            // id against w.Firms, and a parcel is not allowed to name a firm the
+            // list does not yet hold (invariant 2) even for one statement.
             w.Firms.Add(f);
+            // A refused or absent claim leaves the firm unsited — the state
+            // FirmLifecycle's reconciliation pass picks up and gives a stated
+            // outcome (re-site, or exit with the residual booked). Units is the
+            // assessment unit basis and is only raised where the claim landed.
+            if (EconSiteLink.Attach(w, f, pid))
+                w.Parcels[pid].Units = Math.Max(w.Parcels[pid].Units, slots);
         }
 
         /// <summary>Vanilla Profitability byte (0..255, ~127 break-even) → a
@@ -622,9 +774,13 @@ namespace CS2Econ.Mod
                 if (f.Dead) continue;
                 if (!em.Exists(e))
                 {
+                    // The company is gone: release the site from BOTH ends. The
+                    // parcel end alone was enough while the firm was about to be
+                    // skipped as Dead anyway, but a dead firm still naming a
+                    // parcel is a claim nothing ever revokes — and the parcel it
+                    // names may since have been re-let to a live firm.
+                    EconSiteLink.Detach(w, f);
                     f.Dead = true;
-                    if (f.Parcel >= 0 && w.Parcels[f.Parcel].OccupantFirm == f.Id)
-                        w.Parcels[f.Parcel].OccupantFirm = -1;
                     continue;
                 }
                 f.JobSlots = Math.Max(1, em.GetComponentData<Game.Companies.WorkProvider>(e).m_MaxWorkers);
@@ -638,6 +794,10 @@ namespace CS2Econ.Mod
                             em.GetComponentData<Game.Companies.Profitability>(e).m_Profitability, f.JobSlots);
                 }
                 // Property re-link (vanilla relocations in shadow mode).
+                // ParcelIndex no longer holds entities that have despawned
+                // (SyncParcels prunes them), so a company whose m_Property still
+                // names a demolished building resolves to −1 here and is left
+                // unsited rather than re-linked onto the emptied parcel.
                 int newPid = -1;
                 if (em.HasComponent<Game.Buildings.PropertyRenter>(e))
                 {
@@ -646,14 +806,20 @@ namespace CS2Econ.Mod
                 }
                 if (newPid != f.Parcel)
                 {
-                    if (f.Parcel >= 0 && w.Parcels[f.Parcel].OccupantFirm == f.Id)
-                        w.Parcels[f.Parcel].OccupantFirm = -1;
-                    if (newPid >= 0)
-                    {
-                        w.Parcels[newPid].OccupantFirm = f.Id;
+                    // Attach detaches from the old site first, so the old
+                    // parcel is never left naming a firm that has moved on, and
+                    // refuses a site a live firm already holds — vanilla can
+                    // report two companies in one building (relocation overlap,
+                    // multi-tenant lots) and the engine's Parcel carries exactly
+                    // one OccupantFirm, so one of the two must end unsited
+                    // rather than both claiming it. A refusal costs at most one
+                    // tick of lag and heals itself: the loser sits at
+                    // Parcel = −1, so newPid != f.Parcel still holds next sync
+                    // and it retries — by which time either the incumbent has
+                    // left (and the claim lands) or FirmLifecycle's
+                    // reconciliation pass has already given it an outcome.
+                    if (EconSiteLink.Attach(w, f, newPid))
                         w.Parcels[newPid].Units = Math.Max(w.Parcels[newPid].Units, f.JobSlots);
-                    }
-                    f.Parcel = newPid;
                 }
             }
             // Newly spawned companies.
@@ -675,13 +841,37 @@ namespace CS2Econ.Mod
                 var pl = w.Parcels[ParcelIds[i]];
                 if (!em.Exists(e))
                 {
+                    // The entity is gone, so the entity→parcel mapping is a lie
+                    // from here on. Drop it BEFORE anything else resolves
+                    // through it: SyncFirms and SyncHouseholds both run after
+                    // this pass in the same SyncTick and both re-link renters by
+                    // looking up PropertyRenter.m_Property in ParcelIndex, so a
+                    // company or household whose m_Property still names the
+                    // demolished building would be put straight back onto the
+                    // parcel this branch has just emptied — undoing the eviction
+                    // below inside the same tick. The append-only ParcelEntities
+                    // / ParcelIds pairing is untouched (the writer and the save
+                    // seam walk those by slot), and a recycled Entity carries a
+                    // new Version so it can never collide with the dropped key.
+                    ParcelIndex.Remove(e);
                     if (pl.State != ParcelState.Empty)
                     {
                         // Demolished/despawned: evict; the engine's allocation
                         // machinery re-houses next tick.
                         foreach (int hid in pl.OccupantHouseholds) w.Households[hid].HomeParcel = -1;
                         pl.OccupantHouseholds.Clear();
-                        pl.OccupantFirm = -1;
+                        // The firm end is released the same way the household
+                        // end is, and for the same reason. Clearing only
+                        // pl.OccupantFirm left the firm still pointing here:
+                        // that firm is WORSE off than an unsited one, because
+                        // `f.Dead || f.Parcel < 0` is what every engine loop
+                        // guards on, so it stays fully visible — producing off a
+                        // demolished building's level and condition, owing no
+                        // levy on Units == 0, and unable to reach its own
+                        // bankruptcy check, which sits inside that same guarded
+                        // loop (EconomyEngine.cs:1673/1782). Unsited, it is a
+                        // firm FirmLifecycle's reconciliation pass can see.
+                        EconSiteLink.ReleaseSite(w, pl);
                         pl.State = ParcelState.Empty;
                         pl.Units = 0;
                     }
