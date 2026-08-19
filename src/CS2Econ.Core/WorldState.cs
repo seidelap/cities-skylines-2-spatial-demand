@@ -377,6 +377,78 @@ namespace CS2Econ.Core
         /// EconReader.SyncFirms skips a dead firm forever and FirmIndex blocks
         /// re-creation. So the pass counts those and leaves them alone.</summary>
         public long SiteLostTick = -1;
+
+        // ---- the exit margin (Dixit): revenue against AVOIDABLE cost --------
+        /// <summary>Everything this firm must pay THIS TICK to keep operating,
+        /// accumulated as it is incurred: wages, input purchases, and the land
+        /// charge. Sunk cost is excluded because there is none to exclude — a
+        /// firm here owns nothing, and FirmSeedCapital round-trips to
+        /// PhantomBank on every exit path, so it is a line of credit and not a
+        /// stake. The worker-collective dividend is excluded because it is a
+        /// DISTRIBUTION of surplus, not a cost of operating: a firm that pays
+        /// one is by definition covering everything above.
+        ///
+        /// THE LAND TERM IS `owed`, NOT `pay`. The levy takes
+        /// `min(money, owed)` (EconomyEngine.cs, the Levying block), so a firm
+        /// can never fail to cover REALIZED rent — the shortfall is zero by
+        /// construction exactly when the firm is broke, which is exactly when
+        /// the margin matters. A margin built on realized cash would be blind
+        /// to the only cost measured to strand firms here (offices billed
+        /// 489/tick against 428 of gross revenue; see EconParams' parity
+        /// note).</summary>
+        public double OperatingCostThisTick;
+        /// <summary>EMA of (revenue − avoidable cost) per tick: the firm's own
+        /// running read of whether it is covering its costs. Rate 0.05,
+        /// inherited from ProfitEma — no new parameter.
+        ///
+        /// NOT ProfitEma, which despite the name is an EMA of gross REVENUE
+        /// (it is fed RevenueThisTick). Its consumers — the labor auction's
+        /// door cap above all — read it as revenue and are correct to; the name
+        /// is the only thing wrong with it, and renaming a field the auction
+        /// depends on is not this item's business.</summary>
+        public double CashFlowEma;
+        /// <summary>Whether this firm has ever completed a tick it could have
+        /// operated in. Until it has, CashFlowEma is not a forecast it could
+        /// hold, and the first observation SEEDS the EMA rather than being
+        /// averaged against a zero it never lived.
+        ///
+        /// Without this the pipeline kills every entrant. An entrant is
+        /// negative-cash-flow by construction: production is linear in
+        /// WorkersFilled, which is rebuilt only on the RefreshInterval grid,
+        /// while the land charge bills it from its first tick. A zero-seeded
+        /// EMA plus a consecutive-negative counter starts the death clock at
+        /// tick 1 for every new firm — the measured "starves before the EMA can
+        /// ramp" mode that PresentedObserved above exists to prevent, in a new
+        /// disguise. Note the test is COULD-OPERATE, not strictly-positive:
+        /// cash flow is signed, and a genuinely loss-making first tick is a
+        /// real observation.</summary>
+        public bool CashFlowObserved;
+        /// <summary>Consecutive ticks this firm's own cash-flow read has been
+        /// negative. The firm analog of Household.StressTicks, and it follows
+        /// that field's ASYMMETRY deliberately: it increments on a bad tick and
+        /// DECREMENTS on a good one rather than resetting, so recovery costs as
+        /// many ticks as decline did. That asymmetry is the inaction band —
+        /// there is no liquidation cost to build one from, because there is
+        /// nothing to liquidate.
+        ///
+        /// (LevyShortTicks, the older clock beside this one, RESETS on a paid
+        /// tick instead. The divergence is deliberate: that clock asks "is this
+        /// firm in arrears right now", which a single full payment answers,
+        /// while this one asks "is this business viable", which one good tick
+        /// does not.)</summary>
+        public int CashFlowShortTicks;
+        /// <summary>Set when this firm exited because its own cash-flow read
+        /// stayed below zero past its patience — the exit margin proper, as
+        /// distinct from running the balance to CompanyBankruptcyLimit
+        /// (DiedOfWorkingCapital), from arrears (DiedOfArrears), and from
+        /// losing its site (DiedOfDisplacement).</summary>
+        public bool DiedOfCashFlow;
+        /// <summary>Set when this firm exited on the working-capital floor
+        /// (Money &lt; CompanyBankruptcyLimit). This exit shipped for a long
+        /// time with NO flag of its own and was identified by elimination in
+        /// the probes — which stops working the moment a fourth exit exists.
+        /// Naming it is part of adding the fourth.</summary>
+        public bool DiedOfWorkingCapital;
     }
 
     /// <summary>One outside connection with its own supply/demand law

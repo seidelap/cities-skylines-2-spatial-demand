@@ -1076,6 +1076,27 @@ namespace CS2Econ.Core
         /// construct an auction and see only that tag change.</summary>
         public bool OwnerDoors = true;
         public bool ShadowAccountingOnly = false;// stage 3: assess + log, levy nothing
+        /// <summary>THE FIRM EXIT MARGIN (Dixit). A firm whose own read of
+        /// revenue-less-avoidable-cost stays negative past its patience gives up
+        /// its site and leaves — after first trying the site it could carry.
+        ///
+        /// OFF BY DEFAULT, and the reason is a check, not caution. The
+        /// nonres-parity fixture's OFF-arm FLOOR leg asserts that firms really
+        /// do sit past the arrears clock on the shipped default
+        /// (`aOff.stuck >= 1`) — that leg states the defect and is the
+        /// non-degeneracy floor for its partner. A cash-flow exit kills exactly
+        /// that population, so turning this on by default would empty a floor
+        /// leg's population and red it. The flip is a separate, evidenced step
+        /// that has to rewrite that leg first; see KNOWN-RED.
+        ///
+        /// WHAT IT IS NOT: it is not a rule that names taxes or missing workers
+        /// as reasons to fail, which is how the base game triggers company
+        /// relocation. Both of those raise the exit hazard here because they
+        /// drain the margin — a taxed firm pays more, an unstaffed firm earns
+        /// less — and neither appears anywhere in the trigger. That is the
+        /// difference between a hazard that emerges and a hazard that is
+        /// declared.</summary>
+        public bool FirmExitMargin = false;
         /// <summary>Route each household's consumption to the ONE shop it chose,
         /// instead of pooling all consumption citywide and handing it back out
         /// pro-rata to (slots × cluster capture strength).

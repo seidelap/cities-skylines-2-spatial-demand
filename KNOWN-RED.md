@@ -696,6 +696,91 @@ site-losing firms and is red by `--mutant-resolve-unplaced` at 58 kills. A reade
 looking for the evidence should read that leg and not this one; the code comment
 says so at the site.
 
+## The firm exit margin (task #55) — and what turning it on exposed
+
+**THE ZOMBIE FIRMS ARE REAL, THEY ARE OFFICES, AND THEY WERE NEVER MEASURED.**
+`marginprobe --seed 1`, shipped default: 22 standing offices, **100 % of them
+underwater on their own cash-flow read, p50 = −426.69/tick, and zero exits of
+any kind over 400 ticks**. Every office in the city loses 427 a tick forever and
+nothing ever asks it to leave. Extractor is 100 % underwater at −15.09; industrial
+is the single standing firm, underwater. Commercial is healthy at **+59.54**.
+
+That last number is why this went unseen. The one zombie metric this repo had
+(`FirmDiag`: `EMA(revenue) < wageBill`) is **commercial-only**, and it reads
+**0 % on every seed** — a true statement about shops and silence about the sector
+the parity note already indicts. A metric scoped to the healthy sector cannot
+report the sick one.
+
+The arithmetic closes against a defect already on the books. `EconTypes.cs:465`
+records offices billed **489/tick against 428 of GROSS revenue**, because the
+office BID carries `Quality(ℓ)` while office PRODUCTION does not on the shipping
+arm. Add ~366 of wages and the margin is −427. Offices here are not marginal,
+they are structurally unviable, and the working-capital floor never finds out:
+`CompanyBankruptcyLimit = −150` against a reserve of
+`max(200, wageBill × 20)` means a firm must first burn a war chest of `50 m`
+(the dividend fixed point, `FirmDividendRate = 0.02`) — at m = −10/tick, ~115
+ticks of zombie before the existing trigger can fire.
+
+**WHAT THE MARGIN DOES, AND WHAT IT EXPOSES.** With `--exit-margin` on seed 1:
+office 22 alive → **0**, industrial 1 → 0, 11 margin exits and 4 margin
+relocations. The rule fires and it is right to. But vacancy goes
+**50.8 % → 64.4 %**, and offices do not stop dying — **65 are born and die over
+the run against 22 that simply persisted before.** A stable zombie becomes a
+revolving one.
+
+The cause is re-entry, and it is structural: `Sector = pl.Use`
+(`EconomyEngine.cs`, the entry rule) and `pl.Use` is only ever written
+`= pl.Zoned`. **A parcel zoned office can only ever receive another office**,
+which fails the same way for the same reason. Vanilla's "the building gets
+replaced with another industry which is more viable" does not exist here — so
+the exit margin ALONE converts zombie firms into zombie buildings, which is the
+worse failure and the one this registry should have said out loud first.
+
+**SO IT SHIPS OFF.** `FeatureFlags.FirmExitMargin = false`. `fingerprint --check`
+reads **all 13 lanes matching with no accept**, and verify is **64/64** on seed 1
+— the off arm is byte-identical, which is the whole point of shipping it off.
+The flip needs three things it does not have yet: sector freedom on re-entry, the
+office production parity that makes offices viable at all, and a rewrite of the
+nonres-parity OFF-arm FLOOR leg, whose `aOff.stuck >= 1` population is exactly
+what a cash-flow exit kills.
+
+**TWO PREMISES OF THE BRIEF WERE WRONG, BOTH VERIFIED AGAINST THE CODE.**
+(1) "Vacancy reprices the assessment downward by construction, so we cannot have
+vanilla's price-side absorbing state." `LandAccounting.cs:610-617`: `BidPerUnit`
+routes residential kinds to `ResidentialBidPerUnit(… addUnits, minSupply,
+realized)` and everything else to `FirmBidPerSlot`, whose three signatures take
+NONE of those. The repricing channel is **residential-only** — absent from
+exactly the parcels an insolvency pipeline produces. Measured: 44/50/46 % of
+built non-res parcels already vacant on seeds 1/9/13, vacant condition a point
+mass at the floor (p10 = p50 = p90 = 0.05 against 0.91 occupied), entrant excess
+positive on **3 of 162, 1 of 193, 7 of 167**.
+(2) The margin's land term must be **`owed`, not `pay`**. The levy takes
+`min(money, owed)`, so realized rent can never fall short and a margin built on
+realized cash reads a zero shortfall precisely when the firm is broke. This was
+wrong in the first cut of the design and would have shipped a trigger blind to
+the only cost measured to strand firms here.
+
+**CUTCOSTS WAS DROPPED ON PRINCIPLE, NOT EFFICIENCY.** A stress-triggered
+"shrink the payroll" stage is `LaborWardMutant` with a trigger, and
+`LaborAuction.cs:55-58` says what that is: *"NO income-per-member hiring test
+exists anywhere — that Ward rule is the thing this design refuses to encode, and
+EconParams.LaborWardMutant exists so the refusal check can prove it would notice
+one."* A firm has no door lever regardless (doors are `JobSlots × mix`;
+`JobSlots` is the building's unit count), and where production is linear in labor
+shedding a worker sheds its output too. Shipped as
+`Solvent → SeekCheaperSite → Exit`.
+
+**NO SUNK COST EXISTS TO BUILD AN INACTION BAND FROM.** `FirmSeedCapital` is
+drawn from `PhantomBank` at entry and returned to it on every exit path; the
+`Firm` record holds no asset field. So Dixit's sunk and liquidation terms are
+both literally zero here. The band is the clock's asymmetry instead
+(`CashFlowShortTicks` rises on a bad tick and FALLS on a good one), and patience
+scales with the working-capital reserve — the firm's own arithmetic over its own
+roster, and an honest substitute stated as such rather than a sunk cost we do not
+model. Note the deliberate divergence from `LevyShortTicks`, which RESETS on a
+paid tick: that clock asks "in arrears right now", this one asks "is this
+business viable", and one good tick answers the first but not the second.
+
 ## firmprobe Q12 and Q13 — measured, seeds 1/9/13
 
 **Q13, OPTION L AT PARCEL GRAIN.** Share of BUILT parcels whose ℓ\* stands above

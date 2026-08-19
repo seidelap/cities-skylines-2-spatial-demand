@@ -48,6 +48,12 @@ namespace CS2Econ.Harness
         /// NOTHING in the harness could reach the non-default path. Applied
         /// after `--store-level` so an explicit `--pooled` wins.</summary>
         public static bool ForcePooled;
+        /// <summary>Set by `--exit-margin`: turns on FeatureFlags.FirmExitMargin
+        /// for every sim this process builds, so the arm can be measured
+        /// without editing a default that ships off (and must ship off until
+        /// the nonres-parity arrears FLOOR leg, whose population a cash-flow
+        /// exit kills, has been rewritten).</summary>
+        public static bool ForceFirmExitMargin;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
@@ -56,6 +62,7 @@ namespace CS2Econ.Harness
             if (ForceHousingAuction) flags.HousingAuction = true;
             if (ForcePosted) flags.HousingAuction = false;
             if (ForceNonResLandParity) p.NonResLandParity = true;
+            if (ForceFirmExitMargin) flags.FirmExitMargin = true;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);

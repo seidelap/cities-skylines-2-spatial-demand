@@ -66,6 +66,14 @@ namespace CS2Econ.Core
         /// which is what the check's guard leg asserts; on the mod arm a rising
         /// count means the reader's coverage is the thing to go fix.</summary>
         public int FirmUnplacedSeenTotal;
+        /// <summary>Firms that left because their own cash-flow read stayed
+        /// under water past their patience (the exit margin), and firms that
+        /// moved to a site they could carry rather than leaving. Kept apart
+        /// from the arrears counters beside them because the two answer
+        /// different questions: arrears is "did not pay the bill", the margin
+        /// is "could not have paid it".</summary>
+        public int FirmMarginExitsTotal;
+        public int FirmMarginRelocationsTotal;
 
         /// <summary>MUTANT SWITCH: restores office and extractor production
         /// WITHOUT the level and condition terms their assessment prices them
@@ -100,6 +108,17 @@ namespace CS2Econ.Core
         /// place, which is an agent moved against its own default on the
         /// strength of the engine's own ignorance. Never a shipping mode.</summary>
         public static bool MutantResolveUnplacedFirms;
+        /// <summary>MUTANT SWITCH: the exit margin does nothing while its flag
+        /// is on — the zombie world, where a firm whose revenue never covers
+        /// its costs keeps its site until the balance alone finishes it, which
+        /// takes as long as its accumulated surplus lasts. Never a shipping
+        /// mode.</summary>
+        public static bool MutantFirmExitNoMargin;
+        /// <summary>MUTANT SWITCH: every firm gets the same patience whatever
+        /// its working capital, so a one-worker shop and a full office block
+        /// are asked to prove themselves on the same clock. Never a shipping
+        /// mode.</summary>
+        public static bool MutantFirmFlatPatience;
         /// <summary>(tick, household, reason): reason 0 = voluntary cost-driven
         /// relocation within the city, 1 = insolvency-pipeline emigration.</summary>
         public readonly List<(long tick, int household, int reason)> DisplacementExits
@@ -1076,7 +1095,11 @@ namespace CS2Econ.Core
                 if (f.Dead || f.Parcel < 0) continue;
                 for (int cl = 0; cl < 3; cl++)
                     if (filledTotals[cl] > 1e-9)
-                        f.Money -= wageByClass[cl] * (f.FilledByClass[cl] / filledTotals[cl]);
+                    {
+                        double w = wageByClass[cl] * (f.FilledByClass[cl] / filledTotals[cl]);
+                        f.Money -= w;
+                        f.OperatingCostThisTick += w;   // avoidable: the pooled-path wage bill
+                    }
             }
         }
 
@@ -1161,6 +1184,7 @@ namespace CS2Econ.Core
                     bill += _firmClassBase[f.Id * 3 + (int)Segment.All[hh.Segment].Labor];
                 }
                 f.Money -= bill;
+                f.OperatingCostThisTick += bill;   // avoidable: the labor-auction payroll
                 firmDebits += bill;
                 firmCredits += creditByFirm[f.Id];
                 gap += Math.Abs(bill - creditByFirm[f.Id]);
@@ -1668,6 +1692,8 @@ namespace CS2Econ.Core
                 {
                     double debit = deliveredPaid[c] * (f.InputNeedByRes[ri] / demBy[c]);
                     f.Money -= debit;
+                    f.OperatingCostThisTick += debit;   // avoidable: inputs bought to produce
+
                     if (rec != null) rec.FirmDebit += debit;
                 }
             }
@@ -1714,7 +1740,9 @@ namespace CS2Econ.Core
                 foreach (var f in W.Firms)
                 {
                     if (f.Dead || f.Parcel < 0 || f.InputNeedByRes[(int)r] <= 0) continue;
-                    f.Money -= buyerCost * (f.InputNeedByRes[(int)r] / demand);
+                    double inputCost = buyerCost * (f.InputNeedByRes[(int)r] / demand);
+                    f.Money -= inputCost;
+                    f.OperatingCostThisTick += inputCost;   // avoidable: inputs, flat path
                 }
             W.Ledger.Transfer(Account.OutsideWorld, Account.Firms, clear.ExportRevenue);
             W.Ledger.Transfer(Account.Firms, Account.OutsideWorld, clear.ImportCost);
@@ -1739,6 +1767,12 @@ namespace CS2Econ.Core
                     pl.OwedTickS += sOwed;
                     double pay = Math.Min(Math.Max(0, f.Money), owed);
                     f.Money -= pay;
+                    // OWED, not `pay`. The line above takes only what is there,
+                    // so realized rent can never fall short and a margin built
+                    // on it would read a zero shortfall precisely when the firm
+                    // is broke. What a firm cannot afford is the thing that
+                    // ends it, so the margin is charged the full bill.
+                    f.OperatingCostThisTick += owed;
                     FirmLevyOwedThisTick += owed; FirmLevyPaidThisTick += pay;
                     f.LevyOwedCum += owed; f.LevyPaidCum += pay;
                     if (pay < owed - 1e-9) f.LevyShortTicks++; else f.LevyShortTicks = 0;
@@ -1761,6 +1795,17 @@ namespace CS2Econ.Core
                         : f.PresentedThisTick;
                     if (f.PresentedThisTick > 0) f.PresentedObserved = true;
                 }
+                // THE EXIT MARGIN CLOSES HERE, and only here. Every revenue and
+                // every avoidable cost for this tick has landed by this line —
+                // wages and inputs earlier in the tick, the land charge a few
+                // lines above — and the worker-collective dividend below has
+                // not yet fired, which is what keeps a DISTRIBUTION of surplus
+                // out of a measure of whether there is any.
+                double cashFlow = f.RevenueThisTick - f.OperatingCostThisTick;
+                if (!f.CashFlowObserved) { f.CashFlowEma = cashFlow; f.CashFlowObserved = true; }
+                else f.CashFlowEma = MathUtil.Ema(f.CashFlowEma, cashFlow, 0.05);
+                f.OperatingCostThisTick = 0;
+
                 f.GrossRevenueLastTick = f.RevenueThisTick;
                 f.RevenueThisTick = 0; f.OutputThisTick = 0;
 
@@ -1810,6 +1855,83 @@ namespace CS2Econ.Core
                         f.DividendPerEarnerEma = MathUtil.Ema(f.DividendPerEarnerEma, paidPerEarner, 0.05);
                 }
 
+                // THE EXIT MARGIN (Flags.FirmExitMargin — OFF by default; the
+                // flag's own comment carries why). Dixit: a firm leaves when
+                // revenue persistently fails to cover its AVOIDABLE costs, and
+                // the sunk ones are irrelevant to that decision. Here they are
+                // not merely irrelevant, they are absent — a firm owns nothing
+                // and forfeits nothing by leaving — so there is no liquidation
+                // cost to build an inaction band from. The band is the clock's
+                // asymmetry instead: CashFlowShortTicks rises on a bad tick and
+                // FALLS on a good one, so a firm cannot flap on one bad tick
+                // and cannot be rehabilitated by one good one.
+                //
+                // PATIENCE IS THE FIRM'S OWN, AND SCALES. A firm treats its
+                // working-capital reserve as untouchable, so the firm that
+                // holds more of it can wait longer — its own arithmetic over
+                // its own roster, not a citywide clock. Flooring at
+                // FirmSeedCapital makes the ratio at least 1, so an entrant
+                // gets the base patience rather than none.
+                //
+                // NO STAGE CUTS STAFF, deliberately. The obvious middle stage —
+                // shrink the payroll — cannot be written here without encoding
+                // the income-per-member hiring rule LaborAuction refuses by
+                // name (see its header: LaborWardMutant exists so the refusal
+                // check can prove it would notice one). A firm has no door
+                // lever in any case: doors are JobSlots x mix and JobSlots is
+                // the building's unit count. And where production is linear in
+                // labor, shedding a worker sheds its output too, so the margin
+                // does not move. The middle stage is MOVING, which is the one
+                // thing a firm here can actually do about its costs.
+                bool marginOn = Levying && Flags.FirmExitMargin && !MutantFirmExitNoMargin;
+                int patience = P.InsolvencyGraceTicks;
+                if (marginOn)
+                {
+                    if (f.CashFlowObserved && f.CashFlowEma < 0) f.CashFlowShortTicks++;
+                    else if (f.CashFlowShortTicks > 0) f.CashFlowShortTicks--;
+
+                    double wageBillNow = 0;
+                    for (int cl = 0; cl < 3; cl++)
+                        wageBillNow += f.FilledByClass[cl] * P.Wage((LaborClass)cl);
+                    double reserve = Math.Max(P.FirmSeedCapital, wageBillNow * P.FirmWorkingCapitalTicks);
+                    double patienceScale = MutantFirmFlatPatience
+                        ? 1.0 : reserve / Math.Max(1e-9, P.FirmSeedCapital);
+                    // The household template's shape (0.5 + own/scale), clamped
+                    // into the two clocks that already ship so this adds no new
+                    // measured constant of its own.
+                    patience = (int)MathUtil.Clamp(
+                        P.InsolvencyGraceTicks * (0.5 + 0.5 * patienceScale),
+                        P.InsolvencyGraceTicks, P.LandArrearsTicks);
+
+                    // SEEK A CHEAPER SITE FIRST. The firm's default once it
+                    // cannot carry this site is to be gone, so a move has to
+                    // beat leaving on the firm's own forecast — which is what
+                    // RelocateFirm tests. Same memoryless hazard the arrears
+                    // path uses, so this is a distribution over ticks and not a
+                    // citywide stampede, and it costs a scan only for firms
+                    // actually under water.
+                    if (f.CashFlowShortTicks >= patience
+                        && f.CashFlowShortTicks < 2 * patience
+                        && W.Rng.NextDouble() < 1.0 / Math.Max(1, P.MoveSearchPeriod)
+                        && RelocateFirm(f, pl))
+                    {
+                        pl = W.Parcels[f.Parcel];
+                        // Half the clock back, not all of it: the move is a
+                        // real improvement on the firm's own numbers, but the
+                        // business that could not carry the old site has not
+                        // been proven viable yet, and a full reset would let a
+                        // firm hop sites forever without ever being asked.
+                        f.CashFlowShortTicks = patience / 2;
+                        FirmMarginRelocationsTotal++;
+                    }
+                }
+                // EXIT at twice the patience it took to start looking: the firm
+                // has had a full patience window to find a site it could carry
+                // and either did not look, did not find one, or found one and
+                // still could not cover its costs there.
+                bool cashFlowOut = marginOn && f.CashFlowObserved
+                                   && f.CashFlowShortTicks >= 2 * patience;
+
                 // LAND ARREARS (EconParams.NonResLandParity — OFF by default,
                 // and that comment carries the measurement that keeps it off).
                 // The levy takes min(money, bill), so it can never by itself
@@ -1838,10 +1960,22 @@ namespace CS2Econ.Core
                 // whichever forecast can carry it.
                 bool arrears = Levying && P.NonResLandParity && !MutantForgiveFirmArrears
                                && f.LevyShortTicks >= P.LandArrearsTicks;
-                if (f.Money < P.CompanyBankruptcyLimit || arrears)
+                bool brokeCapital = f.Money < P.CompanyBankruptcyLimit;
+                if (brokeCapital || arrears || cashFlowOut)
                 {
                     f.Dead = true;
                     f.DiedOfArrears = arrears;
+                    // Attribution, in the order the causes actually bind: an
+                    // arrears release and a cash-flow exit both mean the firm
+                    // gave up a site it could not carry, while the working-
+                    // capital floor means it ran the balance down. A firm can
+                    // satisfy more than one on the same tick, so the flags are
+                    // exclusive by this precedence rather than independently
+                    // set — a census that double-counts is worse than one that
+                    // has to state its tie-break.
+                    f.DiedOfCashFlow = cashFlowOut && !arrears;
+                    f.DiedOfWorkingCapital = brokeCapital && !arrears && !cashFlowOut;
+                    if (f.DiedOfCashFlow) FirmMarginExitsTotal++;
                     if (arrears) { FirmArrearsExitsThisTick++; FirmArrearsExitsTotal++; }
                     double residual = Math.Max(0, f.Money);
                     if (residual > 0) W.Ledger.Transfer(Account.Firms, Account.PhantomBank, residual);

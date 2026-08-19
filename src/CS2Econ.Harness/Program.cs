@@ -108,6 +108,16 @@ namespace CS2Econ.Harness
                 // reader merely could not place is relocated or killed.
                 if (args[i] == "--mutant-resolve-unplaced")
                 { EconomyEngine.MutantResolveUnplacedFirms = true; continue; }
+                // The exit margin's own arm and its two mutants.
+                if (args[i] == "--exit-margin") { Sim.ForceFirmExitMargin = true; continue; }
+                // MUTANT SWITCH (see EconomyEngine.MutantFirmExitNoMargin): the
+                // margin does nothing, so a firm survives on its balance alone.
+                if (args[i] == "--mutant-no-margin")
+                { EconomyEngine.MutantFirmExitNoMargin = true; continue; }
+                // MUTANT SWITCH (see EconomyEngine.MutantFirmFlatPatience):
+                // patience stops scaling with the firm's own working capital.
+                if (args[i] == "--mutant-flat-patience")
+                { EconomyEngine.MutantFirmFlatPatience = true; continue; }
                 // MUTANT SWITCH (see LandAccounting.MutantEntryReferenceMass):
                 // the store-level commercial entry read goes back to asking the
                 // counted field about a 6-slot condition-1 shop whatever
@@ -544,6 +554,16 @@ namespace CS2Econ.Harness
                     for (int i = 1; i + 1 < args.Length; i += 2)
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.ParityProbe(seed, ticks);
+                }
+                case "marginprobe":
+                {
+                    // Task #55 measurement aid (see Debugging.MarginProbe):
+                    // the exit margin's census, per sector, with the site side
+                    // beside it.
+                    int ticks = 400;
+                    for (int i = 1; i + 1 < args.Length; i++)
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                    return Debugging.MarginProbe(seed, ticks);
                 }
                 case "displaceprobe":
                 {

@@ -2392,6 +2392,81 @@ namespace CS2Econ.Harness
             return 0;
         }
 
+        /// <summary>The exit margin's census. Prints, per sector, how many
+        /// firms are under water on their OWN cash-flow read, how long they
+        /// have been, what the two exit routes actually did, and what became of
+        /// the sites they left.
+        ///
+        /// The last of those is the point. The existing zombie metric
+        /// (FirmDiag: EMA(revenue) &lt; wage bill, commercial only) reads 0 % on
+        /// every seed, which says the shops are fine and says nothing about the
+        /// sector the arrears measurement actually indicts. This one asks the
+        /// Dixit question — revenue against AVOIDABLE cost, which is wages plus
+        /// inputs plus the land charge OWED — for every sector, and it reports
+        /// re-letting beside exits, because an exit into a market that cannot
+        /// re-let the building is not a fix.</summary>
+        public static int MarginProbe(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+            var w = sim.W;
+            sim.Run(ticks);
+
+            Console.WriteLine($"seed {seed} ticks {ticks} exitMargin={sim.Flags.FirmExitMargin} "
+                + $"noMargin={EconomyEngine.MutantFirmExitNoMargin} flatPatience={EconomyEngine.MutantFirmFlatPatience}");
+            var sectors = new[] { ZoneKind.Commercial, ZoneKind.Industrial, ZoneKind.Office, ZoneKind.Extractor };
+            foreach (var s in sectors)
+            {
+                int alive = 0, under = 0, deep = 0;
+                double cfSum = 0;
+                var cfs = new List<double>();
+                foreach (var f in w.Firms)
+                {
+                    if (f.Dead || f.Parcel < 0 || f.Sector != s) continue;
+                    alive++;
+                    cfSum += f.CashFlowEma; cfs.Add(f.CashFlowEma);
+                    if (f.CashFlowObserved && f.CashFlowEma < 0) under++;
+                    if (f.CashFlowShortTicks >= p.InsolvencyGraceTicks) deep++;
+                }
+                cfs.Sort();
+                int dCash = 0, dArr = 0, dCap = 0, dDisp = 0;
+                foreach (var f in w.Firms)
+                {
+                    if (!f.Dead || f.Sector != s) continue;
+                    if (f.DiedOfCashFlow) dCash++;
+                    else if (f.DiedOfArrears) dArr++;
+                    else if (f.DiedOfWorkingCapital) dCap++;
+                    else if (f.DiedOfDisplacement) dDisp++;
+                }
+                Console.WriteLine($"  {s,-11} alive={alive,4} underwater={under,4} "
+                    + $"({(alive > 0 ? 100.0 * under / alive : 0):F1} %) pastGrace={deep,4} "
+                    + $"| cashflow p10={(cfs.Count > 0 ? Pct(cfs, 0.1) : 0),9:F2} "
+                    + $"p50={(cfs.Count > 0 ? Pct(cfs, 0.5) : 0),9:F2} "
+                    + $"p90={(cfs.Count > 0 ? Pct(cfs, 0.9) : 0),9:F2} "
+                    + $"| dead: margin={dCash} arrears={dArr} capital={dCap} displaced={dDisp}");
+            }
+            int built = 0, vacant = 0;
+            var vacCond = new List<double>();
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.IsResidential || pl.Use == ZoneKind.None) continue;
+                built++;
+                if (pl.OccupantFirm < 0) { vacant++; vacCond.Add(pl.Condition); }
+            }
+            vacCond.Sort();
+            var e = sim.Engine;
+            Console.WriteLine($"  sites: {vacant}/{built} built non-res parcels VACANT "
+                + $"({(built > 0 ? 100.0 * vacant / built : 0):F1} %), vacant condition "
+                + $"p10={(vacCond.Count > 0 ? Pct(vacCond, 0.1) : 0):F2} "
+                + $"p50={(vacCond.Count > 0 ? Pct(vacCond, 0.5) : 0):F2} "
+                + $"p90={(vacCond.Count > 0 ? Pct(vacCond, 0.9) : 0):F2}");
+            Console.WriteLine($"  engine: margin exits={e.FirmMarginExitsTotal} "
+                + $"margin relocations={e.FirmMarginRelocationsTotal} "
+                + $"arrears exits={e.FirmArrearsExitsTotal} all relocations={e.FirmRelocationsTotal}");
+            return 0;
+        }
+
         /// <summary>Task #49 measurement aid: what actually happens to a firm
         /// that loses its site. The pure simulation cannot strand a firm on its
         /// own (the scrape path gates on `OccupantFirm &lt; 0`, and the abandon
