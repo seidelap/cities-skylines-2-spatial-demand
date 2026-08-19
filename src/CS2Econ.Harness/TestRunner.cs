@@ -5639,6 +5639,15 @@ namespace CS2Econ.Harness
             // stay put — and a class the engine declines to act on must at
             // least be counted where somebody will see it. On the mod arm the
             // same counter is the reader's coverage gauge.
+            //
+            // ITS FALSIFIER LIVES ELSEWHERE, ON PURPOSE. Nothing in the pure
+            // simulation produces an unplaced firm, so no mutant can red this
+            // leg here — including --mutant-resolve-unplaced, which passes it.
+            // The property is asserted where the population is real: ModSiteLink
+            // leg 3 (`modsync`) runs one engine tick over 59 unplaceable and 59
+            // site-losing firms and requires the first group untouched and the
+            // second resolved, and --mutant-resolve-unplaced reds it by killing
+            // 58 of the 59. Read that leg, not this one, for the evidence.
             Check("displaced firm guard: every siteless firm here lost a site it held",
                   e.FirmUnplacedSeenTotal == 0,
                   $"{e.FirmUnplacedSeenTotal} live siteless firms had never held a site (bound 0 — structural "

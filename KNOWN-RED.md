@@ -680,6 +680,22 @@ covered. (2) `displaceprobe`'s option parser strode by two over raw argv, so any
 measurement in this file was affected (every mutant run used defaults), but a
 future one would have been, silently.
 
+GATE AT THE FOLLOW-UP COMMIT, COMPLETE: verify **64/64** on seed 1 and **63/64**
+on seed 0 (the standing Weber red, unchanged), `fingerprint --check` all 13 lanes
+matching with no accept, `modsync` **8/8**. The two #49 mutants re-run against the
+64-check suite reproduce the corrected table exactly — MUT-49a floor FAIL /
+settlement FAIL / link **PASS**, MUT-49b floor FAIL / settlement FAIL / link FAIL —
+so the link leg is confirmed as the discriminator on a second measurement.
+
+WHERE THE NEW GUARD LEG'S FALSIFIER LIVES. `displaced firm guard` passes under
+BOTH #49 mutants and under `--mutant-resolve-unplaced`, because nothing in the pure
+simulation produces an unplaced firm: it reads 0 == 0 by construction and is a
+tripwire, not a check. The property it names is asserted where the population is
+real — `ModSiteLink` leg 3, which steps the engine over 59 unplaceable and 59
+site-losing firms and is red by `--mutant-resolve-unplaced` at 58 kills. A reader
+looking for the evidence should read that leg and not this one; the code comment
+says so at the site.
+
 A FOURTH FINDING IS FILED AND NOT FIXED: `RelocateFirm`'s `BidAt` discards
 `FirmBidPerSlot`'s `out chosen`, so for industrial and extractor a firm is moved on
 a bid for the destination cluster's BEST output rather than the one it produces
