@@ -2468,5 +2468,608 @@ namespace CS2Econ.Harness
                 + "the existing conservation invariant, at the same moment");
             return 0;
         }
+
+        /// <summary>`harness firmprobe` — the non-residential land census.
+        ///
+        /// READ-ONLY. It builds a run, reads it and changes nothing: no
+        /// parameter is written, no parcel or firm field is assigned, and
+        /// Assess is never called. Every quantity a non-residential land design
+        /// quotes about the world as it stands is produced here, so a claim
+        /// about the corner, the bill, the thin cell, the would-move population
+        /// or the cost can be re-derived on demand instead of being carried in
+        /// prose.
+        ///
+        /// Three readings need their own statement of what they are.
+        ///
+        /// THE LADDER-BOUND CRITERION (block I) is arithmetic over the standing
+        /// bid ladder, not a forecast of any market. Write the per-slot bid as
+        /// X·q(ℓ) − W, q(ℓ) = Quality(ℓ)/Quality(1) = ℓ^LevelBidAlpha. A bidder
+        /// standing at rung ℓ0 whose alternative is its own site, netted at that
+        /// site's structure floor, offers X·(q(ℓ)−q(ℓ0)) + S(ℓ0,m) at the ℓ
+        /// door; the largest bar that door can carry is S(ℓ,1.0) (an unbuilt
+        /// rung pools at condition 1.0, HousingAuction.cs:521-537). So the ℓ
+        /// door is queued from ℓ0 exactly when X > D(ℓ,ℓ0) =
+        /// (S(ℓ,1)−S(ℓ0,m))/(q(ℓ)−q(ℓ0)), and the ladder is bounded at that
+        /// rung exactly when X &lt; D. X and W are FITTED per (sector, cluster)
+        /// from the two endpoints bid(1), bid(5) of FirmBidPerSlot, and the
+        /// worst interior-rung residual is printed beside them: linearity in q
+        /// is a claim about this file's own code, and a claim about code is
+        /// reported with its own error rather than assumed. FirmBidPerSlot
+        /// floors at 0 (LandAccounting.cs:585), which is the one nonlinearity,
+        /// so the count of clusters whose bottom rung sits on that floor is
+        /// printed too.
+        ///
+        /// THE PHASE TIMERS (block L) separate what is measured from what is
+        /// not, and the separation is the point. The per-door value table and
+        /// the door/reserve pass are timed here because neither needs a market
+        /// to exist. No firm-side SOLVE exists at this commit, so none is timed;
+        /// what stands in its place is the housing solve that any firm-side
+        /// estimate would be extrapolated FROM, printed with its ROUND counts,
+        /// because scaling a solve time by a bidder ratio assumes a round count
+        /// that an identical-bidder market need not have (KNOWN-RED.md's labor
+        /// bring-up: 796,000 bids against 48,955 evictions, converged False).
+        /// Scan width and round count are different failure modes and they do
+        /// not share a number here.
+        ///
+        /// BLOCK J counts a failure class nothing else in the suite can see. A
+        /// firm with Parcel &lt; 0 and !Dead is skipped by every firm loop in the
+        /// engine (EconomyEngine.cs:770, 903, 1021, 1035, 1110, 1238, 1256,
+        /// 1481, 1617, 1673; LaborAuction.cs:317) — including FirmLifecycle's
+        /// own bankruptcy branch, which sits INSIDE the skip at :1673 — so such
+        /// a firm never produces, never pays, never dies. Its Money stays in
+        /// both Σ f.Money and Ledger.Balance(Firms), so SectorAudit's
+        /// reconciliation (TestRunner.cs:5158-5175, which sums every firm
+        /// including dead ones) stays green over any number of them. A
+        /// displacement that forgot its exit is therefore invisible to
+        /// conservation; this block is what would see it.</summary>
+        public static int FirmProbe(ulong seed, int ticks)
+        {
+            var p = new EconParams();
+            var cfg = new SyntheticCity.Config { Seed = seed };
+            var sim = Sim.Create(cfg, p, new FeatureFlags());
+
+            // HousingAuction's Rounds/Bids/Evictions/RepairRounds are per-solve
+            // fields zeroed at the top of Solve, so a run total needs sampling
+            // on the tick the solve counter moves. Exactly one solve per tick is
+            // reachable (EconomyEngine.cs:94 gates RefreshTick on
+            // Tick % RefreshInterval, :515 solves once inside it); the printed
+            // solvesSampled against HousingAuction.SolveCalls is the check.
+            long solvesSeen = HousingAuction.SolveCalls;
+            long acRounds = 0, acBids = 0, acEvict = 0, acRepair = 0;
+            int solvesSampled = 0, multiSolveTicks = 0;
+            var swRun = System.Diagnostics.Stopwatch.StartNew();
+            sim.Run(ticks, s =>
+            {
+                long d = HousingAuction.SolveCalls - solvesSeen;
+                if (d <= 0) return;
+                if (d > 1) multiSolveTicks++;
+                solvesSeen = HousingAuction.SolveCalls;
+                var a = s.Engine.Auction;
+                acRounds += a.Rounds; acBids += a.Bids; acEvict += a.Evictions;
+                acRepair += a.RepairRounds; solvesSampled++;
+            });
+            swRun.Stop();
+
+            var w = sim.W;
+            var acc = sim.Engine.Access;
+            var trade = sim.Engine.Trade;
+            int C = acc.C;
+            var sectors = new[] { ZoneKind.Commercial, ZoneKind.Industrial,
+                                  ZoneKind.Office, ZoneKind.Extractor };
+
+            bool Live(Parcel q) => q.OccupantFirm >= 0 && !w.Firms[q.OccupantFirm].Dead;
+            bool BuiltNonRes(Parcel q) => q.State == ParcelState.Built && !q.IsResidential
+                                          && q.Use != ZoneKind.None;
+
+            int pop = 0; foreach (var h in w.Households) if (h.ExitedTick < 0) pop++;
+            int alive = 0; foreach (var f in w.Firms) if (!f.Dead) alive++;
+
+            Console.WriteLine($"firmprobe seed={seed} ticks={ticks} clusters={C} " +
+                              $"parity={p.NonResLandParity} storeLevel={sim.Flags.StoreLevelSpending} " +
+                              $"auction={sim.Flags.HousingAuction} wall={swRun.Elapsed.TotalSeconds:F1}s");
+            Console.WriteLine($"world: pop={pop} households={w.Households.Count} parcels={w.Parcels.Count} " +
+                              $"firmsAlive={alive} firmsEver={w.Firms.Count}");
+
+            // ---- A. the stock ------------------------------------------------
+            Console.WriteLine("-- A. built non-residential parcels, per sector --");
+            foreach (var s in sectors)
+            {
+                int built = 0, occ = 0, vac = 0; var vc = new List<double>();
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || pl.Use != s) continue;
+                    built++;
+                    if (Live(pl)) occ++; else { vac++; vc.Add(pl.Condition); }
+                }
+                vc.Sort();
+                Console.WriteLine($"  {s,-11} built={built,4} occupied={occ,4} vacant={vac,4} " +
+                                  $"vacantCond p10={Pct(vc, 0.1):F2} p50={Pct(vc, 0.5):F2} p90={Pct(vc, 0.9):F2}");
+            }
+
+            // ---- B. the cell census, at cell grain AND column grain ----------
+            // The column row is what a (cluster, use)-wide exclusion rule costs:
+            // a door whose only bidders held a site in the column reads empty.
+            Console.WriteLine("-- B. occupied non-res parcels alone in their cell / column --");
+            void Grain(string label, Func<Parcel, (int, int, int)> key, ZoneKind? only)
+            {
+                var counts = new Dictionary<(int, int, int), int>();
+                int tot = 0;
+                foreach (var pl in w.Parcels)
+                {
+                    if (!BuiltNonRes(pl) || !Live(pl)) continue;
+                    if (only.HasValue && pl.Use != only.Value) continue;
+                    var k = key(pl);
+                    counts[k] = counts.TryGetValue(k, out int v) ? v + 1 : 1;
+                    tot++;
+                }
+                int a0 = counts.Values.Where(v => v == 1).Sum();
+                int a1 = counts.Values.Where(v => v == 2).Sum();
+                int a2 = counts.Values.Where(v => v >= 3).Sum();
+                Console.WriteLine($"  {label,-32} cells={counts.Count,4} occupied={tot,4} " +
+                                  $"alone={a0,4} ({(tot > 0 ? 100.0 * a0 / tot : 0),5:F1}%) " +
+                                  $"oneOther={a1,4} twoPlusOthers={a2,4}");
+            }
+            Grain("(cluster,use,level) pooled", pl => (pl.Cluster, (int)pl.Use, pl.Level), null);
+            Grain("(cluster,use)       pooled", pl => (pl.Cluster, (int)pl.Use, 0), null);
+            Grain("(use,level) citywide", pl => (0, (int)pl.Use, pl.Level), null);
+            Grain("(use) citywide", pl => (0, (int)pl.Use, 0), null);
+            foreach (var s in sectors)
+                Grain($"(cluster,use,level) {s}", pl => (pl.Cluster, (int)pl.Use, pl.Level), s);
+            foreach (var s in sectors)
+                Grain($"(cluster,use) {s}", pl => (pl.Cluster, (int)pl.Use, 0), s);
+
+            // ---- C. the ell-star census -------------------------------------
+            Console.WriteLine("-- C. standing level vs TargetLevel (built parcels) --");
+            void Ladder(string label, Func<Parcel, bool> pick)
+            {
+                int n = 0, corner = 0; double lv = 0, tg = 0;
+                var gap = new int[p.MaxLevel + 1];   // TargetLevel - Level, clamped for display
+                int gapUp = 0, gapDown = 0;
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || !pick(pl)) continue;
+                    n++; lv += pl.Level; tg += pl.TargetLevel;
+                    if (pl.TargetLevel >= p.MaxLevel) corner++;
+                    int d = pl.TargetLevel - pl.Level;
+                    if (d > 0) { gapUp++; gap[Math.Min(p.MaxLevel, d)]++; }
+                    else if (d < 0) gapDown++;
+                }
+                if (n == 0) { Console.WriteLine($"  {label,-11} none built"); return; }
+                Console.WriteLine($"  {label,-11} n={n,4} meanLevel={lv / n:F2} meanTarget={tg / n:F2} " +
+                                  $"atCorner(L{p.MaxLevel})={corner,4} ({100.0 * corner / n,5:F1}%) " +
+                                  $"target>level={gapUp,4} target<level={gapDown,4} " +
+                                  $"gap[+1..+4]={gap[1]}/{gap[2]}/{gap[3]}/{gap[4]}");
+            }
+            foreach (var s in sectors) Ladder(s.ToString(), pl => pl.Use == s);
+            Ladder("Residential", pl => pl.IsResidential);
+
+            // ---- D. per-cluster MAX standing rung, per sector -----------------
+            // The bound a standing-rungs candidate loop would impose: no rung
+            // above this can be proposed if candidates are gated on capacity.
+            Console.WriteLine("-- D. per-cluster max standing rung (built parcels), per sector --");
+            foreach (var s in sectors)
+            {
+                var maxRung = new int[C];
+                var occMaxRung = new int[C];
+                for (int c = 0; c < C; c++) { maxRung[c] = 0; occMaxRung[c] = 0; }
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || pl.Use != s) continue;
+                    if ((uint)pl.Cluster >= (uint)C) continue;
+                    if (pl.Level > maxRung[pl.Cluster]) maxRung[pl.Cluster] = pl.Level;
+                    if (Live(pl) && pl.Level > occMaxRung[pl.Cluster]) occMaxRung[pl.Cluster] = pl.Level;
+                }
+                var hist = new int[p.MaxLevel + 1];
+                int nc = 0; double sum = 0;
+                for (int c = 0; c < C; c++)
+                {
+                    if (maxRung[c] == 0) continue;
+                    nc++; sum += maxRung[c]; hist[maxRung[c]]++;
+                }
+                if (nc == 0) { Console.WriteLine($"  {s,-11} no cluster holds a built parcel"); continue; }
+                int occNc = 0; double occSum = 0;
+                for (int c = 0; c < C; c++) if (occMaxRung[c] > 0) { occNc++; occSum += occMaxRung[c]; }
+                Console.WriteLine($"  {s,-11} clusters={nc,4} meanMaxRung={sum / nc:F2} " +
+                                  $"hist[L1..L5]={hist[1]}/{hist[2]}/{hist[3]}/{hist[4]}/{hist[5]} " +
+                                  $"| occupied-only clusters={occNc,4} meanMaxRung=" +
+                                  $"{(occNc > 0 ? occSum / occNc : 0):F2}");
+            }
+
+            // ---- E. the bill, decomposed, and at LR = 0 ----------------------
+            Console.WriteLine("-- E. occupied non-res parcels: bill decomposition (per parcel per tick) --");
+            foreach (var s in sectors)
+            {
+                var landShare = new List<double>();
+                var billNow = new List<double>(); var billZero = new List<double>();
+                var coverNow = new List<double>(); var coverZero = new List<double>();
+                double sumLR = 0;
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || pl.Use != s || !Live(pl)) continue;
+                    var f = w.Firms[pl.OccupantFirm];
+                    double sper = LandAccounting.SPerUnit(pl.Level, pl.Condition, p);
+                    double land = p.CaptureFraction * pl.AssessedLR / Math.Max(1, pl.Units);
+                    double tax = LandAccounting.StructureTaxPerUnit(pl, p);
+                    double bill = sper + land + tax;
+                    sumLR += pl.AssessedLR;
+                    if (bill <= 1e-12) continue;
+                    landShare.Add(land / bill);
+                    billNow.Add(bill * pl.Units); billZero.Add((sper + tax) * pl.Units);
+                    double rev = f.GrossRevenueLastTick;
+                    coverNow.Add(rev / Math.Max(1e-9, bill * pl.Units));
+                    coverZero.Add(rev / Math.Max(1e-9, (sper + tax) * pl.Units));
+                }
+                landShare.Sort(); billNow.Sort(); billZero.Sort(); coverNow.Sort(); coverZero.Sort();
+                Console.WriteLine($"  {s,-11} n={landShare.Count,4} landShare p50={Pct(landShare, 0.5):F2} " +
+                                  $"p90={Pct(landShare, 0.9):F2} | bill p50={Pct(billNow, 0.5),7:F1} " +
+                                  $"billAtLR0 p50={Pct(billZero, 0.5),6:F1} | rev/bill p50={Pct(coverNow, 0.5):F2} " +
+                                  $"atLR0 p50={Pct(coverZero, 0.5):F2} " +
+                                  $"rev<bill now={coverNow.Count(x => x < 1)}/{coverNow.Count} " +
+                                  $"atLR0={coverZero.Count(x => x < 1)}/{coverZero.Count} | ΣAssessedLR={sumLR:F0}");
+            }
+            // The same population split by STANDING RUNG: a claim that compares
+            // a p50 revenue to a bill at some other rung is comparing two rungs.
+            Console.WriteLine("-- E2. the same, by standing rung (occupied parcels) --");
+            foreach (var s in sectors)
+                for (int lvl = 1; lvl <= p.MaxLevel; lvl++)
+                {
+                    var bn = new List<double>(); var rv = new List<double>(); var cv = new List<double>();
+                    var lr = new List<double>();
+                    foreach (var pl in w.Parcels)
+                    {
+                        if (pl.State != ParcelState.Built || pl.Use != s || pl.Level != lvl) continue;
+                        if (!Live(pl)) continue;
+                        var f = w.Firms[pl.OccupantFirm];
+                        double bill = LandAccounting.UnitAssessment(pl, p) * pl.Units;
+                        bn.Add(bill); rv.Add(f.GrossRevenueLastTick); lr.Add(pl.AssessedLR);
+                        cv.Add(f.GrossRevenueLastTick / Math.Max(1e-9, bill));
+                    }
+                    if (bn.Count == 0) continue;
+                    bn.Sort(); rv.Sort(); cv.Sort(); lr.Sort();
+                    Console.WriteLine($"  {s,-11} L{lvl} n={bn.Count,4} bill p50={Pct(bn, 0.5),7:F1} " +
+                                      $"rev p50={Pct(rv, 0.5),7:F1} rev/bill p50={Pct(cv, 0.5):F2} " +
+                                      $"rev<bill={cv.Count(x => x < 1),4} AssessedLR p50={Pct(lr, 0.5),7:F1}");
+                }
+
+            // ---- F. entry excess on vacant parcels, at AssessedLR and at 0 ----
+            // Both legs price the SPECIFIC vacant building the entrant would
+            // occupy (entrantMass/slots/condition), which is what
+            // EconomyEngine's entry test at :1800-1826 asks; the LR = 0 leg
+            // differs only in dropping the land term from the assessment side.
+            Console.WriteLine("-- F. vacant non-res parcels: entrant excess at AssessedLR and at LR=0 --");
+            foreach (var s in sectors)
+            {
+                var exNow = new List<double>(); var exZero = new List<double>(); int nvac = 0;
+                foreach (var pl in w.Parcels)
+                {
+                    if (pl.State != ParcelState.Built || pl.Use != s || Live(pl)) continue;
+                    if (pl.Warehousing) continue;
+                    nvac++;
+                    double entrantMass = pl.Use == ZoneKind.Commercial
+                        ? pl.Units * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level) : 0;
+                    double bid = LandAccounting.FirmBidPerSlot(acc, trade, pl.Cluster, pl.Use, pl.Level, p,
+                                                              out _, w.Clusters, out bool condPriced,
+                                                              entrantMass, entrantMass > 0 ? pl.Units : 0,
+                                                              entrantMass > 0 ? pl.Condition : 0);
+                    if (!condPriced) bid *= p.CondFactor(pl.Condition);
+                    exNow.Add(bid - LandAccounting.UnitAssessment(pl, p));
+                    exZero.Add(bid - (LandAccounting.SPerUnit(pl.Level, pl.Condition, p)
+                                      + LandAccounting.StructureTaxPerUnit(pl, p)));
+                }
+                exNow.Sort(); exZero.Sort();
+                Console.WriteLine($"  {s,-11} vacant={nvac,4} | now p10={Pct(exNow, 0.1),8:F2} " +
+                                  $"p50={Pct(exNow, 0.5),7:F2} p90={Pct(exNow, 0.9),7:F2} " +
+                                  $"positive={exNow.Count(x => x > 0),4} " +
+                                  $"({(nvac > 0 ? 100.0 * exNow.Count(x => x > 0) / nvac : 0),3:F0}%) " +
+                                  $"| atLR0 p10={Pct(exZero, 0.1),7:F2} p50={Pct(exZero, 0.5),7:F2} " +
+                                  $"p90={Pct(exZero, 0.9),7:F2} positive={exZero.Count(x => x > 0),4} " +
+                                  $"({(nvac > 0 ? 100.0 * exZero.Count(x => x > 0) / nvac : 0),3:F0}%)");
+            }
+
+            // ---- G. the would-move census ------------------------------------
+            // The firm's OWN forecast at a standing vacant site of its own
+            // sector, against the same arithmetic at its current site — the
+            // identical expression RelocateFirm scores (EconomyEngine.cs:1859-1866).
+            Console.WriteLine("-- G. incumbents with a strictly better standing vacant site of their own sector --");
+            var vacList = w.Parcels.Where(q => q.State == ParcelState.Built && !q.IsResidential
+                                               && q.Use != ZoneKind.None && !q.Warehousing && !Live(q)).ToList();
+            double MoveValue(Parcel q) =>
+                LandAccounting.FirmBidPerSlot(acc, trade, q.Cluster, q.Use, q.Level, p, out _, w.Clusters)
+                * p.CondFactor(q.Condition) * q.Units
+                - LandAccounting.UnitAssessment(q, p) * q.Units;
+            foreach (var s in sectors)
+            {
+                int firms = 0, movers = 0; var gain = new List<double>();
+                var mine = vacList.Where(q => q.Use == s).ToList();
+                foreach (var f in w.Firms)
+                {
+                    if (f.Dead || f.Parcel < 0 || f.Sector != s) continue;
+                    firms++;
+                    double here = MoveValue(w.Parcels[f.Parcel]);
+                    double best = here;
+                    foreach (var q in mine) { double v = MoveValue(q); if (v > best) best = v; }
+                    if (best > here) { movers++; gain.Add(best - here); }
+                }
+                gain.Sort();
+                Console.WriteLine($"  {s,-11} firms={firms,4} vacantSameUse={mine.Count,4} " +
+                                  $"wouldMove={movers,4} ({(firms > 0 ? 100.0 * movers / firms : 0),3:F0}%) " +
+                                  $"gain p50={Pct(gain, 0.5),7:F2} p90={Pct(gain, 0.9),7:F2}");
+            }
+
+            // ---- H. within-cell condition spread -----------------------------
+            // The door pools every parcel of a (cluster, use, level) behind one
+            // reserve; UnitsFor is constant per use and the level is in the key,
+            // so CONDITION is the only within-cell variation there is.
+            {
+                var cells = new Dictionary<(int, int, int), List<Parcel>>();
+                foreach (var pl in w.Parcels)
+                {
+                    if (!BuiltNonRes(pl)) continue;
+                    var k = (pl.Cluster, (int)pl.Use, pl.Level);
+                    if (!cells.TryGetValue(k, out var l)) cells[k] = l = new List<Parcel>();
+                    l.Add(pl);
+                }
+                var spread = new List<double>(); var spreadMixed = new List<double>();
+                var occSpread = new List<double>();
+                int multi = 0, mixed = 0, occMulti = 0;
+                foreach (var kv in cells)
+                {
+                    if (kv.Value.Count >= 2)
+                    {
+                        multi++;
+                        double mn = kv.Value.Min(x => x.Condition), mx = kv.Value.Max(x => x.Condition);
+                        spread.Add(mx - mn);
+                        if (kv.Value.Any(Live) && kv.Value.Any(x => !Live(x)))
+                        { mixed++; spreadMixed.Add(mx - mn); }
+                    }
+                    var occ = kv.Value.Where(Live).ToList();
+                    if (occ.Count >= 2)
+                    { occMulti++; occSpread.Add(occ.Max(x => x.Condition) - occ.Min(x => x.Condition)); }
+                }
+                spread.Sort(); spreadMixed.Sort(); occSpread.Sort();
+                var occCond = new List<double>();
+                foreach (var pl in w.Parcels) if (BuiltNonRes(pl) && Live(pl)) occCond.Add(pl.Condition);
+                occCond.Sort();
+                Console.WriteLine("-- H. within-cell condition spread (built non-res) --");
+                Console.WriteLine($"  cells={cells.Count} withTwoPlus={multi} mixedOccupiedVacant={mixed} | " +
+                                  $"spread p10={Pct(spread, 0.1):F2} p50={Pct(spread, 0.5):F2} " +
+                                  $"p90={Pct(spread, 0.9):F2} | mixed-cell spread p50={Pct(spreadMixed, 0.5):F2}");
+                Console.WriteLine($"  occupied-only cells withTwoPlus={occMulti} spread " +
+                                  $"p50={Pct(occSpread, 0.5):F2} p90={Pct(occSpread, 0.9):F2} | " +
+                                  $"occupied condition p10={Pct(occCond, 0.1):F2} p50={Pct(occCond, 0.5):F2} " +
+                                  $"p90={Pct(occCond, 0.9):F2} (n={occCond.Count})");
+            }
+
+            // ---- I. the ladder-bound criterion, X vs D(5, ell0) ---------------
+            Console.WriteLine("-- I. ladder-bound criterion: fitted X against D(5,L0) per (sector,cluster) --");
+            Console.WriteLine($"     bound BINDS at rung 5 from L0 iff X < D(5,L0); " +
+                              $"D=(S(5,1)-S(L0,m))/(q(5)-q(L0)); S(5,1.0)=" +
+                              $"{LandAccounting.SPerUnit(p.MaxLevel, 1.0, p):F5}");
+            {
+                double[] q = new double[p.MaxLevel + 1];
+                for (int l = 1; l <= p.MaxLevel; l++) q[l] = p.Quality(l) / p.Quality(1);
+                foreach (var s in sectors)
+                {
+                    var occCond = new List<double>();
+                    foreach (var pl in w.Parcels)
+                        if (pl.State == ParcelState.Built && pl.Use == s && Live(pl)) occCond.Add(pl.Condition);
+                    occCond.Sort();
+                    double m = occCond.Count > 0 ? Pct(occCond, 0.5) : 0;
+
+                    var present = new bool[C];
+                    foreach (var pl in w.Parcels)
+                        if (pl.State == ParcelState.Built && pl.Use == s && (uint)pl.Cluster < (uint)C)
+                            present[pl.Cluster] = true;
+
+                    var xs = new List<double>(); var ws = new List<double>(); var resid = new List<double>();
+                    int nc = 0, floorBottom = 0, dead = 0, fitBad = 0;
+                    // Which rung a bidder ranks BEST on surplus over the door's
+                    // own structure floor. An alt term taken over ALL doors
+                    // admits a bidder above reserve only at this rung — bid >
+                    // Reserve[s] rearranges to "s is the strict argmax of
+                    // value − Reserve" — so this histogram is where a
+                    // one-entry-per-bidder queue would sit.
+                    var argmaxHist = new int[p.MaxLevel + 1];
+                    var bindM = new int[p.MaxLevel]; var bind0 = new int[p.MaxLevel];
+                    for (int c = 0; c < C; c++)
+                    {
+                        if (!present[c]) continue;
+                        nc++;
+                        var bid = new double[p.MaxLevel + 1];
+                        for (int l = 1; l <= p.MaxLevel; l++)
+                            bid[l] = LandAccounting.FirmBidPerSlot(acc, trade, c, s, l, p, out _, w.Clusters);
+                        if (bid[p.MaxLevel] <= 1e-12) { dead++; }
+                        if (bid[1] <= 1e-12) floorBottom++;
+                        double X = (bid[p.MaxLevel] - bid[1]) / (q[p.MaxLevel] - q[1]);
+                        double W = X * q[1] - bid[1];
+                        double worst = 0;
+                        for (int l = 2; l < p.MaxLevel; l++)
+                            worst = Math.Max(worst, Math.Abs(bid[l] - (X * q[l] - W)));
+                        int am = 1; double amBest = double.NegativeInfinity;
+                        for (int l = 1; l <= p.MaxLevel; l++)
+                        {
+                            double surplus = bid[l] - LandAccounting.SPerUnit(l, 1.0, p);
+                            if (surplus > amBest) { amBest = surplus; am = l; }
+                        }
+                        argmaxHist[am]++;
+                        xs.Add(X); ws.Add(W);
+                        double rel = bid[p.MaxLevel] > 1e-9 ? worst / bid[p.MaxLevel] : 0;
+                        resid.Add(rel);
+                        if (rel > 0.01) fitBad++;
+                        for (int l0 = 1; l0 < p.MaxLevel; l0++)
+                        {
+                            double dm = (LandAccounting.SPerUnit(p.MaxLevel, 1.0, p)
+                                         - LandAccounting.SPerUnit(l0, m, p)) / (q[p.MaxLevel] - q[l0]);
+                            double d0 = (LandAccounting.SPerUnit(p.MaxLevel, 1.0, p)
+                                         - LandAccounting.SPerUnit(l0, 0.0, p)) / (q[p.MaxLevel] - q[l0]);
+                            if (X < dm) bindM[l0]++;
+                            if (X < d0) bind0[l0]++;
+                        }
+                    }
+                    if (nc == 0) { Console.WriteLine($"  {s,-11} no cluster holds a built parcel"); continue; }
+                    xs.Sort(); ws.Sort(); resid.Sort();
+                    var dmRow = new List<string>(); var d0Row = new List<string>();
+                    for (int l0 = 1; l0 < p.MaxLevel; l0++)
+                    {
+                        double dm = (LandAccounting.SPerUnit(p.MaxLevel, 1.0, p)
+                                     - LandAccounting.SPerUnit(l0, m, p)) / (q[p.MaxLevel] - q[l0]);
+                        double d0 = (LandAccounting.SPerUnit(p.MaxLevel, 1.0, p)
+                                     - LandAccounting.SPerUnit(l0, 0.0, p)) / (q[p.MaxLevel] - q[l0]);
+                        dmRow.Add($"L{l0}:{dm:F3}({bindM[l0]})");
+                        d0Row.Add($"L{l0}:{d0:F3}({bind0[l0]})");
+                    }
+                    Console.WriteLine($"  {s,-11} clusters={nc,4} occCondP50={m:F2} " +
+                                      $"X p10={Pct(xs, 0.1),8:F3} p50={Pct(xs, 0.5),8:F3} p90={Pct(xs, 0.9),8:F3} " +
+                                      $"min={(xs.Count > 0 ? xs[0] : 0),8:F3} " +
+                                      $"| W p50={Pct(ws, 0.5),8:F3} " +
+                                      $"| fit residual/bid(5) p50={Pct(resid, 0.5):E1} max=" +
+                                      $"{(resid.Count > 0 ? resid[^1] : 0):E1} over1%={fitBad} " +
+                                      $"| bid(1)=0 on {floorBottom} bid(5)=0 on {dead}");
+                    Console.WriteLine($"              argmax rung of (bid - S(L,1.0)) over clusters, hist[L1..L5]=" +
+                                      $"{argmaxHist[1]}/{argmaxHist[2]}/{argmaxHist[3]}/{argmaxHist[4]}/{argmaxHist[5]}");
+                    Console.WriteLine($"              D(5,L0) at m={m:F2} (clusters BOUNDED): " + string.Join(" ", dmRow));
+                    Console.WriteLine($"              D(5,L0) at m=0.00 (clusters BOUNDED): " + string.Join(" ", d0Row));
+                }
+            }
+
+            // ---- J. the silent failure class ---------------------------------
+            {
+                int orphan = 0, dead = 0, backRefBad = 0;
+                double orphanMoney = 0, allMoney = 0;
+                foreach (var f in w.Firms)
+                {
+                    allMoney += f.Money;
+                    if (f.Dead) { dead++; continue; }
+                    if (f.Parcel < 0) { orphan++; orphanMoney += f.Money; continue; }
+                    if ((uint)f.Parcel >= (uint)w.Parcels.Count
+                        || w.Parcels[f.Parcel].OccupantFirm != f.Id)
+                        backRefBad++;
+                }
+                int parcelClaimsDead = 0;
+                foreach (var pl in w.Parcels)
+                    if (pl.OccupantFirm >= 0 && w.Firms[pl.OccupantFirm].Dead) parcelClaimsDead++;
+                double ledgerFirms = w.Ledger.Balance(Account.Firms);
+                Console.WriteLine("-- J. firm/parcel binding census (the class conservation cannot see) --");
+                Console.WriteLine($"  alive={alive} dead={dead} " +
+                                  $"| !Dead && Parcel<0 = {orphan} holding money={orphanMoney:F2} " +
+                                  $"| !Dead with parcel back-reference mismatch = {backRefBad}" +
+                                  $" | parcels whose OccupantFirm is Dead = {parcelClaimsDead}");
+                Console.WriteLine($"  Σ f.Money={allMoney:F2} Ledger.Balance(Firms)={ledgerFirms:F2} " +
+                                  $"rel={Math.Abs(allMoney - ledgerFirms) / Math.Max(1.0, Math.Max(Math.Abs(allMoney), Math.Abs(ledgerFirms))):E2} " +
+                                  $"(this reconciliation is INSENSITIVE to the count above: " +
+                                  $"TestRunner.cs:5158-5175 sums every firm, parcelled or not)");
+                Console.WriteLine($"  relocations over the run={sim.Engine.FirmRelocationsTotal} " +
+                                  $"arrears exits={sim.Engine.FirmArrearsExitsTotal}");
+            }
+
+            // ---- K. sizing ----------------------------------------------------
+            {
+                var capByCell = new Dictionary<(int, int, int), int>();
+                int items = 0, vacantItems = 0;
+                foreach (var pl in w.Parcels)
+                {
+                    if (!BuiltNonRes(pl)) continue;
+                    items++;
+                    if (!Live(pl)) vacantItems++;
+                    if (pl.Warehousing) continue;
+                    var k = (pl.Cluster, (int)pl.Use, pl.Level);
+                    capByCell[k] = capByCell.TryGetValue(k, out int v) ? v + 1 : 1;
+                }
+                int resSubs = 0;
+                for (int si = 0; si < sim.Engine.Auction.Capacity.Length; si++)
+                    if (sim.Engine.Auction.Capacity[si] > 0) resSubs++;
+                Console.WriteLine("-- K. sizing --");
+                Console.WriteLine($"  non-res built parcels={items} vacant={vacantItems} " +
+                                  $"incumbent firms={alive} | live (cluster,use,level) doors={capByCell.Count} " +
+                                  $"of {C * 4 * p.MaxLevel} withCapacity>=2={capByCell.Values.Count(v => v >= 2)}");
+                Console.WriteLine($"  residential bidders={pop} live residential submarkets={resSubs} " +
+                                  $"| firm/residential bidder ratio=" +
+                                  $"{(pop > 0 ? 100.0 * alive / pop : 0):F2}%");
+            }
+
+            // ---- L. phase timers ---------------------------------------------
+            Console.WriteLine("-- L. phase timers -- MEASURED HERE (no firm-side market exists at this commit) --");
+            {
+                // One untimed pass of each phase first. Without it the number
+                // carries the JIT and cold-cache term and therefore depends on
+                // what ran BEFORE it in the same process: the same five-rep loop
+                // over the same 3920 cells on the same seed-1/400-tick world
+                // read 3.60 ms/pass as the first heavy FirmBidPerSlot consumer
+                // (scratchpad cellprobe at 234d1c3) and 2.67 ms/pass with
+                // blocks F/G/I ahead of it (this command, before this warm-up
+                // was added). A timer whose value depends on its position in
+                // the caller is not a measurement of the phase.
+                const int reps = 5;
+                double warm = 0;
+                for (int c = 0; c < C; c++)
+                    foreach (var s in sectors)
+                        for (int l = 1; l <= p.MaxLevel; l++)
+                            warm += LandAccounting.FirmBidPerSlot(acc, trade, c, s, l, p, out _, w.Clusters);
+                var swT = System.Diagnostics.Stopwatch.StartNew();
+                double sink = warm * 0;
+                for (int rep = 0; rep < reps; rep++)
+                    for (int c = 0; c < C; c++)
+                        foreach (var s in sectors)
+                            for (int l = 1; l <= p.MaxLevel; l++)
+                                sink += LandAccounting.FirmBidPerSlot(acc, trade, c, s, l, p, out _, w.Clusters);
+                swT.Stop();
+                int cells = C * sectors.Length * p.MaxLevel;
+                Console.WriteLine($"  value table   cells={cells} reps={reps} " +
+                                  $"perPass={swT.Elapsed.TotalMilliseconds / reps:F2} ms " +
+                                  $"({swT.Elapsed.TotalMilliseconds * 1000 / (reps * (double)cells):F2} us/call, sink={sink:F0})");
+
+                var cap0 = new Dictionary<(int, int, int), (int n, double cond)>();   // untimed warm-up
+                foreach (var pl in w.Parcels)
+                {
+                    if (!BuiltNonRes(pl) || pl.Warehousing) continue;
+                    var k0 = (pl.Cluster, (int)pl.Use, pl.Level);
+                    cap0.TryGetValue(k0, out var e0);
+                    cap0[k0] = (e0.n + 1, e0.cond + pl.Condition);
+                }
+                int doorSink = cap0.Count * 0;
+                var swD = System.Diagnostics.Stopwatch.StartNew();
+                for (int rep = 0; rep < reps; rep++)
+                {
+                    var cap = new Dictionary<(int, int, int), (int n, double cond)>();
+                    foreach (var pl in w.Parcels)
+                    {
+                        if (!BuiltNonRes(pl) || pl.Warehousing) continue;
+                        var k = (pl.Cluster, (int)pl.Use, pl.Level);
+                        cap.TryGetValue(k, out var e);
+                        cap[k] = (e.n + 1, e.cond + pl.Condition);
+                    }
+                    doorSink += cap.Count;
+                }
+                swD.Stop();
+                Console.WriteLine($"  doors+reserves parcels={w.Parcels.Count} reps={reps} " +
+                                  $"perPass={swD.Elapsed.TotalMilliseconds / reps:F2} ms (sink={doorSink / reps})");
+            }
+            Console.WriteLine("   NOT MEASURED HERE: any firm-side SOLVE. What follows is the housing " +
+                              "solve an estimate would be extrapolated FROM, with its ROUND counts, " +
+                              "because a bidder-ratio scaling of a solve time assumes a round count.");
+            {
+                double solves = Math.Max(1, HousingAuction.SolveCalls);
+                double perSolve = (HousingAuction.MsSubmarkets + HousingAuction.MsHouseholds
+                                   + HousingAuction.MsAuction + HousingAuction.MsRepairScan
+                                   + HousingAuction.MsShadow) / solves;
+                Console.WriteLine($"  housing solve  total={perSolve:F1} ms/solve " +
+                                  $"solves={HousingAuction.SolveCalls} " +
+                                  $"sampled={solvesSampled} multiSolveTicks={multiSolveTicks} " +
+                                  $"| per solve (ms): submarkets={HousingAuction.MsSubmarkets / solves:F1} " +
+                                  $"households={HousingAuction.MsHouseholds / solves:F1} " +
+                                  $"auction={HousingAuction.MsAuction / solves:F1} " +
+                                  $"repairScan={HousingAuction.MsRepairScan / solves:F1} " +
+                                  $"shadow={HousingAuction.MsShadow / solves:F1}");
+                Console.WriteLine($"  housing rounds over the run: Rounds={acRounds} Bids={acBids} " +
+                                  $"Evictions={acEvict} RepairRounds={acRepair} " +
+                                  $"| per solve: Rounds={acRounds / (double)Math.Max(1, solvesSampled):F1} " +
+                                  $"Bids={acBids / (double)Math.Max(1, solvesSampled):F0} " +
+                                  $"Evictions={acEvict / (double)Math.Max(1, solvesSampled):F0} " +
+                                  $"RepairRounds={acRepair / (double)Math.Max(1, solvesSampled):F1} " +
+                                  $"| last solve Converged={sim.Engine.Auction.Converged} " +
+                                  $"RepairClean={sim.Engine.Auction.RepairClean}");
+            }
+            return 0;
+        }
     }
 }
