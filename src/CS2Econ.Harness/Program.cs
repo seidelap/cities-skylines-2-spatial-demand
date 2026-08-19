@@ -512,6 +512,21 @@ namespace CS2Econ.Harness
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.ParityProbe(seed, ticks);
                 }
+                case "firmprobe":
+                {
+                    // The non-residential land census (see Debugging.FirmProbe):
+                    // cell/column grain, the ℓ* ladder, per-cluster max standing
+                    // rung, the bill decomposition, entrant excess at the
+                    // assessed LR and at LR = 0, the would-move population, the
+                    // ladder-bound criterion, the firm/parcel binding census and
+                    // the phase timers. Read-only: it changes nothing in the
+                    // world it reads. Composes with --nonres-parity /
+                    // --store-level / --posted to census the other arms.
+                    int ticks = 400;
+                    for (int i = 1; i + 1 < args.Length; i += 2)
+                        if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
+                    return Debugging.FirmProbe(seed, ticks);
+                }
                 case "firmdiag":
                 {
                     int ticks = 800;
