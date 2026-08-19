@@ -696,6 +696,78 @@ site-losing firms and is red by `--mutant-resolve-unplaced` at 58 kills. A reade
 looking for the evidence should read that leg and not this one; the code comment
 says so at the site.
 
+## firmprobe Q12 and Q13 — measured, seeds 1/9/13
+
+**Q13, OPTION L AT PARCEL GRAIN.** Share of BUILT parcels whose ℓ\* stands above
+their own column's standing max — the parcels Option L would actually pull down:
+
+| sector | seed 1 | seed 9 | seed 13 |
+|---|---|---|---|
+| Office | 0/64 (0.0 %) | 5/58 (8.6 %) | 0/58 (0.0 %) |
+| Industrial | 54/54 (100 %) | 62/62 (100 %) | 55/55 (100 %) |
+| Commercial | 74/178 (41.6 %) | 83/180 (46.1 %) | 58/177 (32.8 %) |
+| Extractor | 4/71 (5.6 %) | 52/83 (62.7 %) | 36/76 (47.4 %) |
+
+Two corrections to v3, in opposite directions. Industrial is stronger than the
+cluster mean implied — Option L moves EVERY built industrial parcel on every
+seed. Commercial is weaker: v3 says "binds hard", and at parcel grain it moves a
+third to a half. And **extractor's benefit is a property of the seed, not of the
+mechanism** — 5.6 % against 62.7 % on the same fixture at a different seed, while
+the per-cluster mean reads 1.71 on both and hides it completely. v3's
+"binds hard (→1.7–1.8)" must not be quoted as a stable sector result.
+
+**Q12, THE CROSS-CLUSTER CRITERION** (`value_c(5) − A ≤ S(5,1.0)`, A excluding the
+door under test). Two things, and the second is the one that decides P1.
+
+FIRST: almost every cluster reads bounded in every sector under both scopes, and
+the COUNT is not the information — the MARGIN is. `A1` and `A2` sit within
+0.05–7 % of each other, so the value table is nearly flat at the top and
+excluding one door barely lowers the alternative. Margins of `v5 − A − S(5,1)`:
+
+| sector | p50 (seeds 1/9/13) | p90 (seeds 1/9/13) |
+|---|---|---|
+| Commercial | −8.560 / −8.171 / −10.161 | −1.174 / −0.694 / −1.420 |
+| Industrial | −13.468 / −13.485 / −12.407 | −0.775 / −0.988 / −0.420 |
+| Extractor | −9.545 / −15.774 / −13.595 | −5.374 / −13.513 / −7.453 |
+| **Office** | **−0.330 / −0.262 / −0.306** | **−0.020 / −0.019 / −0.046** |
+
+Office is bounded by this criterion and the bound is WORTHLESS: p90 margins of
+0.02–0.05 against an `S(5,1.0)` of 3.544 — six tenths of one percent to one and
+a third percent of the structure floor. Anything perturbs it. Report office as
+knife-edge, never as bounded; and note that this criterion and Option L are two
+DIFFERENT proposed bounds giving opposite office answers (Q13: 0 % moved; Q12:
+11 of 12 clusters bounded), so a design must not quote one as support for the
+other.
+
+SECOND, AND THIS IS THE ANSWER TO THE `alt` SCOPE QUESTION: **the scope is a real
+fork, and only for industrial.** Bounded parcels, all-doors vs standing-doors:
+
+| sector | seed 1 | seed 9 | seed 13 |
+|---|---|---|---|
+| Office | 57/64 vs 57/64 | 53/58 vs 53/58 | 52/58 vs 52/58 |
+| Commercial | 175/178 vs 173/178 | 178/180 vs 178/180 | 176/177 vs 174/177 |
+| Extractor | 70/71 vs 66/71 | 81/83 vs 81/83 | 74/76 vs 74/76 |
+| **Industrial** | **52/54 vs 30/54** | **61/62 vs 47/62** | **53/55 vs 32/55** |
+
+Office is IDENTICAL under both scopes on all three seeds (`A1(all)` equals
+`A1(standing)` exactly); commercial and extractor differ by at most a few
+parcels. Industrial changes verdict on ~40 % of its parcels, on every seed. The
+mechanism is visible in block D: industrial stands only at rungs 1–2, so the
+standing-door set excludes the high rungs where the surplus is, and
+`A1(standing)` reads about half `A1(all)` (8.732 vs 16.609; 8.783 vs 16.687;
+7.988 vs 15.485). **P1 cannot pick the `alt` scope freely.** It is not a
+distinction without a difference, it is the industrial verdict.
+
+THE FIRST CUT OF Q12 WAS DEGENERATE AND ITS NUMBERS WERE NEVER RECORDED. A was
+computed as a max over a door set INCLUDING the door under test, which makes the
+criterion an identity — true for every cluster, with the argmax failing only on
+floating point. It printed 11/12, 111/112, 31/31: shapes that read as findings.
+Caught from the run output before anything was written down, fixed at
+`4462e29` by excluding the tested door (top-two, so the excluded max falls to the
+runner-up). Both `A1` and `A2` are now printed under each scope precisely so a
+reader can see how close the criterion sits to the degenerate case — which, per
+the first point above, is closer than is comfortable.
+
 A FOURTH FINDING IS FILED AND NOT FIXED: `RelocateFirm`'s `BidAt` discards
 `FirmBidPerSlot`'s `out chosen`, so for industrial and extractor a firm is moved on
 a bid for the destination cluster's BEST output rather than the one it produces
