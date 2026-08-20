@@ -1133,6 +1133,28 @@ namespace CS2Econ.Core
         /// bid, assessment and revenue is arithmetically unchanged — which the
         /// fingerprint is what checks, not this comment.</summary>
         public bool OfficeSpecializations = false;
+        /// <summary>Shops retail ONE basket line rather than all of them, and
+        /// each line's spending is captured only by the shops that sell it.
+        ///
+        /// The second half is not decoration, it is the whole mechanism. A shop
+        /// that specializes without per-line capture is choosing purely on
+        /// basket share, and the shares (food 0.16 against timber 0.03 of a
+        /// 0.30 basket) span 5x while the delivered-cost term they would
+        /// compete against varies by about 13% across clusters — so every shop
+        /// in the city would sell food, which is one company type wearing four
+        /// names. Partitioning capture is what makes a niche pay: a cluster
+        /// thick with grocers leaves its machinery spending unserved, and the
+        /// shop that sells machinery there takes all of it.
+        ///
+        /// OFF BY DEFAULT while it is measured. With it off every shop carries
+        /// Res.Services, capture is the single undivided pool it has always
+        /// been, and restocking is the whole basket — the arithmetic is
+        /// untouched, which the fingerprint checks rather than this comment.
+        /// The store-level consumption path is NOT covered yet: it routes each
+        /// household to one shop rather than distributing a pool, so per-line
+        /// capture there is a different change, and it is named in KNOWN-RED
+        /// rather than silently half-done.</summary>
+        public bool CommercialLines = false;
         /// <summary>Route each household's consumption to the ONE shop it chose,
         /// instead of pooling all consumption citywide and handing it back out
         /// pro-rata to (slots × cluster capture strength).

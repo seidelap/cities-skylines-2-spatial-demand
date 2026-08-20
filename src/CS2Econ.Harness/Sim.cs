@@ -58,6 +58,10 @@ namespace CS2Econ.Harness
         /// FeatureFlags.OfficeSpecializations so the arm can be measured
         /// without editing a default that ships off.</summary>
         public static bool ForceOfficeSpecializations;
+        /// <summary>Set by `--retail-lines`: turns on
+        /// FeatureFlags.CommercialLines so the arm can be measured without
+        /// editing a default that ships off.</summary>
+        public static bool ForceCommercialLines;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
@@ -68,6 +72,7 @@ namespace CS2Econ.Harness
             if (ForceNonResLandParity) p.NonResLandParity = true;
             if (ForceFirmExitMargin) flags.FirmExitMargin = true;
             if (ForceOfficeSpecializations) flags.OfficeSpecializations = true;
+            if (ForceCommercialLines) flags.CommercialLines = true;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);

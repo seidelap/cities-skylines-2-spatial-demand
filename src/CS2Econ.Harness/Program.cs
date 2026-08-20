@@ -111,6 +111,7 @@ namespace CS2Econ.Harness
                 // The exit margin's own arm and its two mutants.
                 if (args[i] == "--exit-margin") { Sim.ForceFirmExitMargin = true; continue; }
                 if (args[i] == "--office-kinds") { Sim.ForceOfficeSpecializations = true; continue; }
+                if (args[i] == "--retail-lines") { Sim.ForceCommercialLines = true; continue; }
                 // MUTANT SWITCH (see EconomyEngine.MutantFirmExitNoMargin): the
                 // margin does nothing, so a firm survives on its balance alone.
                 if (args[i] == "--mutant-no-margin")

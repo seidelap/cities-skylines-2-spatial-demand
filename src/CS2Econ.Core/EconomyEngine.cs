@@ -74,6 +74,11 @@ namespace CS2Econ.Core
         /// is "could not have paid it".</summary>
         public int FirmMarginExitsTotal;
         public int FirmMarginRelocationsTotal;
+        /// <summary>Shops that picked a retail line rather than carrying the
+        /// whole basket. Zero whenever CommercialLines is off, which is what
+        /// makes a non-zero reading proof the mechanism reached the population
+        /// rather than only the handful of mid-run entrants.</summary>
+        public int FirmRetailChoicesTotal;
 
         /// <summary>MUTANT SWITCH: restores office and extractor production
         /// WITHOUT the level and condition terms their assessment prices them
@@ -139,6 +144,7 @@ namespace CS2Econ.Core
         public EconomyEngine(WorldState w, IAccessCosts costs, EconParams p, FeatureFlags flags)
         {
             W = w; Costs = costs; P = p; Flags = flags;
+            LandAccounting.CommercialLinesActive = flags.CommercialLines;
             Allocation = new AllocationSystem(costs.ClusterCount);
             Trade.Bind(w, costs);
             Trade.SetParams(p);
@@ -1322,7 +1328,7 @@ namespace CS2Econ.Core
                     weightSum += f.JobSlots * Access.CaptureIncumbentPerMass[W.Parcels[f.Parcel].Cluster];
                 }
                 if (weightSum <= 1e-9) { totalLeaked += totalCaptured; totalCaptured = 0; }
-                else
+                else if (!Flags.CommercialLines)
                     foreach (var f in W.Firms)
                     {
                         if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
@@ -1331,6 +1337,51 @@ namespace CS2Econ.Core
                         f.Money += totalCaptured * share;
                         f.RevenueThisTick = totalCaptured * share;
                     }
+                else
+                {
+                    // ONE POOL PER LINE. Each line's spending is distributed
+                    // only among the shops that sell it, weighted the same way
+                    // the single pool always was. This is what makes a niche
+                    // pay: a line with one shop in a catchment hands that shop
+                    // the line's whole local spend, where under one pool it
+                    // would have taken a slots-share of everything and been
+                    // indistinguishable from a grocer.
+                    //
+                    // A line nobody sells is captured by nobody and LEAKS,
+                    // which is the honest outcome — the money goes out of town
+                    // because the town does not stock the good. Reported into
+                    // the same leak total the pooled path already keeps, so
+                    // conservation is unchanged.
+                    int lines = ResourceCatalog.Basket.Length;
+                    double basketAll = 0;
+                    foreach (var (_, sh) in ResourceCatalog.Basket) basketAll += sh;
+                    foreach (var f in W.Firms)
+                        if (!f.Dead && f.Sector == ZoneKind.Commercial && f.Parcel >= 0)
+                            f.RevenueThisTick = 0;
+                    for (int q = 0; q < lines; q++)
+                    {
+                        double lineShare = basketAll > 1e-12 ? ResourceCatalog.Basket[q].share / basketAll : 0;
+                        double linePool = totalCaptured * lineShare;
+                        if (linePool <= 0) continue;
+                        double lw = 0;
+                        foreach (var f in W.Firms)
+                        {
+                            if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                            if (f.Retail != Res.Services && AccessState.LineOf(f.Retail) != q) continue;
+                            lw += f.JobSlots * Access.CaptureLine(q, W.Parcels[f.Parcel].Cluster);
+                        }
+                        if (lw <= 1e-9) { totalLeaked += linePool; totalCaptured -= linePool; continue; }
+                        foreach (var f in W.Firms)
+                        {
+                            if (f.Dead || f.Sector != ZoneKind.Commercial || f.Parcel < 0) continue;
+                            if (f.Retail != Res.Services && AccessState.LineOf(f.Retail) != q) continue;
+                            double share = f.JobSlots
+                                * Access.CaptureLine(q, W.Parcels[f.Parcel].Cluster) / lw;
+                            f.Money += linePool * share;
+                            f.RevenueThisTick += linePool * share;
+                        }
+                    }
+                }
             }
             ConsumptionSpendThisTick = totalSpend;
             ConsumptionCapturedThisTick = totalCaptured;
@@ -1590,9 +1641,18 @@ namespace CS2Econ.Core
                         // spending — units forecast at the price THIS store's
                         // deliveries actually cost (its cluster's realized
                         // delivered statistic; 0.5 floor kept).
+                        // A specialized shop restocks ONE line, at that line's
+                        // full basket weight — it is selling only that good, so
+                        // all of its takings are that good's takings. A
+                        // whole-basket shop restocks all four as before.
+                        double basketAll = 0;
+                        foreach (var (_, sh) in ResourceCatalog.Basket) basketAll += sh;
                         foreach (var (res, share) in ResourceCatalog.Basket)
                         {
-                            double need = f.RevenueThisTick * share / Math.Max(0.5, Trade.DeliveredStat(res, c));
+                            bool sells = f.Retail == Res.Services || f.Retail == res;
+                            if (!sells) { f.InputNeedByRes[(int)res] = 0; continue; }
+                            double w = f.Retail == Res.Services ? share : basketAll;
+                            double need = f.RevenueThisTick * w / Math.Max(0.5, Trade.DeliveredStat(res, c));
                             f.InputNeedByRes[(int)res] = need;
                             _demandByCluster[(int)res][c] += need;
                             _demandTotal[(int)res] += need;
@@ -1889,6 +1949,37 @@ namespace CS2Econ.Core
                 // labor, shedding a worker sheds its output too, so the margin
                 // does not move. The middle stage is MOVING, which is the one
                 // thing a firm here can actually do about its costs.
+                // A SHOP THAT HAS NEVER CHOSEN A LINE CHOOSES ONE. Retailers
+                // re-merchandise; a shop is not born knowing what it sells and
+                // is not stuck with it forever if it never decided. Without
+                // this the mechanism reaches almost nobody: the line is picked
+                // at entry, and mid-run commercial entry is about ONE firm per
+                // run (shopsweep's own cohort leg reads 1), so essentially
+                // every shop in the city is seeded at t = 0 and would keep the
+                // whole basket forever. Measured before this existed: 56 live
+                // shops, 56 of them still whole-basket.
+                //
+                // STAGGERED ON THE SAME MEMORYLESS HAZARD the two relocation
+                // paths above use, and for a sharper reason than tidiness. At
+                // t = 0 every shop sells everything, so every line looks
+                // equally served and the argmax is decided by delivered cost
+                // alone — let them all choose at once and a whole cluster
+                // commits to the same line in the same tick, which is the
+                // simultaneity trap that would hand back exactly the
+                // one-company-type world this is meant to end. Choosing a few
+                // at a time lets each chooser see what the last one did.
+                if (Flags.CommercialLines && f.Sector == ZoneKind.Commercial
+                    && f.Retail == Res.Services
+                    && W.Rng.NextDouble() < 1.0 / Math.Max(1, P.MoveSearchPeriod))
+                {
+                    LandAccounting.FirmBidPerSlot(
+                        Access, Trade, pl.Cluster, ZoneKind.Commercial, pl.Level, P,
+                        out Res pick, W.Clusters,
+                        pl.Units * Math.Max(0.2, pl.Condition) * P.Quality(pl.Level),
+                        pl.Units, pl.Condition);
+                    if (pick != Res.Services) { f.Retail = pick; FirmRetailChoicesTotal++; }
+                }
+
                 bool marginOn = Levying && Flags.FirmExitMargin && !MutantFirmExitNoMargin;
                 int patience = P.InsolvencyGraceTicks;
                 if (marginOn)
@@ -2031,6 +2122,13 @@ namespace CS2Econ.Core
                     {
                         Id = W.Firms.Count, Sector = pl.Use, Parcel = pl.Id,
                         Output = pl.Use == ZoneKind.Commercial ? Res.Services : chosen,
+                        // A commercial entrant commits to the line its own
+                        // catchment is least well served in, exactly as an
+                        // industrial entrant commits to a recipe. `chosen` is
+                        // that argmax when lines are on; Res.Services (sell
+                        // everything) when they are off.
+                        Retail = pl.Use == ZoneKind.Commercial && Flags.CommercialLines
+                            ? chosen : Res.Services,
                         Money = P.FirmSeedCapital, JobSlots = pl.Units, EnteredTick = W.Tick,
                         // An office entrant commits to a specialization the way
                         // an industrial entrant commits to a recipe: the one

@@ -455,6 +455,15 @@ namespace CS2Econ.Core
         /// lives with that choice as the neighbourhood changes around it.
         /// Meaningless for other sectors and ignored by them.</summary>
         public OfficeKind Office;
+        /// <summary>Which basket line this shop retails. Fixed at entry, the
+        /// way an industrial firm's recipe is: the entrant sells whatever its
+        /// own catchment is least well served in, priced at what that good
+        /// costs to get delivered HERE.
+        ///
+        /// Res.Services — the old single line — means "sells the whole basket",
+        /// which is what every shop did and what they all still do while
+        /// FeatureFlags.CommercialLines is off. Meaningless for other sectors.</summary>
+        public Res Retail = Res.Services;
     }
 
     /// <summary>One outside connection with its own supply/demand law

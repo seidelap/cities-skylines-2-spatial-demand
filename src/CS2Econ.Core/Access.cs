@@ -438,6 +438,36 @@ namespace CS2Econ.Core
         // Commercial capture (Layer-3 phantom entrant machinery, §4.2)
         public double[] IncumbentShopWeight = Array.Empty<double>(); // per origin: Σ_j wShop·mass_j
         public double[] CaptureIncumbentPerMass = Array.Empty<double>(); // spending captured per unit mass at c
+        /// <summary>The same three fields, PARTITIONED BY BASKET LINE: shop
+        /// mass selling line r, the incumbent weight an origin sees for line r,
+        /// and the spending per unit mass a shop selling line r captures at c.
+        /// Indexed by ResourceCatalog.Basket position, not by Res.
+        ///
+        /// A shop competes only with the shops that sell what it sells, which
+        /// is what makes specializing pay somewhere: a catchment already full
+        /// of grocers has an unserved machinery line, and its incumbent weight
+        /// for machinery is just the outside option. With CommercialLines off
+        /// these carry the undivided values, so every read is the old one.</summary>
+        public double[][] ShopMassByLine = Array.Empty<double[]>();
+        public double[][] IncumbentShopWeightByLine = Array.Empty<double[]>();
+        public double[][] CaptureIncumbentPerMassByLine = Array.Empty<double[]>();
+        /// <summary>Basket position of a Res, or −1 for anything not in the
+        /// basket (Res.Services included — that is the "sells everything"
+        /// marker, not a line).</summary>
+        public static int LineOf(Res r)
+        {
+            for (int i = 0; i < ResourceCatalog.Basket.Length; i++)
+                if (ResourceCatalog.Basket[i].res == r) return i;
+            return -1;
+        }
+        /// <summary>Spending captured per unit of shop mass at c by a shop
+        /// selling `line`. Falls back to the undivided pool for a shop that
+        /// sells the whole basket, so both worlds read through one call.</summary>
+        public double CaptureLine(int line, int c)
+            => line >= 0 && CaptureIncumbentPerMassByLine.Length > line
+               && (uint)c < (uint)CaptureIncumbentPerMassByLine[line].Length
+                ? CaptureIncumbentPerMassByLine[line][c]
+                : ((uint)c < (uint)CaptureIncumbentPerMass.Length ? CaptureIncumbentPerMass[c] : 0);
 
         // Office agglomeration A(p)^γ
         public double[] OfficeAgglomMult = Array.Empty<double>();
@@ -477,6 +507,7 @@ namespace CS2Econ.Core
             JobsByClass = NewJagged(3, C);
             WorkersByClass = NewJagged(3, C);
             CommercialMass = new double[C];
+            ShopMassByLine = NewJagged(ResourceCatalog.Basket.Length, C);
             SpendMass = new double[C];
             OfficeJobs = new double[C];
             OfficeJobsByKind = NewJagged(OfficeKindCount, C);
@@ -490,9 +521,20 @@ namespace CS2Econ.Core
                 switch (f.Sector)
                 {
                     case ZoneKind.Commercial:
+                    {
                         JobsByClass[0][c] += f.JobSlots * 0.7; JobsByClass[1][c] += f.JobSlots * 0.3;
-                        CommercialMass[c] += f.JobSlots * cond * p.Quality(parcel.Level);
+                        double m = f.JobSlots * cond * p.Quality(parcel.Level);
+                        CommercialMass[c] += m;
+                        int line = LineOf(f.Retail);
+                        // A whole-basket shop is mass against EVERY line: it
+                        // sells all of them, so it is competition for all of
+                        // them. That is what keeps the flag-off world identical
+                        // — with every shop carrying Res.Services, each line's
+                        // mass IS the undivided mass.
+                        if (line >= 0) ShopMassByLine[line][c] += m;
+                        else for (int q = 0; q < ResourceCatalog.Basket.Length; q++) ShopMassByLine[q][c] += m;
                         break;
+                    }
                     case ZoneKind.Industrial:
                         JobsByClass[0][c] += f.JobSlots * 0.6; JobsByClass[1][c] += f.JobSlots * 0.4;
                         break;
@@ -627,6 +669,38 @@ namespace CS2Econ.Core
                 for (int i = 0; i < C; i++)
                     captured += SpendMass[i] * WShop[i, c] / IncumbentShopWeight[i];
                 CaptureIncumbentPerMass[c] = captured; // per unit of mass at c, at current incumbency
+            }
+            // PER LINE: the identical two loops, over the mass that sells this
+            // line and the share of spending that goes on it. Each line's
+            // outside option is the same wOutside — shopping out of town is
+            // still available for every good — so a line with no shops in
+            // reach has an incumbent weight of essentially the outside option
+            // alone, and the first shop to sell it captures nearly all of that
+            // line's spending in its catchment. That is the signal a niche
+            // pays on, and it is why partitioning capture is the mechanism
+            // rather than a bookkeeping detail.
+            int lines = ResourceCatalog.Basket.Length;
+            double basketTotal = 0;
+            for (int q = 0; q < lines; q++) basketTotal += ResourceCatalog.Basket[q].share;
+            IncumbentShopWeightByLine = NewJagged(lines, C);
+            CaptureIncumbentPerMassByLine = NewJagged(lines, C);
+            for (int q = 0; q < lines; q++)
+            {
+                double lineShare = basketTotal > 1e-12
+                    ? ResourceCatalog.Basket[q].share / basketTotal : 0;
+                for (int i = 0; i < C; i++)
+                {
+                    double s = wOutside + 1e-9;
+                    for (int j = 0; j < C; j++) s += WShop[i, j] * ShopMassByLine[q][j];
+                    IncumbentShopWeightByLine[q][i] = s;
+                }
+                for (int c = 0; c < C; c++)
+                {
+                    double captured = 0;
+                    for (int i = 0; i < C; i++)
+                        captured += SpendMass[i] * lineShare * WShop[i, c] / IncumbentShopWeightByLine[q][i];
+                    CaptureIncumbentPerMassByLine[q][c] = captured;
+                }
             }
 
             // ---- office agglomeration ---------------------------------------

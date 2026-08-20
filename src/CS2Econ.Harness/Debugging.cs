@@ -2457,6 +2457,23 @@ namespace CS2Econ.Harness
                 kindAll[(int)f.Office]++;
                 if (!f.Dead && f.Parcel >= 0) kindLive[(int)f.Office]++;
             }
+            // Same question for retail: a maximum over lines that always names
+            // the same line is one company type wearing four names, which is
+            // exactly what basket share alone would produce.
+            var retailLive = new Dictionary<Res, int>();
+            var retailAll = new Dictionary<Res, int>();
+            foreach (var f in w.Firms)
+            {
+                if (f.Sector != ZoneKind.Commercial) continue;
+                retailAll.TryGetValue(f.Retail, out int a); retailAll[f.Retail] = a + 1;
+                if (!f.Dead && f.Parcel >= 0)
+                { retailLive.TryGetValue(f.Retail, out int l); retailLive[f.Retail] = l + 1; }
+            }
+            var rparts = new List<string>();
+            foreach (var kv in retailAll)
+                rparts.Add($"{kv.Key} {(retailLive.TryGetValue(kv.Key, out int lv) ? lv : 0)}/{kv.Value}");
+            Console.WriteLine($"  retail lines (live / ever): {string.Join(", ", rparts)}");
+
             Console.WriteLine($"  office kinds (live / ever): "
                 + $"software {kindLive[0]}/{kindAll[0]}, financial {kindLive[1]}/{kindAll[1]}, "
                 + $"media {kindLive[2]}/{kindAll[2]}");

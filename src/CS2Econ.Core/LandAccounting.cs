@@ -517,6 +517,33 @@ namespace CS2Econ.Core
                     }
                     else capturePerSlot = acc.PhantomCommercialCapture(cluster, 6.0 * quality) / 6.0;
                     profitPerFilledSlot = capturePerSlot * (p.CommercialMarkup - 0.1 * (cogsIndex - 0.3)) - wage;
+                    // RETAIL WEBER: which line to sell here. Same shape as the
+                    // industrial branch below — a maximum over what the firm
+                    // could do, with the input side priced at THIS location —
+                    // and it replaces the whole-basket read above rather than
+                    // adding to it, so a shop is one business and not four.
+                    //
+                    // Both terms are local and both matter. The capture side
+                    // asks how badly this catchment is served in this line
+                    // (thin competition, more spending per unit of mass); the
+                    // cost side asks what the good costs delivered here. A
+                    // niche pays where it is underserved, which is the thing
+                    // basket share alone could never express.
+                    if (lineAware)
+                    {
+                        profitPerFilledSlot = double.NegativeInfinity;
+                        for (int q = 0; q < ResourceCatalog.Basket.Length; q++)
+                        {
+                            var (lres, _) = ResourceCatalog.Basket[q];
+                            double lineCapPerSlot = capturePerSlot <= 0 ? 0
+                                : capturePerSlot * SafeRatio(acc.CaptureLine(q, cluster),
+                                                             acc.CaptureLine(-1, cluster));
+                            double lineCogs = prices.DeliveredCost(lres, cluster)
+                                              / ResourceCatalog.Anchor[(int)lres];
+                            double v = lineCapPerSlot * (p.CommercialMarkup - 0.1 * (lineCogs - 0.3)) - wage;
+                            if (v > profitPerFilledSlot) { profitPerFilledSlot = v; chosenOutput = lres; }
+                        }
+                    }
                     break;
                 }
                 case ZoneKind.Industrial:
@@ -626,6 +653,17 @@ namespace CS2Econ.Core
         /// industrial entrant choosing its recipe by Weber, and the reason the
         /// bid above is a maximum a real firm can actually realize rather than
         /// a number nobody can earn.</summary>
+        /// <summary>Set by the engine from FeatureFlags.CommercialLines. A
+        /// static because FirmBidPerSlot is static and takes no flags — the
+        /// same shape MutantFlatGeologyAssessment beside it uses. Off, the
+        /// commercial branch keeps its whole-basket read untouched.</summary>
+        public static bool CommercialLinesActive;
+        private static bool lineAware => CommercialLinesActive;
+        /// <summary>a/b, and 1.0 when b is not usably positive — a shop with no
+        /// undivided capture to scale from is not a shop with an infinite
+        /// niche.</summary>
+        private static double SafeRatio(double a, double b) => b > 1e-12 ? a / b : 1.0;
+
         public static OfficeKind BestOfficeKind(AccessState acc, int cluster, EconParams p, int siteId)
         {
             var best = OfficeKind.Software; double bestV = double.NegativeInfinity, worstV = double.PositiveInfinity;
