@@ -696,6 +696,64 @@ site-losing firms and is red by `--mutant-resolve-unplaced` at 58 kills. A reade
 looking for the evidence should read that leg and not this one; the code comment
 says so at the site.
 
+## The geology collapse: NOT fixed, but the attribution is now wrong in the registry
+
+**WHAT THIS ENTRY USED TO SAY:** "the collapse is the GEOLOGY correction alone
+(10 and 8 extractors with it removed and the other three on, against 3 and 1
+with all four)". Measured again, on the INDUSTRIAL population this time
+(`weberprobe --seed 0 --seeds 6`), that is true of a bit over half the seeds and
+false of the rest:
+
+| seed | parity OFF | parity ON | parity ON + `--mutant-flat-geology` |
+|---|---|---|---|
+| 0 | 6 | 1 | **11** |
+| 1 | 8 | 1 | 1 |
+| 2 | 10 | 0 | 1 |
+| 3 | 10 | 0 | **7** |
+| 4 | 12 | 1 | 1 |
+| 5 | 7 | 0 | **2** |
+
+Restoring flat geology recovers industry on seeds 0, 3, 5 and does nothing on
+1, 2, 4. **So parity has a SECOND collapse channel that geology does not
+explain**, and every plan built on "fix geology and parity unblocks" is
+planning against one of two causes.
+
+The second channel is visible in the same run and is circular. Parity switches
+the industrial output price from `OriginStat` to `OriginComparable` — the §3
+circularity guard's firm analog, which refuses a cell's own seller as its own
+comparable. With industry thin, most cells have NO other seller, so the
+comparable has nothing to read and the entrant argmax **flattens to `Food×196`
+on every seed**, against two distinct recipes competing on most seeds with
+parity off. A price guard that needs a population to price against, applied to a
+population it is thinning, starves itself.
+
+GEOLOGY'S OWN CHANNEL RUNS THROUGH THE SUPPLY CHAIN, not directly:
+`--mutant-flat-geology` only touches `Assess`'s extractor read, so it can reach
+industry only via extractor land bills → extractor deaths → local raw supply →
+industrial input costs. Extractors are the mechanism, industry is the casualty.
+
+**A CANDIDATE FIX WAS BUILT, MEASURED INERT, AND REVERTED.** Vacant derelict
+non-residential parcels admitted as developer redevelopment candidates — cost
+`demolition + RC − salvage`, funded from developer capital like a greenfield
+start, which is the obvious answer to the escrow trap (Escrow is written only in
+`RouteLandCharge`, whose only callers are occupant-payment loops, so a parcel
+with no occupant can never fund the scrape that would clear it). It fired **ZERO
+times over 400 ticks on seed 1** and vacancy was unchanged at 95/187. Not
+shipped: a flag that changes nothing is the same fault as a check that cannot
+fail.
+
+**WHY IT FIRED ZERO TIMES IS THE REAL FINDING, AND IT IS A SELF-DEFEATING LOOP.**
+`Assess` values a derelict site HIGH exactly because redevelopment would pay
+(`lr = flow − aOp(cost − Escrow)`). `Construction.ExpectedFlow` then DEDUCTS the
+land charge from the developer's return. So the more the assessment says a ruin
+is worth rebuilding, the less the developer's flow, and the rebuild never clears
+`bestRet > HurdleRate * 1.5` — while the sitting occupant is billed on the
+assessment's view and taxed out. The escrow gate is not the deepest cause;
+underneath it, even a fully funded developer is refused by the hurdle. Filed as
+its own item. Resolving it means reconciling two different forecasts of the same
+quantity: `Assess` uses `(bid − SPerUnit(lvl,1.0)) × units`, `ExpectedFlow` uses
+predicted rent × absorption − structure − land, calibration-corrected.
+
 ## Company types: office specializations and retail lines (both off by default)
 
 **THE ASSESSMENT ALWAYS CLAIMED TO TAKE A MAXIMUM OVER COMPANY TYPES. FOR TWO
