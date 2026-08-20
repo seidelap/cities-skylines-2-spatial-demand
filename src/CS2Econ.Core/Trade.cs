@@ -62,6 +62,14 @@ namespace CS2Econ.Core
         // per tick in EndTick.
         private double[] _cityDelivered = Array.Empty<double>();
         private double[] _cityOrigin = Array.Empty<double>();
+        /// <summary>Per (resource, cluster): the best comparable a cell without
+        /// two local sellers can reach — what sellers in the nearest cells that
+        /// DO have a comparable are getting, less the freight between there and
+        /// here. Null for a resource with no comparable-bearing cell anywhere,
+        /// where the caller's Math.Max against the export netback takes over.
+        /// Rebuilt per refresh in Refresh(); O(C x comparable cells) once,
+        /// rather than O(C) inside the entrant's recipe loop.</summary>
+        private double[][] _originNear = Array.Empty<double[]>();
         // Per (res): producing clusters and their haul rows (freight weight
         // included), for the DeliveredCost quote's local leg. Refresh cadence.
         private int[][] _producerCluster = new int[ResourceCatalog.Count][];
@@ -227,6 +235,34 @@ namespace CS2Econ.Core
                     }
                 producers.Sort();
                 double wgt = ResourceCatalog.Weight[r];
+                // The neighbour comparable, built from the cells that HAVE one.
+                if (_originNear.Length != ResourceCatalog.Count)
+                    _originNear = new double[ResourceCatalog.Count][];
+                var withComp = new List<int>();
+                for (int c2 = 0; c2 < C; c2++)
+                    if (_sellersAt[r][c2] >= MinComparableSellers) withComp.Add(c2);
+                if (withComp.Count == 0) _originNear[r] = null!;
+                else
+                {
+                    var near = new double[C];
+                    for (int c2 = 0; c2 < C; c2++)
+                    {
+                        double best = 0;
+                        foreach (int j in withComp)
+                        {
+                            // Arbitrage, not an average: the best net a seller
+                            // here could reach. Freight is the SAME cost the
+                            // export netback nets off, so the two sides of a
+                            // producer's alternative are priced alike.
+                            double net = OriginStat(res, j)
+                                         - _costs.Cost(c2, j, AccessPurpose.Freight)
+                                           * FreightCostPerMinute * wgt;
+                            if (net > best) best = net;
+                        }
+                        near[c2] = best;
+                    }
+                    _originNear[r] = near;
+                }
                 var haul = new double[producers.Count][];
                 for (int k = 0; k < producers.Count; k++)
                 {
@@ -349,7 +385,30 @@ namespace CS2Econ.Core
         {
             if (MutantSelfSellerComparable) return OriginStat(r, cluster);
             if (_sellersCity[(int)r] < MinComparableSellers) return 0;
-            if (_sellersAt[(int)r][cluster] < MinComparableSellers) return _cityOrigin[(int)r];
+            // A THIN CELL READS ITS NEIGHBOURS, NOT THE CITY. Returning
+            // _cityOrigin here handed every cell without two local sellers the
+            // SAME number, which is a citywide scalar standing in for a price
+            // an individual experiences locally — the thing this project's
+            // globals rule forbids, sitting inside the guard that exists to
+            // enforce it.
+            //
+            // It also starves itself. As producers thin, more cells fall under
+            // the threshold, more of them read the one scalar, and the spatial
+            // signal the entrant's recipe choice runs on disappears: measured,
+            // parity on flattens the entrant argmax to Food at ALL 196 clusters
+            // on every seed, against two recipes competing across the map with
+            // parity off. A price guard that needs a population to price
+            // against, thinning the population it prices, converging on one
+            // number.
+            //
+            // What a producer would actually reason: the going rate is what
+            // sellers elsewhere are getting, less what it costs to move goods
+            // between there and here. That is spatial arbitrage, it is the same
+            // freight cost the export netback already uses, and it varies by
+            // place because the freight does. Precomputed per refresh — see
+            // _originNear — because this sits inside the entrant's recipe loop.
+            if (_sellersAt[(int)r][cluster] < MinComparableSellers)
+                return _originNear[(int)r] != null ? _originNear[(int)r][cluster] : _cityOrigin[(int)r];
             return OriginStat(r, cluster);
         }
 

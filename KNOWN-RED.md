@@ -696,6 +696,39 @@ site-losing firms and is red by `--mutant-resolve-unplaced` at 58 kills. A reade
 looking for the evidence should read that leg and not this one; the code comment
 says so at the site.
 
+## THE FINDING UNDER ALL OF THESE: three of four sectors do not pay for themselves
+
+`marginprobe`, **shipping default**, seeds 1/9/13, 400 ticks:
+
+| sector | cash flow p50 | underwater | capital deaths |
+|---|---|---|---|
+| Commercial | **+59.5 / +68.9 / +47.9** | 0 % | 9 / 6 / 17 |
+| Industrial | −10.3 / −34.1 / −93.8 | 100 / 50 / 100 % | 58 / 13 / 52 |
+| Office | −426.7 / −420.4 / −408.8 | 100 % | **0** |
+| Extractor | −15.1 / −16.6 / −1.4 | 100 / 100 / 85 % | **183 / 131 / 374** |
+
+**Only commercial pays for itself.** The other three are structurally
+unprofitable on the arm that ships, and they fail in two different ways: office
+ZOMBIFIES — 100 % under water and not one death in 400 ticks, because it carries
+no input debits and must burn a war chest of `reserve + 50m` before
+`CompanyBankruptcyLimit` can fire — while industrial and extractor CHURN, 374
+extractor deaths on seed 13 being a mill of firms entering, losing money and
+dying.
+
+**THIS IS UPSTREAM OF EVERYTHING THIS REGISTRY CALLS A BLOCKER.** Parity does
+not collapse a healthy sector; it removes the last survivors of sectors already
+dying. Measured directly at 120 ticks, seed 0: the DEFAULT arm already has 7
+industrial firms alive, all 100 % under water at −71/tick, with 19 dead of
+capital — parity's arm reads 0 alive, 20 capital deaths and 3 arrears. That is
+an accelerant, not a cause. Every plan of the form "unblock parity and office
+becomes viable" is aimed at the wrong layer, and so was the plan that preceded
+it ("fix geology and parity unblocks").
+
+Office and industrial each have a NAMED gap (the bid carries `Quality(ℓ)` where
+production does not, off parity). Extractor at −1 to −17 with 131–374 deaths
+looks like a third mode and is **unattributed** — nothing in this file explains
+it yet.
+
 ## The geology collapse: NOT fixed, but the attribution is now wrong in the registry
 
 **WHAT THIS ENTRY USED TO SAY:** "the collapse is the GEOLOGY correction alone
