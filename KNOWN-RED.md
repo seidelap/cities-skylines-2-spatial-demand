@@ -837,6 +837,88 @@ nothing is ever built. The floor is a prior standing in for missing evidence,
 and it is applied even where the evidence is overwhelming. That conflation is
 the defect, not the floor's existence.
 
+## THE FIX: let the prior yield to evidence (`EconParams.FillEvidenceWeighting`)
+
+Ships OFF; `--fill-evidence`; mutant `--mutant-fill-prior`. With it off,
+`FirmFillEstimate` is the old `Clamp(0.35 + 0.65 * fill, 0.35, 1.0)` bit for bit,
+and `fingerprint --check` at this commit reports **all lanes match** — thirteen
+lanes, gating and report alike.
+
+    weight = posted / (posted + FillEvidenceSlots)      // FillEvidenceSlots = 20
+    est    = weight * realized fill + (1 − weight) * 0.35
+
+An untried cluster still reads 0.35, a long record of full doors still reads
+1.0, and a cluster that has posted hundreds of slots and filled none now reads
+~0 — which it could not before. The prior is kept for the bootstrap it exists to
+serve and bought out everywhere the evidence is real.
+
+**Composed arm (`--labor --exit-margin --fill-evidence`, 400 ticks) against
+`--labor` alone:**
+
+| | seed 1 | seed 9 | seed 13 |
+|---|---|---|---|
+| doors on NO shortlist | 22.1 → **6.0 %** | 15.6 → **2.5 %** | 16.1 → **1.7 %** |
+| zero-staff shells | 48 → **5** | 50 → **7** | 55 → **4** |
+| industrial p50 | −2.01 → **+31.44** | −64.44 → **+118.72** | — → **+112.96** |
+| industrial under water | 80 → **12.5 %** | 93.8 → **9.1 %** | — → **0 %** |
+| extractor p50 | −0.86 → **+56.32** | −1.22 → −0.35 | −0.33 → **+6.31** |
+| office p50 | −258.66 → **−42.57** | −262.41 → −121.39 | — → −95.78 |
+| commercial p50 | +207.02 → **+237.39** | +200.65 → **+242.76** | — → **+226.28** |
+
+The unlisted-door collapse is the mechanism confirmed end to end: jobs nobody
+would take are no longer being CREATED. Industrial, extractor and commercial are
+profitable at the median on every seed, which is most of task #57's stated goal.
+
+### THE MUTANT RAN, AND IT SAYS THE FIX IS WRONG FOR OFFICE
+
+`--mutant-fill-prior` (evidence never accumulates, so the prior stands whatever
+the record) on the composed arm, seed 1. It is a valid falsifier — doors on no
+shortlist 6.0 → 7.5 %, shells 5 → 8, built parcels 184 → 180 — so the mechanism
+is load-bearing and reachable. But one column moves the WRONG WAY and it is not
+a rounding artifact:
+
+| seed 1, composed arm | as shipped | `--mutant-fill-prior` |
+|---|---|---|
+| office alive | 1 | **10** |
+| office cash flow p50 | **−42.57** | **+319.03** |
+| office under water | 100 % | **0 %** |
+| office margin deaths | 10 | **0** |
+
+Across all four arms office reads 22 @ −258.66, 10 @ −116.36, 1 @ −42.57,
+10 @ **+319.03** — not monotone in count, so "fewer offices is better" is not
+the story. Isolating the two flags: with the exit margin ON and the prior
+restored, ten offices are strongly profitable; with evidence weighting ON, entry
+is choked to one and that one is under water. **The exit margin alone does the
+work for office, and the evidence weighting over-restricts it.**
+
+The obvious hypothesis is office's increasing returns — `OfficeAgglomMult` means
+an office's revenue depends on how many other offices stand near it, so a rule
+that thins entry attacks the very term that makes the sector viable, in a way it
+cannot for the three constant-returns sectors. **That hypothesis is UNTESTED.**
+It is the reason this flag must not be flipped on as it stands: it is measured
+good for three sectors and measured bad for the fourth, and the mechanism of the
+harm is not yet established. Testing it means holding office entry fixed while
+varying the fill rule, which no current probe arm does.
+
+**A seeding artifact, found on the way, that bounds what this fix could do.**
+`SyntheticCity.SeedFirms` places a firm on 80 % of pre-built non-residential
+parcels at t = 0 **consulting no bid at all**. That is why `--fill-evidence`
+alone left extractor counts identical (39/59 on seeds 1/9, both arms) while
+moving every developer-built sector: the extractor shells were never a
+developer's decision to begin with. Only the exit margin reaches them, which is
+why the two flags have to be measured together and why the composed arm is the
+one that matters. In-game there is no such seeding — every building is
+player-zoned and company-spawned — so this bounds the FIXTURE, not the model.
+
+**WHAT REMAINS, and it is now the only thing.** Effectively-idle sites go
+37.9/33.3/35.1 % → 41.8/47.1/47.7 %. The shells are gone; the parcels they held
+are now honestly VACANT (72/83/102) and nothing re-enters them. Every other
+symptom traced this round resolves; this one does not, and it is exactly #56
+(redevelopment self-defeating) plus #55's own "with re-entry" clause. The
+buildings stand empty because `Assess` prices a ruin off the redevelopment that
+would pay, and `ExpectedFlow` then deducts that same land charge, so the hurdle
+is never cleared.
+
 ## THE DIAGNOSIS: why three sectors are unprofitable, and why rate tweaks cannot fix it
 
 **MEASURED, not argued — four experiment arms** (`marginprobe --seed 1`, 400

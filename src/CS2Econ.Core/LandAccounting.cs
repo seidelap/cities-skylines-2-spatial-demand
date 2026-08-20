@@ -427,7 +427,7 @@ namespace CS2Econ.Core
         {
             chosenOutput = Res.Services;
             conditionPriced = false;
-            double fillEst = FirmFillEstimate(acc, cluster, sector);
+            double fillEst = FirmFillEstimate(acc, cluster, sector, p);
             double quality = p.Quality(level) / p.Quality(1);
             // Production needs labor: revenue AND wages both scale with fill —
             // an unstaffed firm produces (and earns) nothing.
@@ -626,20 +626,94 @@ namespace CS2Econ.Core
             return Math.Max(0, profitPerFilledSlot * fillEst * 0.85);
         }
 
-        public static double FirmFillEstimate(AccessState acc, int cluster, ZoneKind sector)
+        /// <summary>What share of its roster a firm opening here should expect to
+        /// fill, from this cluster's OWN hiring record. A developer can see the
+        /// job postings around a site and how they fared, so this is its own
+        /// forecast from its own information — never a citywide staffing rate.
+        ///
+        /// THE PRIOR YIELDS TO EVIDENCE, which is the whole content of this
+        /// function. The old form ended `Clamp(0.35 + 0.65 * fill, 0.35, 1.0)`,
+        /// so a cluster where every posted slot went begging still forecast a
+        /// third of a roster, and a rich remote deposit cleared its hurdle on
+        /// staff it would never get. Measured at the clusters holding
+        /// zero-staff firms (seeds 1/9/13, --labor, 400 ticks): the estimate sat
+        /// pinned on 0.350 at both p10 and p50 while realized fill there was
+        /// 0.000, and read 1.000 at staffed firms. The signal separated
+        /// perfectly; only the floor hid it.
+        ///
+        /// THE FLOOR COULD NOT SIMPLY GO, and that is why this is a shrinkage
+        /// rather than a deletion. `JobFillRate` is `matched / posted` where
+        /// anything was posted and 0 everywhere else, so "nobody would work
+        /// here" and "nobody has ever tried to hire here" are the SAME number.
+        /// At t = 0 nothing is staffed anywhere; a bare floor-free rule would
+        /// mean nothing is ever built. So the 0.35 stays — as a prior for a
+        /// developer with no evidence — and posted slots buy it out:
+        ///
+        ///   weight = posted / (posted + FillEvidenceSlots)
+        ///   est    = weight * realized fill + (1 − weight) * 0.35
+        ///
+        /// An untried cluster still reads 0.35, exactly as before. A cluster
+        /// with a long record of full doors still reads 1.0, exactly as before.
+        /// A cluster that has posted hundreds of slots and filled none now
+        /// reads ~0, which it could not before. The middle moves too — half the
+        /// doors filled forecasts half a roster rather than 0.675 — and that is
+        /// the same correction, not a separate one.</summary>
+        public static double FirmFillEstimate(AccessState acc, int cluster, ZoneKind sector,
+                                              EconParams? p = null)
         {
+            bool evidence = p != null && p.FillEvidenceWeighting;
+            // Per class, so a cluster with a long basic-labor record and no
+            // educated-labor record is not told one answer for both.
+            double F(int cl) => evidence
+                ? ClassFill(acc, cl, cluster)
+                : acc.JobFillRate[cl][cluster];
             double fill = sector switch
             {
-                ZoneKind.Commercial => 0.7 * acc.JobFillRate[0][cluster] + 0.3 * acc.JobFillRate[1][cluster],
-                ZoneKind.Industrial => 0.6 * acc.JobFillRate[0][cluster] + 0.4 * acc.JobFillRate[1][cluster],
-                ZoneKind.Office => 0.3 * acc.JobFillRate[1][cluster] + 0.7 * acc.JobFillRate[2][cluster],
-                ZoneKind.Extractor => acc.JobFillRate[0][cluster],
-                _ => 0.5,
+                ZoneKind.Commercial => 0.7 * F(0) + 0.3 * F(1),
+                ZoneKind.Industrial => 0.6 * F(0) + 0.4 * F(1),
+                ZoneKind.Office => 0.3 * F(1) + 0.7 * F(2),
+                ZoneKind.Extractor => F(0),
+                _ => evidence ? 0.5 : 0.5,
             };
-            // A new firm competes for labor at roughly the cluster's current fill;
-            // never assume total famine or perfection.
-            return MathUtil.Clamp(0.35 + 0.65 * fill, 0.35, 1.0);
+            // Flag off: the old affine lift off a hard 0.35 floor, bit for bit.
+            return evidence
+                ? MathUtil.Clamp(fill, 0.0, 1.0)
+                : MathUtil.Clamp(0.35 + 0.65 * fill, 0.35, 1.0);
         }
+
+        /// <summary>The prior 0.35 a developer holds where this cluster has no
+        /// hiring record of its own. Kept at the value the old floor used, so a
+        /// never-posted-to cluster forecasts exactly what it always did.</summary>
+        public const double FillPriorNoEvidence = 0.35;
+        /// <summary>Posted-slot mass at which a cluster's own hiring record
+        /// carries half the forecast. Roughly a few buildings' worth of doors —
+        /// enough that one firm's bad tick does not condemn a location, few
+        /// enough that a district with a standing record is believed.</summary>
+        public const double FillEvidenceSlots = 20.0;
+
+        private static double ClassFill(AccessState acc, int cl, int cluster)
+        {
+            if ((uint)cl >= (uint)acc.JobFillRate.Length) return FillPriorNoEvidence;
+            var rate = acc.JobFillRate[cl];
+            if ((uint)cluster >= (uint)rate.Length) return FillPriorNoEvidence;
+            double posted = (uint)cl < (uint)acc.JobsByClass.Length
+                            && (uint)cluster < (uint)acc.JobsByClass[cl].Length
+                ? acc.JobsByClass[cl][cluster] : 0;
+            // MUTANT: evidence never accumulates, so the prior stands whatever
+            // the cluster's record — the pre-fix behaviour in the new shape.
+            // Its purpose is to fail a check that the shrinkage passes; without
+            // it "the estimate is between 0 and 1" would be the only claim, and
+            // that cannot fail.
+            if (MutantFillPriorNeverYields) posted = 0;
+            double weight = posted / (posted + FillEvidenceSlots);
+            return weight * rate[cluster] + (1 - weight) * FillPriorNoEvidence;
+        }
+
+        /// <summary>MUTANT SWITCH: a cluster's own hiring record never outweighs
+        /// the no-evidence prior, so a location that has posted hundreds of
+        /// slots and filled none still forecasts a third of a roster. Never a
+        /// shipping mode.</summary>
+        public static bool MutantFillPriorNeverYields;
 
         /// <summary>workCluster is the geology the extractor leg prices against.
         /// Passing null prices EVERY raw at suitability 0.5 — a uniform geology

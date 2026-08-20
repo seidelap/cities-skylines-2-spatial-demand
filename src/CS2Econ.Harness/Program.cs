@@ -113,6 +113,11 @@ namespace CS2Econ.Harness
                 if (args[i] == "--office-kinds") { Sim.ForceOfficeSpecializations = true; continue; }
                 if (args[i] == "--retail-lines") { Sim.ForceCommercialLines = true; continue; }
                 if (args[i] == "--labor") { Sim.ForceLaborAuction = true; continue; }
+                if (args[i] == "--fill-evidence") { Sim.ForceFillEvidence = true; continue; }
+                // MUTANT SWITCH (see LandAccounting.MutantFillPriorNeverYields):
+                // a cluster's hiring record never outweighs the prior.
+                if (args[i] == "--mutant-fill-prior")
+                { LandAccounting.MutantFillPriorNeverYields = true; continue; }
                 // MUTANT SWITCH (see EconomyEngine.MutantFirmExitNoMargin): the
                 // margin does nothing, so a firm survives on its balance alone.
                 if (args[i] == "--mutant-no-margin")

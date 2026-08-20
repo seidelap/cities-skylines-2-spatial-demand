@@ -71,6 +71,10 @@ namespace CS2Econ.Harness
         /// pays class wages whatever its product, while the auction's door cap
         /// refuses a hire above the firm's own marginal-revenue forecast.</summary>
         public static bool ForceLaborAuction;
+        /// <summary>Set by `--fill-evidence`: turns on
+        /// EconParams.FillEvidenceWeighting so the arm can be measured without
+        /// editing a default that ships off.</summary>
+        public static bool ForceFillEvidence;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
@@ -83,6 +87,7 @@ namespace CS2Econ.Harness
             if (ForceOfficeSpecializations) flags.OfficeSpecializations = true;
             if (ForceCommercialLines) flags.CommercialLines = true;
             if (ForceLaborAuction) flags.LaborAuction = true;
+            if (ForceFillEvidence) p.FillEvidenceWeighting = true;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);

@@ -545,6 +545,20 @@ namespace CS2Econ.Core
         /// pattern this switch's item 2 installs on the goods side. Until that
         /// exists this ships built, checked on both arms, and off.</summary>
         public bool NonResLandParity = false;
+
+        /// <summary>Whether a developer's staffing forecast lets a cluster's own
+        /// hiring record outweigh the no-evidence prior
+        /// (LandAccounting.FirmFillEstimate carries the rule and the
+        /// measurement). OFF because it moves a shipping default: with it off
+        /// the estimate is the old `Clamp(0.35 + 0.65 * fill, 0.35, 1.0)` bit
+        /// for bit, so the arm can be measured before anything is flipped.
+        ///
+        /// What it fixes: a third of built non-residential parcels hold firms
+        /// that employ nobody, because the 0.35 floor let a developer clear its
+        /// hurdle on staff the site could never attract. Measured at those
+        /// clusters, the old estimate reads exactly 0.350 while realized fill
+        /// is 0.000.</summary>
+        public bool FillEvidenceWeighting = false;
         /// <summary>Consecutive ticks a firm may fail to meet its land charge in
         /// full before it releases the parcel — the firm side of the same floor
         /// the household pipeline defines, and deliberately the SAME clock: a

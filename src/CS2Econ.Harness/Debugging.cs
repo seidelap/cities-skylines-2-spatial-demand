@@ -2580,7 +2580,7 @@ namespace CS2Econ.Harness
                 if (f.Dead || f.Parcel < 0) continue;
                 if (f.Sector == ZoneKind.Commercial) continue;   // shops fill; the question is the other three
                 int c = w.Parcels[f.Parcel].Cluster;
-                double est = LandAccounting.FirmFillEstimate(sim.Engine.Access, c, f.Sector);
+                double est = LandAccounting.FirmFillEstimate(sim.Engine.Access, c, f.Sector, p);
                 double realized = f.JobSlots > 1e-9
                     ? (f.FilledByClass[0] + f.FilledByClass[1] + f.FilledByClass[2]) / f.JobSlots : 0;
                 if (f.FilledByClass[0] + f.FilledByClass[1] + f.FilledByClass[2] <= 1e-9)
@@ -2591,7 +2591,7 @@ namespace CS2Econ.Harness
             if (idleEst.Count > 0)
                 Console.WriteLine($"  fill forecast at IDLE non-commercial firms: n={idleEst.Count} "
                     + $"FirmFillEstimate p10={Pct(idleEst, 0.1):F3} p50={Pct(idleEst, 0.5):F3} "
-                    + $"p90={Pct(idleEst, 0.9):F3} (floor 0.350; realized fill there is 0.000) "
+                    + $"p90={Pct(idleEst, 0.9):F3} (realized fill there is 0.000) "
                     + $"| at STAFFED firms p50={(liveFill.Count > 0 ? Pct(liveFill, 0.5) : 0):F3}");
 
             var la = sim.Engine.Labor;
