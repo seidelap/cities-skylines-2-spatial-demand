@@ -696,6 +696,76 @@ site-losing firms and is red by `--mutant-resolve-unplaced` at 58 kills. A reade
 looking for the evidence should read that leg and not this one; the code comment
 says so at the site.
 
+## THE DIAGNOSIS: why three sectors are unprofitable, and why rate tweaks cannot fix it
+
+**MEASURED, not argued — four experiment arms** (`marginprobe --seed 1`, 400
+ticks, probe-scoped overrides, no default touched):
+
+| arm | industrial p50 | extractor p50 | deaths ind/ext |
+|---|---|---|---|
+| shipped default | −10.3 | −15.1 | 58 / 183 |
+| `--recipe-scale 1.5` | **−88.2 (worse)** | −2.2 | 42 / 178 |
+| `--extract-slot 15` | −82.0 | **−62.1 (worse)** | 49 / 236 |
+| `--cond-bid-floor 0.2` | — | −2.0 | **33 / 163 (churn −⅓)** |
+| all three | −92.6 | −38.5 | 36 / 191 |
+
+**Raising productivity makes the sector WORSE, because the land bill is priced
+off the same forecast being tuned.** Raise `ExtractorOutputPerSlot` and the
+entry bid, the assessment, and the entrant flow all rise proportionally, while
+realized output still carries `Math.Max(0.2, cond)` and ACTUAL suitability. The
+office asymptotic argument — bill and revenue both linear in the price knob, so
+the gap ratio tends to Quality(5) ≈ 2.06 forever — is thereby measured to
+generalize to every sector. There is no rate, price, or output constant whose
+adjustment fixes this, and arms B/C are the proof.
+
+THE STRUCTURE, three interlocking mechanisms:
+
+1. **THREE FORMULAS FOR ONE NUMBER.** A firm's marginal product is computed
+   three ways that disagree: the ENTRY bid (`FirmBidPerSlot`: flat 0.5
+   suitability for extractors, `Quality(ℓ)` uplift, `CondBidFloor = 0.45`), the
+   LABOR door cap (`LaborAuction.BuildDoors`: actual suitability, actual
+   condition floored at 0.2, no quality off-parity), and REALIZED production
+   (actual suit × cond, no quality off-parity). Entry believes the most
+   optimistic formula, the bill is assessed on it, and production delivers the
+   least. Every gap pushes the same direction on exactly the parcels that get
+   entered. This is the same forecast/realization disease as the office ladder
+   and #56, at the sector's front door.
+
+2. **THE DEFAULT LABOR PATH HIRES WITH NO PRICE AT THE DOOR.**
+   `FeatureFlags.LaborAuction = false` ships, so `AssignWorkplaces` fills slots
+   by commute softmax and the firm pays class wages regardless of product: an
+   extractor whose marginal product is 1.9/slot pays 10/slot because nothing in
+   the assignment asks. The labor auction's door cap IS the fix — it refuses
+   hires above the firm's own marginal-revenue forecast — and it ships off.
+   Even the LEVEL of the constants says extraction should mostly not exist:
+   `6 × suit × cond × price ≥ wage 10` fails for Grain (anchor 1.6) at PERFECT
+   suitability and PRISTINE condition — a perfect grain field cannot pay one
+   basic wage — and industrial value-added per slot at anchors (Food 9.2,
+   Timber 9.6, Metals 11.5, Plastics 11.9, Machinery 9.3) sits below the
+   blended wage 12.4 for every recipe at ℓ1. On an arm with honest doors these
+   firms would not hire; on the shipped arm they hire and bleed.
+
+3. **THE CONDITION-FLOOR MISMATCH IS THE CHURN ENGINE.** `CondBidFloor = 0.45`
+   in the entry forecast against `Math.Max(0.2, cond)` in production: an
+   entrant into the derelict stock (cond 0.05, which is 44–50 % of built
+   non-res) forecasts 0.478× pristine and realizes 0.2× — a 2.4× over-forecast
+   for every entrant, every time, while scarcity holds `OriginStat` above
+   anchor over the dead sector so the forecast stays positive. Arm D aligns the
+   floors and cuts churn deaths by a third on both sectors — the one measured
+   improvement available — but it is also a citywide default (CondFactor prices
+   residential too), so even it is a flag-and-fingerprint change, not a tweak.
+
+**WHAT ACTUALLY FIXES IT, in dependency order:** (a) the labor auction ON, so
+wages track the firm's own product and unprofitable doors go unfilled instead of
+draining the firm; (b) the condition floors aligned, so entry stops
+over-forecasting ruins; (c) the bill decoupled from the tuned forecast — either
+production parity (production delivers what the bill assumes) or task #48's
+realized comparable (the bill reads what comparable sites actually pay). Only
+AFTER (c) does tuning the constants mean anything, because only then does a
+productivity knob move revenue without moving the bill in lockstep. Office needs
+(c) alone — its operating margin is already +8/slot; extractor and industrial
+need all three.
+
 ## THE FINDING UNDER ALL OF THESE: three of four sectors do not pay for themselves
 
 `marginprobe`, **shipping default**, seeds 1/9/13, 400 ticks:

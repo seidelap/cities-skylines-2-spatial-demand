@@ -2405,16 +2405,24 @@ namespace CS2Econ.Harness
         /// inputs plus the land charge OWED — for every sector, and it reports
         /// re-letting beside exits, because an exit into a market that cannot
         /// re-let the building is not a fix.</summary>
-        public static int MarginProbe(ulong seed, int ticks)
+        public static int MarginProbe(ulong seed, int ticks,
+                                      double recipeScale = -1, double extractSlot = -1,
+                                      double condBidFloor = -1)
         {
             var p = new EconParams();
+            if (recipeScale > 0) p.RecipeOutputScale = recipeScale;
+            if (extractSlot > 0) p.ExtractorOutputPerSlot = extractSlot;
+            if (condBidFloor >= 0) p.CondBidFloor = condBidFloor;
             var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             var w = sim.W;
             sim.Run(ticks);
 
             Console.WriteLine($"seed {seed} ticks {ticks} exitMargin={sim.Flags.FirmExitMargin} "
-                + $"noMargin={EconomyEngine.MutantFirmExitNoMargin} flatPatience={EconomyEngine.MutantFirmFlatPatience}");
+                + $"noMargin={EconomyEngine.MutantFirmExitNoMargin} flatPatience={EconomyEngine.MutantFirmFlatPatience}"
+                + (recipeScale > 0 || extractSlot > 0 || condBidFloor >= 0
+                   ? $" | OVERRIDES recipeScale={p.RecipeOutputScale} extractSlot={p.ExtractorOutputPerSlot} condBidFloor={p.CondBidFloor}"
+                   : ""));
             var sectors = new[] { ZoneKind.Commercial, ZoneKind.Industrial, ZoneKind.Office, ZoneKind.Extractor };
             foreach (var s in sectors)
             {

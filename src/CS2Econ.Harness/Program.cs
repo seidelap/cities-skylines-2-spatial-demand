@@ -561,11 +561,24 @@ namespace CS2Econ.Harness
                 {
                     // Task #55 measurement aid (see Debugging.MarginProbe):
                     // the exit margin's census, per sector, with the site side
-                    // beside it.
+                    // beside it. The three overrides below are EXPERIMENT ARMS
+                    // for task #57 (three sectors unprofitable at the shipped
+                    // constants) — probe-scoped so a hypothesis can be measured
+                    // without touching a shipping default: recipe-scale and
+                    // extract-slot test the constants inconsistency, and
+                    // cond-bid-floor tests aligning the entry forecast's
+                    // condition floor (0.45) with the one production actually
+                    // applies (0.2), the 2.4x per-entrant over-forecast.
                     int ticks = 400;
+                    double recipeScale = -1, extractSlot = -1, condBidFloor = -1;
                     for (int i = 1; i + 1 < args.Length; i++)
+                    {
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
-                    return Debugging.MarginProbe(seed, ticks);
+                        else if (args[i] == "--recipe-scale") recipeScale = double.Parse(args[i + 1]);
+                        else if (args[i] == "--extract-slot") extractSlot = double.Parse(args[i + 1]);
+                        else if (args[i] == "--cond-bid-floor") condBidFloor = double.Parse(args[i + 1]);
+                    }
+                    return Debugging.MarginProbe(seed, ticks, recipeScale, extractSlot, condBidFloor);
                 }
                 case "displaceprobe":
                 {
