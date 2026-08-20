@@ -114,6 +114,8 @@ namespace CS2Econ.Harness
                 if (args[i] == "--retail-lines") { Sim.ForceCommercialLines = true; continue; }
                 if (args[i] == "--labor") { Sim.ForceLaborAuction = true; continue; }
                 if (args[i] == "--fill-evidence") { Sim.ForceFillEvidence = true; continue; }
+                if (args[i] == "--repair-rounds" && i + 1 < args.Length)
+                { Sim.ForceRepairRounds = int.Parse(args[++i]); continue; }
                 // MUTANT SWITCH (see LandAccounting.MutantFillPriorNeverYields):
                 // a cluster's hiring record never outweighs the prior.
                 if (args[i] == "--mutant-fill-prior")

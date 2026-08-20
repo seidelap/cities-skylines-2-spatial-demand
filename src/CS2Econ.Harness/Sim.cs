@@ -75,6 +75,13 @@ namespace CS2Econ.Harness
         /// EconParams.FillEvidenceWeighting so the arm can be measured without
         /// editing a default that ships off.</summary>
         public static bool ForceFillEvidence;
+        /// <summary>Set by `--repair-rounds N`: raises the housing auction's
+        /// repair budget (EconParams.AuctionRepairRounds, default 20) for every
+        /// sim this process builds. Not a model knob — a SOLVER budget, and it
+        /// exists so "the market did not converge" can be told apart from "the
+        /// allocation is not an equilibrium". The labor auction already carries
+        /// 64 for the same contract; housing has never had a way to ask.</summary>
+        public static int ForceRepairRounds = -1;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
@@ -88,6 +95,7 @@ namespace CS2Econ.Harness
             if (ForceCommercialLines) flags.CommercialLines = true;
             if (ForceLaborAuction) flags.LaborAuction = true;
             if (ForceFillEvidence) p.FillEvidenceWeighting = true;
+            if (ForceRepairRounds >= 0) p.AuctionRepairRounds = ForceRepairRounds;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);

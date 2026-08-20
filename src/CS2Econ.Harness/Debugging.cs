@@ -2594,6 +2594,37 @@ namespace CS2Econ.Harness
                     + $"p90={Pct(idleEst, 0.9):F3} (realized fill there is 0.000) "
                     + $"| at STAFFED firms p50={(liveFill.Count > 0 ? Pct(liveFill, 0.5) : 0):F3}");
 
+            // WHY DOES NOTHING RE-ENTER A VACANT BUILDING? Entry (EconomyEngine,
+            // "Entry into existing vacant firm parcels") fires only where the
+            // entrant's own bid beats the parcel's ASSESSMENT. Assessment is a
+            // max over every configuration the zoning permits; the bid is the
+            // one entrant's, for the building that actually stands. So the gate
+            // can be shut by a configuration nobody is going to build. Measured
+            // here rather than argued: the sign of (bid − assess) over the
+            // parcels that are standing empty is the whole question.
+            var excesses = new List<double>(); int openable = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.IsResidential || pl.OccupantFirm >= 0) continue;
+                if (pl.Use == ZoneKind.None || pl.Warehousing) continue;
+                double em = pl.Use == ZoneKind.Commercial
+                    ? pl.Units * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level) : 0;
+                double bid = LandAccounting.FirmBidPerSlot(
+                    sim.Engine.Access, sim.Engine.Trade, pl.Cluster, pl.Use, pl.Level, p,
+                    out _, w.Clusters, out bool condPriced, em, em > 0 ? pl.Units : 0,
+                    em > 0 ? pl.Condition : 0);
+                if (!condPriced) bid *= p.CondFactor(pl.Condition);
+                double ex = bid - LandAccounting.UnitAssessment(pl, p);
+                excesses.Add(ex);
+                if (ex > 0) openable++;
+            }
+            excesses.Sort();
+            if (excesses.Count > 0)
+                Console.WriteLine($"  re-entry gate on {excesses.Count} vacant non-res parcels: "
+                    + $"{openable} have bid > assessment ({100.0 * openable / excesses.Count:F1} %) "
+                    + $"| (bid − assess) p10={Pct(excesses, 0.1):F3} p50={Pct(excesses, 0.5):F3} "
+                    + $"p90={Pct(excesses, 0.9):F3}");
+
             var la = sim.Engine.Labor;
             if (la != null && la.DoorsTotal > 0)
                 Console.WriteLine($"  labor doors: {la.DoorsUnlisted}/{la.DoorsTotal} on NO worker's "
