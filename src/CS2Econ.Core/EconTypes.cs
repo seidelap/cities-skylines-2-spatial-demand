@@ -559,6 +559,33 @@ namespace CS2Econ.Core
         /// clusters, the old estimate reads exactly 0.350 while realized fill
         /// is 0.000.</summary>
         public bool FillEvidenceWeighting = false;
+        /// <summary>Probe-scoped experiment control (--fill-office-prior):
+        /// FillEvidenceWeighting applies to commercial, industrial and
+        /// extractor while OFFICE keeps the old prior rule. Exists to isolate
+        /// the measured office regression — under the full mutant office reads
+        /// 10 firms at +319 and under full evidence 1 firm at −43, but the
+        /// mutant flips all four sectors at once, so which sector's treatment
+        /// causes it was untested. Never a shipping mode; a forecast rule that
+        /// is sector-selective about believing evidence is a control arm, not
+        /// a model.</summary>
+        public bool FillEvidenceOfficeExempt = false;
+        /// <summary>Whether office and extractor configuration forecasts carry
+        /// the Quality(level) premium ONLY in the world whose production
+        /// function delivers it (--assess-deliverable; OFF because it moves a
+        /// shipping default). The engine scales those two sectors' realized
+        /// output by Quality(ℓ) only under NonResLandParity — the extractor
+        /// production comment says in words why ("the land is charged for a
+        /// level premium the production function does not deliver") — but
+        /// FirmBidPerSlot's office and extractor branches multiply by quality
+        /// UNCONDITIONALLY, so on the default path the assessor prices a
+        /// production function the world does not run. Measured consequence,
+        /// office-isolation arms (seed 1, 400 ticks): entrant offices in L5
+        /// towers billed 460–471/tick against a GROSS revenue ceiling of
+        /// ~442 at full staff — insolvent at zero wages, by construction.
+        /// Industrial and commercial are untouched: their realized output is
+        /// quality-scaled unconditionally, so their forecasts already match.
+        /// With parity ON this flag is a no-op by design.</summary>
+        public bool AssessDeliverableQuality = false;
         /// <summary>Consecutive ticks a firm may fail to meet its land charge in
         /// full before it releases the parcel — the firm side of the same floor
         /// the household pipeline defines, and deliberately the SAME clock: a

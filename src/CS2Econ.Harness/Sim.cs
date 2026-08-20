@@ -75,6 +75,17 @@ namespace CS2Econ.Harness
         /// EconParams.FillEvidenceWeighting so the arm can be measured without
         /// editing a default that ships off.</summary>
         public static bool ForceFillEvidence;
+        /// <summary>Set by `--fill-office-prior`: evidence weighting stays on
+        /// for commercial/industrial/extractor while OFFICE keeps the old
+        /// prior (EconParams.FillEvidenceOfficeExempt). The experiment
+        /// control that isolates the measured office regression to office's
+        /// own fill treatment; meaningless without --fill-evidence.</summary>
+        public static bool ForceFillOfficeExempt;
+        /// <summary>Set by `--assess-deliverable`: office and extractor
+        /// forecasts carry the Quality(level) premium only where the
+        /// production function delivers it (EconParams.AssessDeliverableQuality;
+        /// its doc carries the measured L5 insolvency-by-construction).</summary>
+        public static bool ForceAssessDeliverable;
         /// <summary>Set by `--repair-rounds N`: raises the housing auction's
         /// repair budget (EconParams.AuctionRepairRounds, default 20) for every
         /// sim this process builds. Not a model knob — a SOLVER budget, and it
@@ -95,6 +106,8 @@ namespace CS2Econ.Harness
             if (ForceCommercialLines) flags.CommercialLines = true;
             if (ForceLaborAuction) flags.LaborAuction = true;
             if (ForceFillEvidence) p.FillEvidenceWeighting = true;
+            if (ForceFillOfficeExempt) p.FillEvidenceOfficeExempt = true;
+            if (ForceAssessDeliverable) p.AssessDeliverableQuality = true;
             if (ForceRepairRounds >= 0) p.AuctionRepairRounds = ForceRepairRounds;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);

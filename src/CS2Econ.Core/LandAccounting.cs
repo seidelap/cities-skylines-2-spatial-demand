@@ -586,10 +586,17 @@ namespace CS2Econ.Core
                     // a relabelling. Now it ranges over the specializations,
                     // each priced at its own neighbourhood's localization.
                     double wage = 0.3 * p.WageSkilled + 0.7 * p.WageEducated;
+                    // The level premium the production function DELIVERS, not
+                    // the one the zoning table imagines. Office output is
+                    // Quality-scaled only under NonResLandParity (the engine's
+                    // office case); pricing Quality(ℓ) here in the parity-off
+                    // world bills an L5 tower 460+/tick against a gross
+                    // ceiling of ~442 — insolvent at zero wages, measured.
+                    double offQ = !p.AssessDeliverableQuality || p.NonResLandParity ? quality : 1.0;
                     profitPerFilledSlot = double.NegativeInfinity;
                     for (int k = 0; k < AccessState.OfficeKindCount; k++)
                     {
-                        double v = p.OfficeOutputPerSlot * quality * p.OfficeOutputPrice
+                        double v = p.OfficeOutputPerSlot * offQ * p.OfficeOutputPrice
                                    * acc.OfficeAgglom((OfficeKind)k, cluster, p) - wage;
                         if (v > profitPerFilledSlot) profitPerFilledSlot = v;
                     }
@@ -599,6 +606,10 @@ namespace CS2Econ.Core
                 case ZoneKind.Extractor:
                 {
                     // Best raw the geology supports, priced at its own market.
+                    // Same deliverable-quality condition as the office branch:
+                    // extractor output is Quality-scaled only under parity
+                    // (the engine's extractor case carries the comment).
+                    double extQ = !p.AssessDeliverableQuality || p.NonResLandParity ? quality : 1.0;
                     profitPerFilledSlot = double.NegativeInfinity;
                     var suit = workCluster != null ? workCluster[cluster].ResourceSuitability : null;
                     for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
@@ -612,7 +623,7 @@ namespace CS2Econ.Core
                             p.NonResLandParity ? prices.OriginComparable(res, cluster)
                                                : prices.OriginStat(res, cluster),
                             prices.BestExportNet(res, cluster));
-                        double perSlot = p.ExtractorOutputPerSlot * quality * s2 * outNet - p.WageBasic;
+                        double perSlot = p.ExtractorOutputPerSlot * extQ * s2 * outNet - p.WageBasic;
                         if (perSlot > profitPerFilledSlot)
                         { profitPerFilledSlot = perSlot; chosenOutput = res; }
                     }
@@ -661,7 +672,18 @@ namespace CS2Econ.Core
         public static double FirmFillEstimate(AccessState acc, int cluster, ZoneKind sector,
                                               EconParams? p = null)
         {
-            bool evidence = p != null && p.FillEvidenceWeighting;
+            // Probe-scoped (--fill-office-prior): office keeps the old prior
+            // while the other three sectors weight by evidence. This is the
+            // arm the office-regression finding demanded — the mutant run
+            // showed office at 10 firms/+319 under the PRIOR and 1 firm/−43
+            // under EVIDENCE, but the mutant flips all four sectors at once,
+            // so "office's own fill treatment did it" was a hypothesis, not a
+            // measurement. Exempting exactly one sector is what turns the
+            // 2×2's missing cell into a number. Never a shipping mode: a rule
+            // that believes evidence for a factory but not for an office is
+            // not a model, it is an experiment control.
+            bool evidence = p != null && p.FillEvidenceWeighting
+                && !(sector == ZoneKind.Office && p.FillEvidenceOfficeExempt);
             // Per class, so a cluster with a long basic-labor record and no
             // educated-labor record is not told one answer for both.
             double F(int cl) => evidence

@@ -2505,6 +2505,40 @@ namespace CS2Econ.Harness
             Console.WriteLine($"  office kinds (live / ever): "
                 + $"software {kindLive[0]}/{kindAll[0]}, financial {kindLive[1]}/{kindAll[1]}, "
                 + $"media {kindLive[2]}/{kindAll[2]}");
+            // The increasing-returns signature, measured rather than argued:
+            // OfficeAgglomMult at the clusters live offices actually sit in.
+            // If the 10-firm arm carries a visibly larger multiplier than the
+            // 1-firm arm, thinning entry attacks office through this term and
+            // through nothing the constant-returns sectors have.
+            //
+            // (It ran, and the multiplier CANNOT be the mechanism: 1.003 at
+            // 1 firm, 1.010 at 5, 1.019 at 10 — a ~1.6 % output term against
+            // a ±580/tick cash-flow swing. The per-firm anatomy below exists
+            // because that refutation left "then what is?" unanswered.)
+            {
+                var aggs = new List<double>();
+                foreach (var f in w.Firms)
+                {
+                    if (f.Dead || f.Parcel < 0 || f.Sector != ZoneKind.Office) continue;
+                    aggs.Add(sim.Engine.Access.OfficeAgglomMult[w.Parcels[f.Parcel].Cluster]);
+                }
+                aggs.Sort();
+                if (aggs.Count > 0)
+                    Console.WriteLine($"  office agglom mult at live sites: n={aggs.Count} "
+                        + $"p10={Pct(aggs, 0.1):F3} p50={Pct(aggs, 0.5):F3} p90={Pct(aggs, 0.9):F3}");
+                foreach (var f in w.Firms)
+                {
+                    if (f.Dead || f.Parcel < 0 || f.Sector != ZoneKind.Office) continue;
+                    var pl = w.Parcels[f.Parcel];
+                    double wages = 0;
+                    for (int cl = 0; cl < 3; cl++)
+                        wages += f.FilledByClass[cl] * p.Wage((LaborClass)cl);
+                    double landBill = LandAccounting.UnitAssessment(pl, p) * pl.Units;
+                    Console.WriteLine($"    office {f.Id} L{pl.Level} cl={pl.Cluster} "
+                        + $"staff={f.WorkersFilled}/{f.JobSlots} revEma={f.ProfitEma,8:F2} "
+                        + $"wages={wages,7:F2} landBill={landBill,7:F2} cashEma={f.CashFlowEma,8:F2}");
+                }
+            }
 
             int built = 0, vacant = 0, shell = 0;
             var vacCond = new List<double>();

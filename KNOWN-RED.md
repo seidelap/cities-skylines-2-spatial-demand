@@ -922,6 +922,102 @@ good for three sectors and measured bad for the fourth, and the mechanism of the
 harm is not yet established. Testing it means holding office entry fixed while
 varying the fill rule, which no current probe arm does.
 
+### The isolating arm RAN, and both hypotheses above are REFUTED
+
+`--fill-office-prior` (`EconParams.FillEvidenceOfficeExempt`): evidence
+weighting for commercial/industrial/extractor, the old prior for office only —
+the missing cell of the 2×2. Seeds 1/9, composed arm, with the agglomeration
+multiplier now printed rather than presumed:
+
+| office | full evidence | office-exempt | full `--mutant-fill-prior` |
+|---|---|---|---|
+| alive (s1 / s9) | 1 / 2 | 5 / 7 | 10 / 15 |
+| cash p50 | −42.57 / −121.39 | **−262.56 / −324.86** | +319.03 / +319.80 |
+| agglom mult p50 | 1.003 / 1.005 | 1.010 / 1.014 | 1.019 / 1.028 |
+
+Two refutations in one table. **Increasing returns:** the multiplier rises with
+count exactly as the hypothesis says — and tops out at a ~1.6–2.8 % output
+term, against a cash-flow swing of ~580/tick. Wrong magnitude by two orders.
+**Entry thinning:** restoring office entry makes the losses WORSE per firm, not
+better. More offices under the same price regime just die harder.
+
+The per-firm anatomy names the real channel. Staffing is IDENTICAL across arms
+(13–14/14 — labor is not the difference) and gross revenue at full staff is the
+same ~442 everywhere. What differs is the LAND BILL and the BUILDING: the
+profitable mutant offices are the seeded t = 0 cohort in L1/L2 buildings billed
+~123/tick; the dying evidence-arm offices are entrants in developer-built L5
+towers billed **460–471/tick against a gross revenue ceiling of ~442** —
+insolvent at zero wages, by construction, before a single hire.
+
+### THE ROOT CAUSE: the assessor prices a production function the world does not run
+
+`FirmBidPerSlot`'s office branch multiplies revenue by `quality` =
+Quality(ℓ)/Quality(1) UNCONDITIONALLY (`LandAccounting.cs`, office case), and
+the extractor branch does the same. But the ENGINE scales those two sectors'
+realized output by Quality(ℓ) **only under `NonResLandParity`** — which ships
+off — and the extractor production comment says in words why the gate exists:
+"the land is charged for a level premium the production function does not
+deliver." The production side got the parity gate; the forecast side never got
+the matching condition. Industrial and commercial are consistent (their realized
+output is quality-scaled unconditionally), which is why only office and
+extractor bled.
+
+**The fix** (`EconParams.AssessDeliverableQuality`, `--assess-deliverable`,
+ships OFF; `fingerprint --check` flag-off: all thirteen lanes match): office and
+extractor forecasts carry Quality(ℓ) only where parity makes production deliver
+it. With parity ON it is a no-op by design. Measured, composed arm + fix, seeds
+1/9:
+
+| | before | after |
+|---|---|---|
+| office alive @ p50 (s1) | 1 @ −42.57, 100 % under water | **10 @ +372.28, 0 %** |
+| office alive @ p50 (s9) | 2 @ −121.39, 100 % under water | **15 @ +370.29, 0 %** |
+| office margin deaths | 10 / 20 | **0 / 0** |
+| office land bills | 267–471/tick | 60–83/tick |
+| extractor under water | 33.3 / 53.8 % | **12.5 / 0 %** |
+| extractor margin deaths | 45 / 70 | 32 / 51 |
+| vacancy | 39.1 / 43.5 % | 34.2 / 37.5 % |
+| effectively idle | 41.8 / 47.1 % | 37.0 / 38.0 % |
+| re-entry gate p10 | −4.87 / −5.59 | **−0.98 / −2.89** |
+
+**This is the first arm on which all four sectors are simultaneously viable**:
+commercial ~+240 with zero deaths, industrial +19/+116 p50, office +372/+370
+with zero deaths, extractor +55/+35 with 0–1 firm under water. The office
+objection to `FillEvidenceWeighting` is hereby withdrawn as misattributed: the
+fill rule only decided WHICH offices existed; the quality wedge decided that
+entrant offices could not live. And the re-entry gate's deep tail (p10 ≈ −5)
+was this same wedge pricing vacant land at an L5 config nobody could run — the
+median miss (−0.035…−0.053) remains and is #56/#48's residual.
+
+Vacant-condition p90 collapsed to 0.05 on the fix arm: what still stands empty
+is uniformly rotted stock, which is #56's redevelopment loop, not a pricing
+error at entry.
+
+**Named reds of the `--assess-deliverable` arm** (`verify --seed 1 --labor
+--fill-evidence --assess-deliverable --repair-rounds 64` reads 60/64: Weber and
+entrants-can-trade pre-existing, plus these two — the SHIPPING default is
+untouched, fingerprint all lanes match and plain `verify --seed 1` reads 64/64):
+
+1. `nonres parity: assessment never rests on a one-seller cell's own record` —
+   7/33 re-priced against a ≥ 1/3 bound. The MECHANISM fires (largest move
+   126.078 → 183.657); what moved is the population. With extractor forecasts
+   level-free, the argmax configuration at more one-seller parcels is another
+   cell's, which the check's own docstring names as legitimate non-movers. The
+   1/3 bar encodes the old world's configuration mix.
+2. `nonres parity floor: staffed offices carry an assessed level term, and the
+   default does not produce it` — this check EXISTS TO PIN THE WEDGE (it is the
+   non-degeneracy floor proving the parity leg's population is real), and a red
+   here reads "the defect you pinned is deliberately absent on this arm." Its
+   19.7 % median miss over 4 offices is `1 − 1/term` over small-term survivors,
+   exactly level-free production measured working.
+
+Both checks need flag-conditioning before any flip: when
+`AssessDeliverableQuality` is active and parity is not, leg 2's assertion should
+INVERT (the assessed term is no longer carried, so the identity to check is
+realized/base ≈ 1 against the old arm's ~51 % miss), and leg 1's bar needs a
+population-aware floor. That rewrite is the same FLOOR-leg work already blocking
+#55's flip, and the two should land together.
+
 **A seeding artifact, found on the way, that bounds what this fix could do.**
 `SyntheticCity.SeedFirms` places a firm on 80 % of pre-built non-residential
 parcels at t = 0 **consulting no bid at all**. That is why `--fill-evidence`
