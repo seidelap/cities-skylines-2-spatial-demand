@@ -891,6 +891,28 @@ restored, ten offices are strongly profitable; with evidence weighting ON, entry
 is choked to one and that one is under water. **The exit margin alone does the
 work for office, and the evidence weighting over-restricts it.**
 
+### The arm's third verify failure was a SOLVER BUDGET, and it is resolved
+
+`verify --seed 1 --labor --fill-evidence` first read 61/64 against 62/64 for
+`--labor` alone. The extra failure was the housing-auction CE check, and every
+STRUCTURAL leg in it was clean — capacity 0, reserve 0, IR 0, posted>admitted 0,
+unsold-above-reserve 0, stranded 0, improving swaps 0, re-solve drift 0. What
+failed was `converged False (repair 20 rounds, clean False)` with 3 envies worth
+1.36 % of value, while the LABOR auction's CE check passed on the same run.
+
+Re-run at `--repair-rounds 64` (the budget the labor auction already carries):
+**PASS — converged True, repair 12 rounds, clean True, envious beyond 2ε 0**,
+and the suite reads **62/64, identical to the `--labor` control** (Weber and
+entrants-can-trade, both pre-existing). The fix introduces no new check failure.
+
+It converged in FEWER rounds with a LARGER budget, which is the tell:
+`HousingAuction` line 575 is `_stride = K + AuctionRepairRounds`, so the
+parameter sizes each bidder's shortlist capacity as well as capping the loop. At
+20 it was not a round cap that bound but the room a bidder has to hold
+alternative doors, and a harder market simply needs more. `AuctionRepairRounds =
+20` against `LaborAuctionRepairRounds = 64` is an unexamined asymmetry; raising
+it is a shipping-default change and has not been made.
+
 The obvious hypothesis is office's increasing returns — `OfficeAgglomMult` means
 an office's revenue depends on how many other offices stand near it, so a rule
 that thins entry attacks the very term that makes the sector viable, in a way it
