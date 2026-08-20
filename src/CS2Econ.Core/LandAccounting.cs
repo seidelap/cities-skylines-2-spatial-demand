@@ -626,15 +626,39 @@ namespace CS2Econ.Core
         /// industrial entrant choosing its recipe by Weber, and the reason the
         /// bid above is a maximum a real firm can actually realize rather than
         /// a number nobody can earn.</summary>
-        public static OfficeKind BestOfficeKind(AccessState acc, int cluster, EconParams p)
+        public static OfficeKind BestOfficeKind(AccessState acc, int cluster, EconParams p, int siteId)
         {
-            var best = OfficeKind.Software; double bestV = double.NegativeInfinity;
+            var best = OfficeKind.Software; double bestV = double.NegativeInfinity, worstV = double.PositiveInfinity;
             for (int k = 0; k < AccessState.OfficeKindCount; k++)
             {
                 double v = acc.OfficeAgglom((OfficeKind)k, cluster, p);
                 if (v > bestV) { bestV = v; best = (OfficeKind)k; }
+                if (v < worstV) worstV = v;
             }
-            return best;
+            // WHEN NOTHING LOCAL FAVOURS ONE SPECIALIZATION, WHAT YOU GET
+            // DEPENDS ON WHO TURNS UP. Localization is self-referential — a
+            // kind is attractive where that kind already is — so a city that
+            // starts with none of them has every kind equally unattractive and
+            // whichever the argmax happens to name wins forever. The first cut
+            // of this did exactly that: every office chose Software, its jobs
+            // WERE the pooled jobs, the maximum over kinds was arithmetically
+            // the pooled value, and the whole mechanism measured as a no-op on
+            // seed 1 (identical firm counts, identical cash flow, identical
+            // vacancy, with the flag on and off).
+            //
+            // So a flat signal is broken by the entrant itself, deterministic
+            // in its own site. This is not noise standing in for a mechanism:
+            // it is the honest content of "several specializations are equally
+            // viable here", and once one lands its jobs tilt the field for the
+            // next entrant nearby. Diversity is seeded by history and then
+            // reinforced by localization, which is how specialization actually
+            // arises — and it makes the maximum over kinds a real maximum with
+            // a different answer in different places, which is the entire point
+            // of taking one.
+            if (bestV - worstV <= 1e-9)
+                best = (OfficeKind)(int)(SplitMix64.Hash01((ulong)siteId * 2654435761UL + 17UL)
+                                         * AccessState.OfficeKindCount) ;
+            return (OfficeKind)Math.Min((int)best, AccessState.OfficeKindCount - 1);
         }
 
         public static double BidPerUnit(

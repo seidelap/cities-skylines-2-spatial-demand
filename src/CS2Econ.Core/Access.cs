@@ -656,8 +656,65 @@ namespace CS2Econ.Core
                 {
                     if (flags == null || !flags.OfficeSpecializations)
                     { OfficeAgglomByKind[k][c] = OfficeAgglomMult[c]; continue; }
+                    // EACH KIND READS A DIFFERENT LOCAL FIELD, which is the
+                    // only way the maximum over kinds can have a different
+                    // answer in different places.
+                    //
+                    // Slicing ONE pool three ways cannot do it, and measuring
+                    // that was worth the two attempts it cost: with every kind
+                    // drawing on office jobs, the kind that happens to hold
+                    // them has exactly the pooled multiplier and the other two
+                    // have none, so the maximum is the pooled value, the argmax
+                    // never moves, and the whole mechanism reads as a no-op —
+                    // twice, identically, down to the vacancy count. Splitting
+                    // a pool can only ever make each share SMALLER; it can
+                    // never make a different kind better somewhere.
+                    //
+                    // So: software follows the educated workers it hires,
+                    // finance follows other offices (the classic central
+                    // cluster, and the pooled law unchanged), media follows the
+                    // commercial mass it sells alongside. All three are already
+                    // computed, all three are local, and all three are
+                    // job-scale quantities. That last point was an ASSUMPTION
+                    // about units and it was WRONG, which the measurement said
+                    // immediately: educated workers run in thousands where
+                    // office jobs run in hundreds, so at a shared 1/400 scale
+                    // software won every cluster and financial took 0 of 22
+                    // offices. One kind winning everywhere is the pooled value
+                    // wearing a loop — the same no-op, a third time.
+                    //
+                    // So each driver is measured in units of ITS OWN citywide
+                    // mean before the shared law is applied. A kind's `a` then
+                    // reads "how many average-clusters-worth of my own driver
+                    // can I reach from here", which is comparable across kinds
+                    // by construction and restores the 1/400 to a scale about
+                    // REACH rather than about which field happens to be
+                    // numerically larger. The citywide mean is a legitimate
+                    // global under this project's rule: it is the city seen
+                    // from outside, it is the sort of industry statistic a
+                    // developer would actually hold, and it is a unit
+                    // conversion rather than a stand-in for anything an
+                    // individual experiences locally.
+                    double mean = 0;
+                    for (int j = 0; j < C; j++)
+                        mean += (OfficeKind)k switch
+                        {
+                            OfficeKind.Software => WorkersByClass[2][j],
+                            OfficeKind.Media => CommercialMass[j],
+                            _ => OfficeJobs[j],
+                        };
+                    mean = Math.Max(1e-9, mean / Math.Max(1, C));
                     double a = 0;
-                    for (int j = 0; j < C; j++) a += WOffice[c, j] * OfficeJobsByKind[k][j];
+                    for (int j = 0; j < C; j++)
+                    {
+                        double src = (OfficeKind)k switch
+                        {
+                            OfficeKind.Software => WorkersByClass[2][j],
+                            OfficeKind.Media => CommercialMass[j],
+                            _ => OfficeJobs[j],
+                        };
+                        a += WOffice[c, j] * (src / mean);
+                    }
                     OfficeAgglomByKind[k][c] = Math.Pow(1.0 + a / 400.0, p.OfficeAgglomGamma);
                 }
 

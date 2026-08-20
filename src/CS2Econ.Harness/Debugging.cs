@@ -2446,6 +2446,21 @@ namespace CS2Econ.Harness
                     + $"p90={(cfs.Count > 0 ? Pct(cfs, 0.9) : 0),9:F2} "
                     + $"| dead: margin={dCash} arrears={dArr} capital={dCap} displaced={dDisp}");
             }
+            // Does the specialization actually vary? A maximum over kinds that
+            // always names the same kind is the pooled value wearing a loop,
+            // and two earlier cuts of this mechanism measured exactly that.
+            var kindLive = new int[AccessState.OfficeKindCount];
+            var kindAll = new int[AccessState.OfficeKindCount];
+            foreach (var f in w.Firms)
+            {
+                if (f.Sector != ZoneKind.Office) continue;
+                kindAll[(int)f.Office]++;
+                if (!f.Dead && f.Parcel >= 0) kindLive[(int)f.Office]++;
+            }
+            Console.WriteLine($"  office kinds (live / ever): "
+                + $"software {kindLive[0]}/{kindAll[0]}, financial {kindLive[1]}/{kindAll[1]}, "
+                + $"media {kindLive[2]}/{kindAll[2]}");
+
             int built = 0, vacant = 0;
             var vacCond = new List<double>();
             foreach (var pl in w.Parcels)

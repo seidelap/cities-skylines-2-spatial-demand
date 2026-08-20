@@ -2038,7 +2038,7 @@ namespace CS2Econ.Core
                         // makes a re-let building a different business and not
                         // the same one again — the point of the whole exercise.
                         Office = pl.Use == ZoneKind.Office
-                            ? LandAccounting.BestOfficeKind(Access, pl.Cluster, P) : default,
+                            ? LandAccounting.BestOfficeKind(Access, pl.Cluster, P, pl.Id) : default,
                     };
                     W.Firms.Add(firm);
                     pl.OccupantFirm = firm.Id;
