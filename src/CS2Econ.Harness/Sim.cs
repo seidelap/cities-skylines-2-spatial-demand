@@ -62,6 +62,15 @@ namespace CS2Econ.Harness
         /// FeatureFlags.CommercialLines so the arm can be measured without
         /// editing a default that ships off.</summary>
         public static bool ForceCommercialLines;
+        /// <summary>Set by `--labor`: solve labor as one assignment market.
+        /// The arm ships OFF (FeatureFlags.LaborAuction = false) and until this
+        /// existed was reachable only from three hard-coded fixtures, so the
+        /// sector-viability question could not be asked of it from the CLI at
+        /// all. It is the FIRST item in task #57's fix ordering: on the default
+        /// path AssignWorkplaces fills slots by commute softmax and the firm
+        /// pays class wages whatever its product, while the auction's door cap
+        /// refuses a hire above the firm's own marginal-revenue forecast.</summary>
+        public static bool ForceLaborAuction;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
@@ -73,6 +82,7 @@ namespace CS2Econ.Harness
             if (ForceFirmExitMargin) flags.FirmExitMargin = true;
             if (ForceOfficeSpecializations) flags.OfficeSpecializations = true;
             if (ForceCommercialLines) flags.CommercialLines = true;
+            if (ForceLaborAuction) flags.LaborAuction = true;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);

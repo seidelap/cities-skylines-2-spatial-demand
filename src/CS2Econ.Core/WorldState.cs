@@ -407,6 +407,12 @@ namespace CS2Econ.Core
         /// is the only thing wrong with it, and renaming a field the auction
         /// depends on is not this item's business.</summary>
         public double CashFlowEma;
+        /// <summary>EMA of |cashFlow − CashFlowEma|: the firm's own read of how
+        /// much its cash flow ordinarily varies. Same rate as the mean it is
+        /// measured against, and it exists to be the exit margin's inaction
+        /// band — see the band's own comment in FirmLifecycle for why the
+        /// clock asymmetry could not serve as one.</summary>
+        public double CashFlowMadEma;
         /// <summary>Whether this firm has ever completed a tick it could have
         /// operated in. Until it has, CashFlowEma is not a forecast it could
         /// hold, and the first observation SEEDS the EMA rather than being

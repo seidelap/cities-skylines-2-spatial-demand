@@ -122,6 +122,16 @@ namespace CS2Econ.Core
 
         // ---- telemetry -----------------------------------------------------
         public int Rounds, Bids, Evictions;
+        /// <summary>Doors that appeared on NO worker's shortlist in the last
+        /// solve, and the door total to read it against. A door is listed only
+        /// where its value — cap net of that worker's own commute — beats that
+        /// worker's own outside option, so an unlisted door is one no worker in
+        /// the city would take at any price the firm can pay. That is a real
+        /// market verdict and not a bug, but it is invisible in every other
+        /// number the auction reports: the firm stays "alive", holds its site,
+        /// and reads as occupancy. Measured because a third of built
+        /// non-residential parcels turned out to be zero-staff shells.</summary>
+        public int DoorsUnlisted, DoorsTotal;
         public int RepairRounds;
         public bool RepairClean, Converged;
         public int BlockedListed, BlockedFull;
@@ -632,7 +642,22 @@ namespace CS2Econ.Core
                     _shortCount[wk] = outp;
                 }
             }
+
+            // Which doors did nobody list? Counted here, after every worker's
+            // shortlist is final, because this is the only place the answer
+            // exists — the ascent only ever sees doors that made a list.
+            if (_listed.Length < D) _listed = new bool[D];
+            Array.Clear(_listed, 0, D);
+            for (int wk = 0; wk < Wn; wk++)
+                for (int r = 0; r < _shortCount[wk]; r++)
+                {
+                    int d = _shortItems[_shortStart[wk] + r];
+                    if ((uint)d < (uint)D) _listed[d] = true;
+                }
+            DoorsTotal = D; DoorsUnlisted = 0;
+            for (int d = 0; d < D; d++) if (!_listed[d]) DoorsUnlisted++;
         }
+        private bool[] _listed = Array.Empty<bool>();
 
         /// <summary>Worker wk's value for door d in the ascending space:
         /// Ṽ = Cap − commute cost + stay bonus. Surplus at price p is Ṽ − p,

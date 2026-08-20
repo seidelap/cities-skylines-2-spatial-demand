@@ -112,6 +112,7 @@ namespace CS2Econ.Harness
                 if (args[i] == "--exit-margin") { Sim.ForceFirmExitMargin = true; continue; }
                 if (args[i] == "--office-kinds") { Sim.ForceOfficeSpecializations = true; continue; }
                 if (args[i] == "--retail-lines") { Sim.ForceCommercialLines = true; continue; }
+                if (args[i] == "--labor") { Sim.ForceLaborAuction = true; continue; }
                 // MUTANT SWITCH (see EconomyEngine.MutantFirmExitNoMargin): the
                 // margin does nothing, so a firm survives on its balance alone.
                 if (args[i] == "--mutant-no-margin")
@@ -120,6 +121,11 @@ namespace CS2Econ.Harness
                 // patience stops scaling with the firm's own working capital.
                 if (args[i] == "--mutant-flat-patience")
                 { EconomyEngine.MutantFirmFlatPatience = true; continue; }
+                // MUTANT SWITCH (see EconomyEngine.MutantFirmNoInactionBand):
+                // the exit margin's band collapses to zero, so any negative
+                // mean at all starts the death clock.
+                if (args[i] == "--mutant-no-band")
+                { EconomyEngine.MutantFirmNoInactionBand = true; continue; }
                 // MUTANT SWITCH (see LandAccounting.MutantEntryReferenceMass):
                 // the store-level commercial entry read goes back to asking the
                 // counted field about a 6-slot condition-1 shop whatever

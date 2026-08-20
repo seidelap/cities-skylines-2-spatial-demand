@@ -124,6 +124,13 @@ namespace CS2Econ.Core
         /// are asked to prove themselves on the same clock. Never a shipping
         /// mode.</summary>
         public static bool MutantFirmFlatPatience;
+        /// <summary>MUTANT SWITCH: the exit margin's inaction band collapses to
+        /// zero, so a firm losing a tenth of a percent of its cost base is
+        /// treated exactly like one losing its whole payroll. This is the
+        /// pre-band behaviour and it is what the band was added to end; it is
+        /// a mutant rather than a flag because no city should ship it. Never a
+        /// shipping mode.</summary>
+        public static bool MutantFirmNoInactionBand;
         /// <summary>(tick, household, reason): reason 0 = voluntary cost-driven
         /// relocation within the city, 1 = insolvency-pipeline emigration.</summary>
         public readonly List<(long tick, int household, int reason)> DisplacementExits
@@ -1869,7 +1876,16 @@ namespace CS2Econ.Core
                 // out of a measure of whether there is any.
                 double cashFlow = f.RevenueThisTick - f.OperatingCostThisTick;
                 if (!f.CashFlowObserved) { f.CashFlowEma = cashFlow; f.CashFlowObserved = true; }
-                else f.CashFlowEma = MathUtil.Ema(f.CashFlowEma, cashFlow, 0.05);
+                else
+                {
+                    // Dispersion FIRST, against the prior mean — the deviation
+                    // of this tick from what the firm expected before it. Same
+                    // 0.05 as the mean it is measured against, so the two
+                    // series see the same window and neither leads the other.
+                    f.CashFlowMadEma = MathUtil.Ema(
+                        f.CashFlowMadEma, Math.Abs(cashFlow - f.CashFlowEma), 0.05);
+                    f.CashFlowEma = MathUtil.Ema(f.CashFlowEma, cashFlow, 0.05);
+                }
                 f.OperatingCostThisTick = 0;
 
                 f.GrossRevenueLastTick = f.RevenueThisTick;
@@ -1984,7 +2000,33 @@ namespace CS2Econ.Core
                 int patience = P.InsolvencyGraceTicks;
                 if (marginOn)
                 {
-                    if (f.CashFlowObserved && f.CashFlowEma < 0) f.CashFlowShortTicks++;
+                    // THE INACTION BAND IS THE FIRM'S OWN DISPERSION, not zero.
+                    // Dixit's trigger is not "expected profit is negative", it
+                    // is "negative by more than the option value of waiting" —
+                    // and with nothing to liquidate, that option value comes
+                    // entirely from the VARIANCE of the forecast. A firm whose
+                    // cash flow wobbles by tens either way and whose mean sits
+                    // at −0.9 has a live upside and rationally waits; a firm
+                    // whose mean sits at −260 with the same wobble does not.
+                    //
+                    // The clock's asymmetry (increment bad, decrement good)
+                    // was written to be that band and CANNOT BE, because what
+                    // it reads is an EMA at 0.05: a mean that has gone
+                    // negative essentially never flips back tick to tick, so
+                    // the decrement branch is unreachable for exactly the
+                    // marginal firm it was meant to protect. Measured, before
+                    // this existed: the combined labor+margin arm exited 95
+                    // firms on seed 1 and 105 on seed 9, taking extractors
+                    // whose median cash flow was −0.86 against a wage bill in
+                    // the hundreds — a tenth of a percent of their cost base.
+                    // Vacancy went 13.5 % → 42.6 %.
+                    //
+                    // MadEma is the firm's own history of its own deviations,
+                    // so this adds no global and no tuned constant: the
+                    // comparison is against ONE mean-absolute-deviation, i.e.
+                    // "this loss is outside my ordinary range of variation."
+                    double band = MutantFirmNoInactionBand ? 0.0 : f.CashFlowMadEma;
+                    if (f.CashFlowObserved && f.CashFlowEma < -band) f.CashFlowShortTicks++;
                     else if (f.CashFlowShortTicks > 0) f.CashFlowShortTicks--;
 
                     double wageBillNow = 0;

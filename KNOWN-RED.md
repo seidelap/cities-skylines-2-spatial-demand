@@ -696,6 +696,147 @@ site-losing firms and is red by `--mutant-resolve-unplaced` at 58 kills. A reade
 looking for the evidence should read that leg and not this one; the code comment
 says so at the site.
 
+## THE FIX, MEASURED: the labor auction is what stops the churn
+
+Item (1) of the fix ordering below, tested. `marginprobe --labor`, seeds 1/9/13,
+400 ticks, against the shipped default:
+
+| | seed 1 | seed 9 | seed 13 |
+|---|---|---|---|
+| extractor deaths | 183 → **0** | 131 → **1** | 374 → **1** |
+| extractor cash flow p50 | −15.09 → **−0.86** | −16.59 → **−1.22** | −1.40 → **−0.33** |
+| extractor alive | 5 → **39** | 2 → **59** | 13 → **65** |
+| industrial deaths | 58 → **5** | 13 → **0** | 52 → **6** |
+| industrial alive | 1 → **25** | 2 → **16** | 4 → **27** |
+| VACANCY | 50.8 → **13.5 %** | 50.0 → **9.5 %** | 53.8 → **12.1 %** |
+
+Commercial on seed 1: 64 alive at +59.54 with 9 deaths → **85 alive at +207.02
+with 0**. Office: −426.69 → **−258.66**, still 100 % under water with zero
+deaths — which is the predicted result, since office's deficit is the ℓ5-corner
+BILL and no labor mechanism reaches it.
+
+**THE MECHANISM, and it is the diagnosis's item (2) confirmed exactly.** On the
+default path `AssignWorkplaces` fills a firm's slots by commute softmax and the
+firm pays class wages whatever its product — nothing in the assignment asks
+whether the hire pays. The auction's door cap is that missing question: it
+refuses a hire above the firm's own marginal-revenue forecast, so an extractor
+whose product is 1.9/slot stops paying 10/slot for labor it cannot cover.
+Extraction becomes a real sector sitting at BREAKEVEN (−0.33 to −1.22), which
+is what free entry into competition should produce, rather than a mill that
+killed 374 firms in 400 ticks.
+
+**WHAT IT DOES NOT FIX, stated because the numbers say so.** Industrial stops
+DYING everywhere but stays 81–94 % under water, and on seed 9 its cash flow gets
+WORSE (−34.13 → −64.44) even as deaths go 13 → 0. That is a shift from CHURN
+mode to ZOMBIE mode: the capped wage bill bleeds the firm slowly enough that it
+never reaches `CompanyBankruptcyLimit`. Which is precisely the population task
+#55's exit margin exists to resolve, and is why the two land together rather
+than separately.
+
+Aligning the condition floors on top of the labor auction (`--cond-bid-floor
+0.2`) is SECOND-ORDER once the auction is in: extractor −0.86 → −0.32,
+industrial −2.01 → −2.27, vacancy unchanged. The churn that arm was fixing was
+mostly labor-driven, so the ordering in the diagnosis was right about (1) coming
+first and wrong to expect much separately from (2).
+
+### CORRECTION: the VACANCY row above measures the wrong thing, and it flatters
+
+The table's vacancy row counts a parcel as occupied whenever a firm names it.
+Following it up exposed that this is not the same as the parcel being in use,
+and the gap is not small. Extending `marginprobe` with a staffing census
+(`sites: ... EFFECTIVELY IDLE`, this round):
+
+| `--labor`, 400 ticks | seed 1 | seed 9 | seed 13 |
+|---|---|---|---|
+| parcels with no firm ("VACANT" above) | 13.6 % | 9.5 % | 12.1 % |
+| further parcels holding a ZERO-STAFF firm | 48 | 50 | 55 |
+| **effectively idle** | **37.9 %** | **33.3 %** | **35.1 %** |
+
+Seed 1, per sector: of 39 live extractors, **33 employ nobody** — 0 workers
+filled across 198 slots — and of 25 live industrials, 15 do. The 6 staffed
+extractors run 35/36 slots at **+50.91**. Nothing sits in between. So the "−0.86
+median extractor" the table above reports as *breakeven* is not a firm trading
+at the margin; it is an EMPTY BUILDING paying the land charge, and its cash-flow
+dispersion (`CashFlowMadEma` p50 = **0.12**) says so — a flat line, no trading
+at all.
+
+The labor auction's real effect is therefore narrower than claimed above: it
+stopped extractors from **dying**, but it did so by making non-operation cheap
+rather than by making extraction work. Item (1) of the ordering stands as the
+right first move; the claim that it makes extraction "a real sector sitting at
+breakeven" does not.
+
+### The exit margin is NOT destructive; the vacancy number was hiding the damage
+
+`--labor --exit-margin` reads as a catastrophe on the old measure (13.6 % → 42.9
+% vacant, seed 1) and as something much smaller on the honest one:
+
+| effectively idle | seed 1 | seed 9 |
+|---|---|---|
+| `--labor` | 37.9 % | 33.3 % |
+| `--labor --exit-margin` | 45.4 % | 52.2 % |
+
+The margin retires the shells (seed 1: extractor 39 → 8 alive, 52 margin exits;
+survivors' p50 **+50.96**, only 1 of 8 under water). Most of the emptiness it
+"creates" was already there. The genuine increment — +7.5 points on seed 1,
++18.9 on seed 9 — is firms with real deficits exiting and **nothing re-entering**,
+which is task #55's own "with re-entry" clause and #56, not a defect of the
+margin itself.
+
+### A dispersion inaction band: implemented, measured, NO-OP
+
+Dixit's trigger is not "expected profit < 0" but "negative by more than the
+option value of waiting", and with nothing to liquidate that option value is the
+VARIANCE of the forecast. The clock asymmetry documented as the band cannot be
+one: it reads an EMA at 0.05, which does not flip sign tick to tick, so the
+decrement branch is unreachable for exactly the marginal firm. Added
+`Firm.CashFlowMadEma` and made the trigger `CashFlowEma < −MadEma`
+(`--mutant-no-band` restores the old behaviour).
+
+Measured: **no effect.** Seed 1 margin exits 95 → 96, seed 9 105 → 112; idle
+42.6 → 42.9 % and 53.0 → 51.7 %. The reason is the finding above — the firms it
+was meant to protect have MAD ≈ 0.12, because they are not trading. The band is
+correct and kept (it is the right rule for a firm that *is* trading, and the
+mutant proves it is reachable), but it is **not** the fix for this population,
+and it should not be described as one.
+
+## THE ROOT CAUSE: developers build where nobody will work, and the fill floor is why
+
+Chasing the zero-staff shells to their source. Three measurements, each ruling
+out the previous hypothesis:
+
+1. **Not the door cap.** `LaborAuction` skips a firm whose forecast marginal
+   revenue is ≤ 0 ("a door with nothing to pay is not a door"), so the obvious
+   explanation is a zeroed cap — no geology, no local price, negative recipe
+   margin. Measured across seeds 1/9/13: **0, 0, 0.** Every idle firm posts a
+   POSITIVE cap. Their doors reach the market.
+
+2. **Nobody lists them.** A worker shortlists a door only where
+   `Cap − commute` beats that worker's OWN outside option. Counting doors that
+   appear on no shortlist at all (`LaborAuction.DoorsUnlisted`): **67/303
+   (22.1 %) seed 1, 50/321 (15.6 %) seed 9, 57/355 (16.1 %) seed 13.** These are
+   real jobs, at real wages, that no worker in the city will take once their own
+   commute is netted out. That is a correct verdict at the worker's margin — a
+   remote deposit is remote — and it is invisible in every other number the
+   auction reports.
+
+3. **The developer had the signal and was forbidden from using it.**
+   `FirmBidPerSlot` does forecast staffing, via `FirmFillEstimate`, which ends
+   `Clamp(0.35 + 0.65 * fill, 0.35, 1.0)`. Measured at the clusters holding idle
+   firms: `FirmFillEstimate` p10 = p50 = **0.350** — pinned exactly on the floor
+   — while realized fill there is **0.000**. At staffed firms it reads **1.000**.
+   The signal separates perfectly. The floor is the only thing between the
+   developer and the truth, and it lets a rich remote deposit clear its hurdle on
+   a third of a roster it will never get.
+
+**Why the floor exists, and why it cannot simply be deleted.** `JobFillRate` is
+`colMatched / dem` when `dem > 1e-9` and **0 otherwise** — so a cluster where
+nothing has ever been posted is indistinguishable from one where 200 slots went
+begging. At t = 0 nothing is staffed anywhere; a hard-zero floor would mean
+nothing is ever built. The floor is a prior standing in for missing evidence,
+and it is applied even where the evidence is overwhelming. That conflation is
+the defect, not the floor's existence.
+
 ## THE DIAGNOSIS: why three sectors are unprofitable, and why rate tweaks cannot fix it
 
 **MEASURED, not argued — four experiment arms** (`marginprobe --seed 1`, 400

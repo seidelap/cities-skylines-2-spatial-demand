@@ -2429,15 +2429,31 @@ namespace CS2Econ.Harness
                 int alive = 0, under = 0, deep = 0;
                 double cfSum = 0;
                 var cfs = new List<double>();
+                // STAFFING CENSUS, split by solvency. The cash-flow percentiles
+                // alone cannot tell an idle shell from a working firm that is
+                // narrowly losing, and the two want opposite verdicts from the
+                // exit margin: the shell should go, the working firm should be
+                // given room. Measured need — the band round found extractors
+                // sitting at exactly −0.86 with a dispersion of ~0, which is
+                // the signature of a firm whose costs and revenue are both
+                // constant, i.e. one that is producing nothing.
+                double uFilled = 0, uSlots = 0, sFilled = 0, sSlots = 0;
+                int uIdle = 0, uN = 0, sIdle = 0, sN = 0;
+                var mads = new List<double>();
                 foreach (var f in w.Firms)
                 {
                     if (f.Dead || f.Parcel < 0 || f.Sector != s) continue;
                     alive++;
                     cfSum += f.CashFlowEma; cfs.Add(f.CashFlowEma);
-                    if (f.CashFlowObserved && f.CashFlowEma < 0) under++;
+                    mads.Add(f.CashFlowMadEma);
+                    bool wet = f.CashFlowObserved && f.CashFlowEma < 0;
+                    if (wet) under++;
                     if (f.CashFlowShortTicks >= p.InsolvencyGraceTicks) deep++;
+                    double filled = f.FilledByClass[0] + f.FilledByClass[1] + f.FilledByClass[2];
+                    if (wet) { uN++; uFilled += filled; uSlots += f.JobSlots; if (filled <= 1e-9) uIdle++; }
+                    else { sN++; sFilled += filled; sSlots += f.JobSlots; if (filled <= 1e-9) sIdle++; }
                 }
-                cfs.Sort();
+                cfs.Sort(); mads.Sort();
                 int dCash = 0, dArr = 0, dCap = 0, dDisp = 0;
                 foreach (var f in w.Firms)
                 {
@@ -2453,6 +2469,10 @@ namespace CS2Econ.Harness
                     + $"p50={(cfs.Count > 0 ? Pct(cfs, 0.5) : 0),9:F2} "
                     + $"p90={(cfs.Count > 0 ? Pct(cfs, 0.9) : 0),9:F2} "
                     + $"| dead: margin={dCash} arrears={dArr} capital={dCap} displaced={dDisp}");
+                if (alive > 0)
+                    Console.WriteLine($"  {"",-11}   underwater: n={uN,4} staffed={uFilled,7:F1}/{uSlots,-7:F1} "
+                        + $"idle={uIdle,4} | solvent: n={sN,4} staffed={sFilled,7:F1}/{sSlots,-7:F1} idle={sIdle,4} "
+                        + $"| cashflow MAD p50={(mads.Count > 0 ? Pct(mads, 0.5) : 0):F2}");
             }
             // Does the specialization actually vary? A maximum over kinds that
             // always names the same kind is the pooled value wearing a loop,
@@ -2486,13 +2506,23 @@ namespace CS2Econ.Harness
                 + $"software {kindLive[0]}/{kindAll[0]}, financial {kindLive[1]}/{kindAll[1]}, "
                 + $"media {kindLive[2]}/{kindAll[2]}");
 
-            int built = 0, vacant = 0;
+            int built = 0, vacant = 0, shell = 0;
             var vacCond = new List<double>();
             foreach (var pl in w.Parcels)
             {
                 if (pl.State != ParcelState.Built || pl.IsResidential || pl.Use == ZoneKind.None) continue;
                 built++;
-                if (pl.OccupantFirm < 0) { vacant++; vacCond.Add(pl.Condition); }
+                if (pl.OccupantFirm < 0) { vacant++; vacCond.Add(pl.Condition); continue; }
+                // A SHELL is a parcel whose firm employs nobody. Counting it as
+                // occupied is what made the exit margin look destructive: on
+                // the labor arm without the margin, seed 1 read 13.6 % vacant
+                // while 48 further parcels held zero-staff firms. The margin
+                // did not create that emptiness, it RETIRED the shells holding
+                // it — so the two arms are only comparable on this number.
+                var of = w.Firms[pl.OccupantFirm];
+                if (!of.Dead
+                    && of.FilledByClass[0] + of.FilledByClass[1] + of.FilledByClass[2] <= 1e-9)
+                    shell++;
             }
             vacCond.Sort();
             var e = sim.Engine;
@@ -2501,6 +2531,74 @@ namespace CS2Econ.Harness
                 + $"p10={(vacCond.Count > 0 ? Pct(vacCond, 0.1) : 0):F2} "
                 + $"p50={(vacCond.Count > 0 ? Pct(vacCond, 0.5) : 0):F2} "
                 + $"p90={(vacCond.Count > 0 ? Pct(vacCond, 0.9) : 0):F2}");
+            Console.WriteLine($"  sites: {shell} further parcels hold a ZERO-STAFF SHELL "
+                + $"=> {vacant + shell}/{built} ({(built > 0 ? 100.0 * (vacant + shell) / built : 0):F1} %) "
+                + $"EFFECTIVELY IDLE");
+
+            // WHY IS A SHELL A SHELL? A firm staffs nobody when its own door
+            // cap is <= 0, because LaborAuction skips such a firm outright ("a
+            // door with nothing to pay is not a door") and its slots never
+            // reach the market. The cap is a product, so exactly one factor
+            // usually kills it — recomputed here from the same inputs the
+            // auction reads so the answer names a term rather than a symptom.
+            int noSuit = 0, noPrice = 0, noMargin2 = 0, otherIdle = 0;
+            foreach (var f in w.Firms)
+            {
+                if (f.Dead || f.Parcel < 0) continue;
+                if (f.FilledByClass[0] + f.FilledByClass[1] + f.FilledByClass[2] > 1e-9) continue;
+                var pl = w.Parcels[f.Parcel];
+                if (f.Sector == ZoneKind.Extractor)
+                {
+                    double suit = w.Clusters[pl.Cluster].ResourceSuitability[(int)f.Output];
+                    double px = sim.Engine.Trade.OriginStat(f.Output, pl.Cluster);
+                    if (suit <= 1e-9) noSuit++;
+                    else if (px <= 1e-9) noPrice++;
+                    else otherIdle++;
+                }
+                else if (f.Sector == ZoneKind.Industrial)
+                {
+                    var recipe = ResourceCatalog.RecipeFor(f.Output);
+                    double m = sim.Engine.Trade.OriginStat(f.Output, pl.Cluster);
+                    if (recipe.Inputs != null)
+                        foreach (var (res, qty) in recipe.Inputs)
+                            m -= qty * sim.Engine.Trade.DeliveredStat(res, pl.Cluster);
+                    if (m <= 0) noMargin2++; else otherIdle++;
+                }
+                else otherIdle++;
+            }
+            Console.WriteLine($"  idle firms by cause: extractor no-geology={noSuit} "
+                + $"extractor no-local-price={noPrice} industrial negative-recipe-margin={noMargin2} "
+                + $"other={otherIdle}");
+            // DID THE DEVELOPER HAVE THE SIGNAL AND IGNORE IT? FirmFillEstimate
+            // floors at 0.35, so a cluster where every door goes unfilled still
+            // forecasts a third of a roster. If realized fill at these clusters
+            // is near zero, the signal exists and only the floor hides it.
+            var idleFill = new List<double>(); var idleEst = new List<double>();
+            var liveFill = new List<double>();
+            foreach (var f in w.Firms)
+            {
+                if (f.Dead || f.Parcel < 0) continue;
+                if (f.Sector == ZoneKind.Commercial) continue;   // shops fill; the question is the other three
+                int c = w.Parcels[f.Parcel].Cluster;
+                double est = LandAccounting.FirmFillEstimate(sim.Engine.Access, c, f.Sector);
+                double realized = f.JobSlots > 1e-9
+                    ? (f.FilledByClass[0] + f.FilledByClass[1] + f.FilledByClass[2]) / f.JobSlots : 0;
+                if (f.FilledByClass[0] + f.FilledByClass[1] + f.FilledByClass[2] <= 1e-9)
+                { idleFill.Add(realized); idleEst.Add(est); }
+                else liveFill.Add(est);
+            }
+            idleEst.Sort(); liveFill.Sort();
+            if (idleEst.Count > 0)
+                Console.WriteLine($"  fill forecast at IDLE non-commercial firms: n={idleEst.Count} "
+                    + $"FirmFillEstimate p10={Pct(idleEst, 0.1):F3} p50={Pct(idleEst, 0.5):F3} "
+                    + $"p90={Pct(idleEst, 0.9):F3} (floor 0.350; realized fill there is 0.000) "
+                    + $"| at STAFFED firms p50={(liveFill.Count > 0 ? Pct(liveFill, 0.5) : 0):F3}");
+
+            var la = sim.Engine.Labor;
+            if (la != null && la.DoorsTotal > 0)
+                Console.WriteLine($"  labor doors: {la.DoorsUnlisted}/{la.DoorsTotal} on NO worker's "
+                    + $"shortlist ({100.0 * la.DoorsUnlisted / la.DoorsTotal:F1} %) — a door worth less "
+                    + $"than every worker's own outside option");
             Console.WriteLine($"  engine: margin exits={e.FirmMarginExitsTotal} "
                 + $"margin relocations={e.FirmMarginRelocationsTotal} "
                 + $"arrears exits={e.FirmArrearsExitsTotal} all relocations={e.FirmRelocationsTotal}");
