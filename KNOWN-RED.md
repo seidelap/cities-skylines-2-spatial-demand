@@ -696,6 +696,70 @@ site-losing firms and is red by `--mutant-resolve-unplaced` at 58 kills. A reade
 looking for the evidence should read that leg and not this one; the code comment
 says so at the site.
 
+## Company types: office specializations and retail lines (both off by default)
+
+**THE ASSESSMENT ALWAYS CLAIMED TO TAKE A MAXIMUM OVER COMPANY TYPES. FOR TWO
+SECTORS THE SET HAD SIZE ONE.** `LandAccounting.cs:705-716` sets
+`AssessedLR = bestLR`, the max over the current configuration and every
+candidate the zoning permits, and `UnitAssessment` charges `s + φ·AssessedLR/Units`
+— so an occupant is billed on the best alternative use of its site, not on its
+own performance, and `Parcel.Wedge` names the gap. That is the design. Industrial
+maximizes over recipes (Weber) and extractor over the raws the geology supports.
+Office was one hardcoded `Res.OfficeOutput`; commercial's `cogsIndex` summed the
+WHOLE basket, so every shop faced identical costs and sold identical goods.
+
+**OFFICE — three cuts, two measured no-ops.** (1) Each kind drawing on its own
+kind's jobs: every firm starts at `Office = default`, so one kind held ALL the
+jobs and had exactly the pooled multiplier while the others sat at 1.0;
+`max(pooled, 1, 1)` is pooled and the arm measured identical to flag-off down to
+the vacancy count. (2) A flat-field tie-break: never fired, because the seeded
+city already has offices, all of one kind. **The lesson both taught: slicing ONE
+pool three ways can only make each share smaller — it can never make a different
+kind better somewhere.** (3) Different DRIVERS per kind — software follows
+educated workers, finance follows other offices, media follows commercial mass —
+which was still wrong until each driver was measured in units of its own citywide
+mean, because educated workers run in thousands where office jobs run in hundreds
+and at a shared 1/400 software won everywhere (financial took 0 of 22). Measured
+after: software 7 / financial 15 (seed 1), 14 / 16 (seed 9). Media wins nowhere
+on either seed, so the effective set is TWO, not three — stated, not hidden.
+Office cash flow −426.69 → −405.81.
+
+**RETAIL — the degeneracy was predicted from the constants BEFORE building,
+which is the only reason it took one cut instead of three.** Basket shares span
+5× (food 0.16 against timber 0.03 of a 0.30 basket) while the delivered-cost term
+varies ~13% across clusters, so specializing on share alone puts every shop in
+the city on food. Capture is therefore partitioned by line: a line's spending
+goes only to the shops selling it, so a catchment thick with grocers has an
+unserved machinery line whose incumbent weight is essentially the outside option
+alone. A line nobody sells LEAKS, into the leak total the pooled path already
+keeps.
+
+One no-op here too, diagnosed rather than shipped: choosing at entry reached
+almost nobody, because mid-run commercial entry is about ONE firm per run
+(`shopsweep`'s own cohort leg reads 1) and essentially every shop is seeded at
+t = 0 — 56 live shops, 56 still whole-basket. Shops that never chose now choose,
+staggered on the relocation hazard, because at t = 0 every line looks equally
+served and simultaneous choice commits a whole cluster to one line.
+
+MEASURED, seeds 1/9: food 27/44, machinery 15/16, plastics 8/8, timber 5/5, and
+29/40, 16/17, 6/6, 7/7. **Live shares land at 49/27/15/9 % against basket shares
+of 53/27/10/10 %** — the free-entry equilibrium arriving on its own. The death
+pattern is the tell: food loses 17 of 44 while machinery loses 1 and both niches
+lose none. Commercial cash flow p50 **59.54 → 113.12**.
+
+**NEITHER FIXES OFFICE VIABILITY, AND THAT IS THE POINT OF MEASURING IT.** With
+all three arms on (seed 1): retail lines all four populated, commercial p50
+63.49 — and office still 0 alive, 7 margin + 62 capital exits, vacancy 66.9 %.
+Specialization buys the RE-ENTRY VARIETY the exit margin needs to turn churn into
+turnover. It cannot touch a sector billed 489 against 428 of revenue. Gate at
+both commits: `fingerprint --check` all 13 lanes matching with no accept, verify
+**64/64** seed 1.
+
+NOT COVERED, named rather than half-done: the store-level consumption path
+(`StoreLevelSpending`, off) routes each household to ONE shop rather than
+distributing a pool, so per-line capture there is a different change and is not
+attempted here.
+
 ## The firm exit margin (task #55) — and what turning it on exposed
 
 **THE ZOMBIE FIRMS ARE REAL, THEY ARE OFFICES, AND THEY WERE NEVER MEASURED.**
