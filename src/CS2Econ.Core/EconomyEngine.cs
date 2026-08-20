@@ -1610,8 +1610,14 @@ namespace CS2Econ.Core
                         // bill was 489/tick against 428 of GROSS revenue, and
                         // 54 of 62 offices had been short for 200+ consecutive
                         // ticks.
+                        // The firm's OWN specialization's localization, not the
+                        // pooled one. This is where the maximum the assessment
+                        // took over kinds becomes a number some particular firm
+                        // has to earn: an office that committed to the right
+                        // kind for its site realizes what it was billed for, and
+                        // one whose neighbourhood moved under it does not.
                         double rev = f.WorkersFilled * P.OfficeOutputPerSlot * P.OfficeOutputPrice
-                                     * Access.OfficeAgglomMult[c]
+                                     * Access.OfficeAgglom(f.Office, c, P)
                                      * (P.NonResLandParity && !MutantLevelFreeFirmOutput
                                         ? cond * P.Quality(pl.Level) / P.Quality(1) : 1.0);
                         f.Money += rev; f.RevenueThisTick = rev;
@@ -2026,6 +2032,13 @@ namespace CS2Econ.Core
                         Id = W.Firms.Count, Sector = pl.Use, Parcel = pl.Id,
                         Output = pl.Use == ZoneKind.Commercial ? Res.Services : chosen,
                         Money = P.FirmSeedCapital, JobSlots = pl.Units, EnteredTick = W.Tick,
+                        // An office entrant commits to a specialization the way
+                        // an industrial entrant commits to a recipe: the one
+                        // THIS site's neighbourhood carries best. That is what
+                        // makes a re-let building a different business and not
+                        // the same one again — the point of the whole exercise.
+                        Office = pl.Use == ZoneKind.Office
+                            ? LandAccounting.BestOfficeKind(Access, pl.Cluster, P) : default,
                     };
                     W.Firms.Add(firm);
                     pl.OccupantFirm = firm.Id;

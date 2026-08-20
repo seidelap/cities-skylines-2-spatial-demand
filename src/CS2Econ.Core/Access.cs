@@ -25,6 +25,24 @@ namespace CS2Econ.Core
         public double[] CommercialMass = Array.Empty<double>();      // shopping attractiveness units
         public double[] SpendMass = Array.Empty<double>();           // consumption budget originating
         public double[] OfficeJobs = Array.Empty<double>();
+        /// <summary>How many office slots of each specialization sit in each
+        /// cluster, and the localization multiplier each kind earns from its
+        /// OWN kind's neighbours. The pooled OfficeJobs / OfficeAgglomMult
+        /// above stay exactly as they were: they are what the flag-off world
+        /// reads, and what OfficeAgglom() returns for every kind when the flag
+        /// is off, so the two paths cannot silently diverge.</summary>
+        public const int OfficeKindCount = 3;
+        public double[][] OfficeJobsByKind = Array.Empty<double[]>();
+        public double[][] OfficeAgglomByKind = Array.Empty<double[]>();
+        /// <summary>The agglomeration an office of `kind` earns at cluster `c`.
+        /// THE ONLY read site for office agglomeration outside this class, so
+        /// that "specializations off" is one branch rather than a convention
+        /// every caller has to remember.</summary>
+        public double OfficeAgglom(OfficeKind kind, int c, EconParams p)
+            => OfficeAgglomByKind.Length == OfficeKindCount
+               && (uint)c < (uint)OfficeAgglomMult.Length
+                ? OfficeAgglomByKind[(int)kind][c]
+                : ((uint)c < (uint)OfficeAgglomMult.Length ? OfficeAgglomMult[c] : 1.0);
 
         // Labor market outcomes (doubly-constrained balancing, §4.2)
         public double[][] EmploymentRate = Array.Empty<double[]>();  // [class][home cluster]
@@ -461,6 +479,7 @@ namespace CS2Econ.Core
             CommercialMass = new double[C];
             SpendMass = new double[C];
             OfficeJobs = new double[C];
+            OfficeJobsByKind = NewJagged(OfficeKindCount, C);
 
             foreach (var f in w.Firms)
             {
@@ -483,6 +502,7 @@ namespace CS2Econ.Core
                     case ZoneKind.Office:
                         JobsByClass[1][c] += f.JobSlots * 0.3; JobsByClass[2][c] += f.JobSlots * 0.7;
                         OfficeJobs[c] += f.JobSlots;
+                        OfficeJobsByKind[(int)f.Office][c] += f.JobSlots;
                         break;
                 }
             }
@@ -617,6 +637,29 @@ namespace CS2Econ.Core
                 for (int j = 0; j < C; j++) a += WOffice[c, j] * OfficeJobs[j];
                 OfficeAgglomMult[c] = Math.Pow(1.0 + a / 400.0, p.OfficeAgglomGamma);
             }
+            // PER SPECIALIZATION: the identical law, read over one kind's jobs
+            // instead of all offices pooled. A cluster thick with software jobs
+            // is a good place for software and says nothing about media, which
+            // is the whole point — it makes "the best office that could stand
+            // here" a question with a different answer in different places, and
+            // gives a failed office parcel somewhere else to go.
+            //
+            // Off, every kind reads the pooled multiplier, so max-over-kinds is
+            // the old single value and nothing downstream can tell the
+            // difference. The 1/400 scale and the gamma are the pooled law's
+            // own, unchanged and not re-tuned: splitting the jobs between kinds
+            // lowers each kind's `a`, and that is the mechanism, not a defect
+            // to calibrate away.
+            OfficeAgglomByKind = NewJagged(OfficeKindCount, C);
+            for (int k = 0; k < OfficeKindCount; k++)
+                for (int c = 0; c < C; c++)
+                {
+                    if (flags == null || !flags.OfficeSpecializations)
+                    { OfficeAgglomByKind[k][c] = OfficeAgglomMult[c]; continue; }
+                    double a = 0;
+                    for (int j = 0; j < C; j++) a += WOffice[c, j] * OfficeJobsByKind[k][j];
+                    OfficeAgglomByKind[k][c] = Math.Pow(1.0 + a / 400.0, p.OfficeAgglomGamma);
+                }
 
             // ---- composite consumer access ----------------------------------
             AccessValue = NewJagged(nc, C);

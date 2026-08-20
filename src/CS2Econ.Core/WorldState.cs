@@ -449,6 +449,12 @@ namespace CS2Econ.Core
         /// the probes — which stops working the moment a fourth exit exists.
         /// Naming it is part of adding the fourth.</summary>
         public bool DiedOfWorkingCapital;
+        /// <summary>Which immaterial good this office produces. Fixed at entry
+        /// the way an industrial firm's recipe is — the entrant commits to the
+        /// specialization its own site's neighbourhood best supports, and then
+        /// lives with that choice as the neighbourhood changes around it.
+        /// Meaningless for other sectors and ignored by them.</summary>
+        public OfficeKind Office;
     }
 
     /// <summary>One outside connection with its own supply/demand law

@@ -17,6 +17,30 @@ namespace CS2Econ.Core
         OfficeOutput,                                // exogenous price
     }
 
+    /// <summary>What an office actually does. The base game's offices are not
+    /// one business — they produce different immaterial goods — and until this
+    /// existed ours were: a single hardcoded Res.OfficeOutput at a single
+    /// exogenous price.
+    ///
+    /// WHY IT MATTERS BEYOND FLAVOUR. `LandAccounting.Assess` charges a site on
+    /// the BEST configuration its zoning permits, not on what its tenant is
+    /// doing — that is the design, and `Parcel.Wedge` names the gap. For
+    /// industrial that maximum ranges over recipes (the Weber choice) and for
+    /// extractor over the raws the geology supports, so "the best business that
+    /// could stand here" is a real maximum over a real set. For office it
+    /// ranged over a set of size ONE, which makes the maximum a relabelling of
+    /// the single candidate and leaves a failed office parcel able to re-let
+    /// only to an identical office that fails identically.
+    ///
+    /// The kinds are deliberately NOT differentiated by price. They differ by
+    /// WHERE THEY ALREADY ARE: each draws its agglomeration from its own kind's
+    /// jobs, so the best office use of a site is the specialization that site's
+    /// neighbourhood already supports. That is a Marshallian localization
+    /// economy, it is local in exactly the sense this model is about, and it
+    /// introduces no price constant that has not been measured — because it
+    /// introduces no price constant at all.</summary>
+    public enum OfficeKind : byte { Software, Financial, Media }
+
     /// <summary>One industrial recipe: inputs (with quantities per unit of
     /// output) → output. Recipe CHOICE at a location is the Weber decision:
     /// where each input is sourced (local haul vs import parity) prices into
@@ -1097,6 +1121,18 @@ namespace CS2Econ.Core
         /// difference between a hazard that emerges and a hazard that is
         /// declared.</summary>
         public bool FirmExitMargin = false;
+        /// <summary>Offices carry a SPECIALIZATION, and each draws its
+        /// agglomeration from its own kind's jobs rather than from office jobs
+        /// pooled. Turns "the best office that could stand here" from a maximum
+        /// over one candidate into a maximum over three, which is what the
+        /// assessment has always claimed to be taking.
+        ///
+        /// OFF BY DEFAULT while it is measured. With it off,
+        /// AccessState.OfficeAgglom(kind, c) returns the pooled multiplier for
+        /// every kind, so the maximum is the old single value and every office
+        /// bid, assessment and revenue is arithmetically unchanged — which the
+        /// fingerprint is what checks, not this comment.</summary>
+        public bool OfficeSpecializations = false;
         /// <summary>Route each household's consumption to the ONE shop it chose,
         /// instead of pooling all consumption citywide and handing it back out
         /// pro-rata to (slots × cluster capture strength).

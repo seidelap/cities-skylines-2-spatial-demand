@@ -54,6 +54,10 @@ namespace CS2Econ.Harness
         /// the nonres-parity arrears FLOOR leg, whose population a cash-flow
         /// exit kills, has been rewritten).</summary>
         public static bool ForceFirmExitMargin;
+        /// <summary>Set by `--office-kinds`: turns on
+        /// FeatureFlags.OfficeSpecializations so the arm can be measured
+        /// without editing a default that ships off.</summary>
+        public static bool ForceOfficeSpecializations;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
@@ -63,6 +67,7 @@ namespace CS2Econ.Harness
             if (ForcePosted) flags.HousingAuction = false;
             if (ForceNonResLandParity) p.NonResLandParity = true;
             if (ForceFirmExitMargin) flags.FirmExitMargin = true;
+            if (ForceOfficeSpecializations) flags.OfficeSpecializations = true;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);

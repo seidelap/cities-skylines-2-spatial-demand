@@ -550,9 +550,22 @@ namespace CS2Econ.Core
                 }
                 case ZoneKind.Office:
                 {
+                    // THE MAXIMUM OVER COMPANY TYPES, which is what a site's
+                    // land value has always claimed to be: not what the office
+                    // standing here earns, but what the best office that could
+                    // stand here would. For industrial that maximum ranges over
+                    // recipes and for extractor over the raws the geology
+                    // supports; office had one candidate, so its "maximum" was
+                    // a relabelling. Now it ranges over the specializations,
+                    // each priced at its own neighbourhood's localization.
                     double wage = 0.3 * p.WageSkilled + 0.7 * p.WageEducated;
-                    profitPerFilledSlot = p.OfficeOutputPerSlot * quality * p.OfficeOutputPrice
-                                          * acc.OfficeAgglomMult[cluster] - wage;
+                    profitPerFilledSlot = double.NegativeInfinity;
+                    for (int k = 0; k < AccessState.OfficeKindCount; k++)
+                    {
+                        double v = p.OfficeOutputPerSlot * quality * p.OfficeOutputPrice
+                                   * acc.OfficeAgglom((OfficeKind)k, cluster, p) - wage;
+                        if (v > profitPerFilledSlot) profitPerFilledSlot = v;
+                    }
                     chosenOutput = Res.OfficeOutput;
                     break;
                 }
@@ -607,6 +620,23 @@ namespace CS2Econ.Core
         /// suitability field anchors. Every caller that holds a WorldState
         /// passes w.Clusters; the null default survives only for callers that
         /// have no world (unit fixtures).</summary>
+        /// <summary>Which specialization an office entrant at this cluster
+        /// should commit to: the one whose own neighbourhood carries it best.
+        /// The entrant's own forecast from its own site — the same shape as an
+        /// industrial entrant choosing its recipe by Weber, and the reason the
+        /// bid above is a maximum a real firm can actually realize rather than
+        /// a number nobody can earn.</summary>
+        public static OfficeKind BestOfficeKind(AccessState acc, int cluster, EconParams p)
+        {
+            var best = OfficeKind.Software; double bestV = double.NegativeInfinity;
+            for (int k = 0; k < AccessState.OfficeKindCount; k++)
+            {
+                double v = acc.OfficeAgglom((OfficeKind)k, cluster, p);
+                if (v > bestV) { bestV = v; best = (OfficeKind)k; }
+            }
+            return best;
+        }
+
         public static double BidPerUnit(
             AccessState acc, IPriceContext prices, int cluster, ZoneKind use, int level,
             double[] segmentPresence, EconParams p, double addUnits = 0, double minSupply = 0,
