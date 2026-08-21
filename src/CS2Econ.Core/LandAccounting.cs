@@ -76,6 +76,16 @@ namespace CS2Econ.Core
         /// mode.</summary>
         public static bool MutantEntryReferenceMass;
 
+        /// <summary>MUTANT SWITCH (`--mutant-weber-secondbest`): an industrial
+        /// entrant commits to the runner-up recipe instead of its own margin
+        /// argmax. The falsifier for the Weber check's alignment leg — with
+        /// the oracle being FirmBidPerSlot's own argmax, this is the shape of
+        /// defect that leg exists to catch. Never a shipping mode. The check's
+        /// oracle is HAND-COMPUTED from the same price reads, so it is immune
+        /// to this switch by construction — the FirmBidPerSlot call under test
+        /// must see the mutant, or the leg could never fail.</summary>
+        public static bool MutantWeberSecondBest;
+
         public static int UnitsFor(ZoneKind use) => use switch
         {
             ZoneKind.ResidentialLow => 2,
@@ -548,6 +558,8 @@ namespace CS2Econ.Core
                 }
                 case ZoneKind.Industrial:
                 {
+                    Res weberRunnerUp = Res.Services; double weberRunnerVal = double.NegativeInfinity;
+                    bool weberRunnerSeen = false;
                     // Weber: max over recipes of margin at THIS location.
                     double wage = 0.6 * p.WageBasic + 0.4 * p.WageSkilled;
                     profitPerFilledSlot = double.NegativeInfinity;
@@ -571,8 +583,26 @@ namespace CS2Econ.Core
                         double perSlot = recipe.OutputPerSlot * p.RecipeOutputScale * quality
                                          * (outNet - inputCost) - wage;
                         if (perSlot > profitPerFilledSlot)
-                        { profitPerFilledSlot = perSlot; chosenOutput = recipe.Output; }
+                        {
+                            // The dethroned best becomes the runner-up WITH its
+                            // value — dropping the value let any later recipe
+                            // above the stale floor steal the slot.
+                            weberRunnerUp = chosenOutput; weberRunnerVal = profitPerFilledSlot;
+                            weberRunnerSeen = profitPerFilledSlot > double.NegativeInfinity;
+                            profitPerFilledSlot = perSlot; chosenOutput = recipe.Output;
+                        }
+                        else if (!weberRunnerSeen || perSlot > weberRunnerVal)
+                        { weberRunnerUp = recipe.Output; weberRunnerVal = perSlot; weberRunnerSeen = true; }
                     }
+                    // MUTANT: the entrant commits to the RUNNER-UP recipe — a
+                    // firm choosing against its own margin, which is exactly
+                    // what the Weber check's alignment leg must be able to
+                    // catch now that its oracle is this function's own argmax
+                    // (the old cheapest-raw proxy could not: measured, 0 of 17
+                    // standing firms satisfied it on an arm where 10 of 17 sat
+                    // on the true argmax). The bid VALUE stays the argmax's —
+                    // the mutant corrupts the choice, not the money.
+                    if (MutantWeberSecondBest && weberRunnerSeen) chosenOutput = weberRunnerUp;
                     break;
                 }
                 case ZoneKind.Office:

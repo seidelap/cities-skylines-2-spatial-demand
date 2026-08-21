@@ -90,6 +90,10 @@ namespace CS2Econ.Harness
         /// all four non-residential sectors at all three sites that price a
         /// slot (EconParams.UniformSiteProductivity carries the audit).</summary>
         public static bool ForceUniformProductivity;
+        /// <summary>Set by `--redevelop`: the developer's scan may replace
+        /// economically dead standing buildings
+        /// (EconParams.DerelictRedevelopment carries the #56 measurement).</summary>
+        public static bool ForceRedevelop;
         /// <summary>Set by `--repair-rounds N`: raises the housing auction's
         /// repair budget (EconParams.AuctionRepairRounds, default 20) for every
         /// sim this process builds. Not a model knob — a SOLVER budget, and it
@@ -113,6 +117,7 @@ namespace CS2Econ.Harness
             if (ForceFillOfficeExempt) p.FillEvidenceOfficeExempt = true;
             if (ForceAssessDeliverable) p.AssessDeliverableQuality = true;
             if (ForceUniformProductivity) p.UniformSiteProductivity = true;
+            if (ForceRedevelop) p.DerelictRedevelopment = true;
             if (ForceRepairRounds >= 0) p.AuctionRepairRounds = ForceRepairRounds;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);

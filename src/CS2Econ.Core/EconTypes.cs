@@ -619,6 +619,25 @@ namespace CS2Econ.Core
         /// was itself the anomaly. MutantLevelFreeFirmOutput remains the
         /// falsifier for the level term at all sites.</summary>
         public bool UniformSiteProductivity = false;
+        /// <summary>Whether the developer's construction scan may also price
+        /// BUILT parcels whose standing building is economically dead
+        /// (--redevelop; OFF because it moves a shipping default). Scope is
+        /// the assessment's own verdict, not a condition threshold: only
+        /// non-residential, unoccupied, unowned, non-warehousing parcels with
+        /// CurrentResidual <= 0 are admitted, and the return gate divides by
+        /// the FULL project cost (replacement + demolition - salvage).
+        ///
+        /// This is the #56 fix, and the mechanism choice is the point. The
+        /// only demolition path before it — Leveling's scrape — finances from
+        /// the parcel's own escrow, and a derelict parcel's escrow is fed by a
+        /// wedge on a land value that is ~zero BECAUSE the parcel is derelict:
+        /// measured, 0/65 ruins had TargetIsScrape set and 0/65 could fund
+        /// (mean escrow 0.0 against a mean 12,419 bill). The developer already
+        /// commits its OWN capital against its OWN forecast on empty land;
+        /// this admits a site whose project cost includes clearing a dead
+        /// building, which breaks the self-financing circularity without a new
+        /// funding mechanism or a new constant.</summary>
+        public bool DerelictRedevelopment = false;
         /// <summary>Consecutive ticks a firm may fail to meet its land charge in
         /// full before it releases the parcel — the firm side of the same floor
         /// the household pipeline defines, and deliberately the SAME clock: a

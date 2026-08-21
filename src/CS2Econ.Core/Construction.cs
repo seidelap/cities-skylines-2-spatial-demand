@@ -345,6 +345,10 @@ namespace CS2Econ.Core
     public sealed class ConstructionSystem
     {
         public int StartedTotal, AbandonedTotal, CompletedTotal;
+        /// <summary>Starts that replaced standing derelict stock rather than
+        /// filling empty land (DerelictRedevelopment path). A subset of
+        /// StartedTotal.</summary>
+        public int RedevelopmentsTotal;
         public readonly List<(long tick, int parcel)> AbandonEvents = new List<(long, int)>();
 
         /// <summary>CS2ECON_MILESTONE_DEBUG=1 traces every milestone
@@ -359,6 +363,12 @@ namespace CS2Econ.Core
             public int Level;
             public double ReturnRate;
             public double PredictedRent, PredictedAbsorption;
+            /// <summary>The full project cost the developer commits: RC alone
+            /// for greenfield, plus demolition net of salvage for a
+            /// redevelopment of standing derelict stock. Stored on the
+            /// candidate so the commit block spends what the return gate
+            /// priced, not a recomputation that could drift from it.</summary>
+            public double CommitCost;
         }
         private readonly List<Candidate> _cands = new List<Candidate>();
 
@@ -416,30 +426,67 @@ namespace CS2Econ.Core
 
             if (!flags.ConstructionRewire) return;
 
-            // ---- scan eligible empty parcels (staggered 1/5 per tick) --------
+            // ---- scan eligible parcels (staggered 1/5 per tick) --------------
+            // Empty zoned land always; and, when DerelictRedevelopment is on,
+            // BUILT stock that is economically dead. The scope test for the
+            // second population is the assessment's own number, not a condition
+            // threshold: CurrentResidual <= 0 says the building AS IT STANDS
+            // supports no positive land flow, so redevelopment forfeits
+            // nothing. A fresh vacant building someone would pay to occupy has
+            // CurrentResidual > 0 and is excluded — firm entry handles it, and
+            // entry is cheaper than a scrape.
+            //
+            // WHY THE DEVELOPER AND NOT THE PARCEL'S ESCROW: the measured #56
+            // circularity (KNOWN-RED). A derelict parcel's land value is ~zero
+            // BECAUSE it is derelict, so a redevelopment financed by its own
+            // wedge can never start — 0/65 funded, mean escrow 0.0 against a
+            // mean 12,419 bill. Greenfield entry was never financed that way:
+            // the developer commits its own capital against its own expected
+            // return, and this extends exactly that decision to a site whose
+            // project cost happens to include clearing a dead building.
             _cands.Clear();
             for (int i = 0; i < w.Parcels.Count; i++)
             {
                 var pl = w.Parcels[i];
-                if (pl.State != ParcelState.Empty || pl.Zoned == ZoneKind.None) continue;
+                if (pl.Zoned == ZoneKind.None) continue;
+                double extraCost = 0;
+                if (pl.State != ParcelState.Empty)
+                {
+                    if (!p.DerelictRedevelopment || pl.State != ParcelState.Built) continue;
+                    // Standing building must be non-residential (residential
+                    // decay renovates through the wedge path, and its units sit
+                    // in the housing stock mid-flight), unoccupied on both
+                    // sides, nobody's asset, not already staged by Leveling's
+                    // own scrape, and economically dead by its own assessment.
+                    if (pl.IsResidential || pl.Warehousing) continue;
+                    if (pl.OccupantFirm >= 0 || pl.OccupantHouseholds.Count > 0) continue;
+                    if (pl.OwnerHousehold >= 0) continue;
+                    if (pl.CurrentResidual > 0) continue;
+                    extraCost = Math.Max(0, p.DemolitionPerUnit * pl.Units
+                                            - p.SalvageFraction * pl.Condition * p.RC(pl.Level, pl.Units));
+                }
                 if ((pl.Id % 5) != (int)(w.Tick % 5)) continue;
 
                 // "New construction spawns directly at the residual-maximizing
                 // level" (§4.4): choose ℓ by FLOW, then gate on the return rate.
-                int bestLvl = 0; double bestFlow = double.NegativeInfinity, bestRet = 0, bestRent = 0, bestAbs = 0;
+                // For a redevelopment the denominator is the FULL project cost
+                // — replacement plus demolition net of salvage — so a dead
+                // building is not scraped on a return its clearing bill eats.
+                int bestLvl = 0; double bestFlow = double.NegativeInfinity, bestRet = 0, bestRent = 0, bestAbs = 0, bestCost = 0;
                 for (int lvl = 1; lvl <= p.MaxLevel; lvl++)
                 {
                     double flow = ExpectedFlow(w, acc, trade, residuals, segmentPresence, pl, lvl, p,
                                                out double rent, out double abs);
                     int units = LandAccounting.UnitsFor(pl.Zoned);
-                    double rc = p.RC(lvl, units);
-                    if (flow > bestFlow) { bestFlow = flow; bestRet = flow / rc; bestLvl = lvl; bestRent = rent; bestAbs = abs; }
+                    double rc = p.RC(lvl, units) + extraCost;
+                    if (flow > bestFlow) { bestFlow = flow; bestRet = flow / rc; bestLvl = lvl; bestRent = rent; bestAbs = abs; bestCost = rc; }
                 }
                 if (bestRet > p.HurdleRate * 1.5)   // commit margin damps churn at the hurdle boundary
                     _cands.Add(new Candidate
                     {
                         ParcelId = i, Level = bestLvl, ReturnRate = bestRet,
                         PredictedRent = bestRent, PredictedAbsorption = bestAbs,
+                        CommitCost = bestCost,
                     });
             }
             if (_cands.Count == 0) return;
@@ -470,13 +517,14 @@ namespace CS2Econ.Core
                 var cand = _cands[chosen];
                 var pl = w.Parcels[cand.ParcelId];
                 int units = LandAccounting.UnitsFor(pl.Zoned);
+                if (pl.State == ParcelState.Built) RedevelopmentsTotal++;
                 pl.State = ParcelState.UnderConstruction;
                 pl.Use = pl.Zoned;
                 pl.Level = cand.Level;
                 pl.Units = units;
                 pl.BuildProgress = 0;
                 pl.BuildTotal = p.ConstructionLag;
-                pl.CommittedCost = p.RC(cand.Level, units);
+                pl.CommittedCost = cand.CommitCost;
                 pl.PredictedRentAtDecision = cand.PredictedRent;
                 pl.PredictedAbsorptionAtDecision = cand.PredictedAbsorption;
                 // Claims ledger at COMMITMENT: later deciders see the pipeline,

@@ -1223,6 +1223,79 @@ the mechanism the whole industrial location story rests on, and "our fix made
 industrial location less Weber-like" is the kind of thing that should be
 explained rather than absorbed.
 
+### EXPLAINED, and the explanation ends the whole Weber-red lineage
+
+The cohort probe (marginprobe `weber cohorts`, seed 1, composed arms) split the
+standing single-input industrials by entry cohort and asked BOTH criteria:
+
+| criterion | deliverable arm | uniform arm |
+|---|---|---|
+| on cheapest-delivered raw (the check's) | **0/17** | **0/19** |
+| on `FirmBidPerSlot`'s own argmax, re-asked now | 10/17 (entrants **5/5**) | **14/19** |
+
+NOBODY passes the check's criterion on these arms — including entrants who
+provably chose the argmax at entry — while most firms sit on the model's own
+argmax. The check's "cheapest-delivered raw" was a PROXY for the margin argmax,
+and with asymmetric output anchors the two disagree systematically: the argmax
+weighs `outNet − qty·inputCost`, and a dear input feeding a dearer output beats
+a cheap input feeding a cheap one. The extractor leg was ALREADY fixed for this
+exact defect (its oracle is value-weighted "matching FirmBidPerSlot's extractor
+leg"); the industrial leg never got the same repair. **On the true criterion,
+uniform is BETTER than deliverable (74 % vs 59 %), so the "Weber worse under
+uniform" flip-blocker was an artifact of the proxy and is withdrawn.**
+
+And on the DEFAULT arm the true criterion reads **38 %** while the proxy reads
+88 % — the default's churn leaves standing firms on stale choices, so NO
+standing-stock statistic can carry the verdict on any arm; the stock conflates
+the decision with entry timing against a moving price path (the freeze artifact
+this file has named at least three times).
+
+**THE CHECK IS REWRITTEN** (same commit): the verdict is now the DECISION
+FUNCTION itself — at every cluster whose top-two recipe margins separate,
+`FirmBidPerSlot`'s chosen recipe must equal an independently hand-computed
+margin argmax over the same price reads (bound: all such clusters, floor 20).
+Both stock shares (argmax-now and the old proxy) are REPORTED, not asserted.
+Falsifier: `--mutant-weber-secondbest` (an entrant commits to the runner-up
+recipe; the oracle is hand-computed and immune by construction). Measured:
+default **PASS 196/196** and verify reads **64/64**; mutant arm **RED 0/196**.
+Fixed on the way: the runner-up tracker dropped the dethroned best's VALUE, so
+a later weaker recipe could steal the slot.
+
+This should also end the seed-moving Weber fragility documented at length in
+the seed-0 row below — every historical re-roll (flip, #42, #34, #41) moved the
+verdict through the STOCK, which re-equilibrates with the whole world; the
+decision test does not.
+
+## #56 BUILT: the developer redevelops what no wedge can (`DerelictRedevelopment`, ships OFF)
+
+`--redevelop`: the construction scan admits BUILT parcels that are
+non-residential, unoccupied, unowned, non-warehousing, and economically dead by
+the assessment's own number (`CurrentResidual <= 0` — no condition threshold,
+no new constant). The return gate divides by the FULL project cost
+(RC + demolition − salvage), and the developer's own capital funds it, which is
+the point: the Leveling scrape financed from the parcel's escrow, and a
+derelict parcel's escrow is fed by a wedge on a land value that is ~zero
+BECAUSE it is derelict. Fingerprint flag-off: all lanes match.
+
+Measured (composed + uniform + redevelop, seeds 1/9, 400 ticks):
+
+- **Redevelopments 19 and 53, against a structural ZERO before.** The
+  mechanism is real and the four sectors stay healthy under it.
+- **The ruin STOCK barely moves** (65 and 72 derelicts standing; idle share
+  36.6 %/44.0 % vs 38.3 %/42.1 % control). Formation keeps pace with removal:
+  the pool refills from margin exits (~39–53 extractor deaths per run) faster
+  than a 1/5-staggered, softmax-capped scan drains it.
+- **A pre-existing pathology surfaced by the new counters**: 372/591 and
+  425/625 developer starts are ABANDONED mid-build on the composed arm — with
+  redevelopment OFF — a ~60 % milestone-abandon rate. Redevelopment slightly
+  lowers it (361/587, 364/605). That churn, not redevelopment, is the next
+  bottleneck: the flux equilibrium of ruins is set by firm deaths + abandons
+  against removal capacity.
+
+So #56's mechanism gap is CLOSED and the residual is a flux-calibration
+question (formation rate vs removal rate), which belongs with the abandonment
+investigation, not with more redevelopment machinery.
+
 **A seeding artifact, found on the way, that bounds what this fix could do.**
 `SyntheticCity.SeedFirms` places a firm on 80 % of pre-built non-residential
 parcels at t = 0 **consulting no bid at all**. That is why `--fill-evidence`

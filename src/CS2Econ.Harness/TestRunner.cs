@@ -1271,22 +1271,89 @@ namespace CS2Econ.Harness
             // to it is therefore over the outputs it actually examines — both
             // are reported, the single-input one is the premise.
             var singleInputOutputs = new HashSet<Res>();
+            // THE ORACLE IS THE MODEL'S OWN ARGMAX, exactly as the extractor
+            // leg above prices its oracle at the entrant's own market. The old
+            // criterion — "the chosen recipe's raw is the locally
+            // cheapest-delivered raw" — was a PROXY for the margin argmax, and
+            // measured against firms that provably chose the argmax it reads
+            // ZERO: on the composed labor arm at seed 1, 0 of 17 standing
+            // single-input industrials satisfied the proxy while 10 of 17 sat
+            // on FirmBidPerSlot's own argmax re-asked at their site, entrants
+            // 5 of 5. Asymmetric output anchors are why the two disagree — the
+            // margin argmax weighs outNet − qty·inputCost, and a dear input
+            // feeding a dearer output beats a cheap input feeding a cheap one.
+            // The proxy share is still REPORTED so the divergence stays
+            // visible; the verdict reads the argmax.
+            //
+            // THE VERDICT MOVED FROM THE STOCK TO THE DECISION, because the
+            // stock cannot carry it on ANY arm. Measured with the true
+            // criterion (is this firm's recipe FirmBidPerSlot's argmax at its
+            // own site now): the DEFAULT arm reads 38 % — its churn leaves
+            // standing firms on stale choices — while the composed labor arm
+            // reads 59-74 %. The old cheapest-raw proxy read 88 % on default
+            // and 0 % on composed, i.e. it tracked neither the criterion nor
+            // any arm consistently: the margin argmax weighs
+            // outNet − qty·inputCost, and with asymmetric output anchors a
+            // dear input feeding a dearer output beats a cheap input feeding
+            // a cheap one. Every standing-stock statistic conflates the
+            // decision with entry timing against a moving price path (the
+            // freeze artifact this check's own premise note names), so the
+            // stock shares are REPORTED below and the assertion is the
+            // DECISION FUNCTION itself, cluster by cluster.
+            int indProxy = 0;
             foreach (var f in simInd.W.Firms)
             {
                 if (f.Dead || f.Parcel < 0 || f.Sector != ZoneKind.Industrial) continue;
                 int c = simInd.W.Parcels[f.Parcel].Cluster;
                 outputsSeen.Add(f.Output);
-                if (f.Output == Res.Machinery) continue;   // multi-input: no single cheapest raw
+                if (f.Output == Res.Machinery) continue;   // multi-input: excluded as before
                 singleInputOutputs.Add(f.Output);
                 ind++;
-                // The chosen recipe's raw should be the locally cheapest raw
-                // to deliver (allowing a 15% tolerance band for ties).
                 var recipe = ResourceCatalog.RecipeFor(f.Output);
                 double own = simInd.Engine.Trade.DeliveredCost(recipe.Inputs[0].res, c);
                 double cheapest = double.PositiveInfinity;
                 for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
                     cheapest = Math.Min(cheapest, simInd.Engine.Trade.DeliveredCost((Res)rr, c));
-                if (own <= cheapest * 1.15 + 0.05) indAligned++;
+                if (own <= cheapest * 1.15 + 0.05) indProxy++;
+                LandAccounting.FirmBidPerSlot(simInd.Engine.Access, simInd.Engine.Trade, c,
+                                              ZoneKind.Industrial, simInd.W.Parcels[f.Parcel].Level,
+                                              p, out Res argmaxNow, simInd.W.Clusters);
+                if (argmaxNow == f.Output) indAligned++;
+            }
+
+            // The decision-function leg: at every cluster whose top-two recipe
+            // margins actually separate, FirmBidPerSlot's chosen recipe must
+            // equal an INDEPENDENTLY hand-computed margin argmax over the same
+            // price reads. Hand-computed is what makes the falsifier work: the
+            // --mutant-weber-secondbest switch corrupts the call under test,
+            // and an oracle routed through the same call would agree with
+            // every corrupted answer. Level 1 for both sides — quality scales
+            // every recipe's margin by the same positive factor and the wage
+            // is a common subtraction, so the ordering is level-invariant.
+            int webDisc = 0, webAgree = 0;
+            var argmaxKinds = new HashSet<Res>();
+            for (int c2 = 0; c2 < simInd.Engine.Access.C; c2++)
+            {
+                Res best = Res.Services; double bv = double.NegativeInfinity, second = double.NegativeInfinity;
+                foreach (var recipe in ResourceCatalog.Recipes)
+                {
+                    double outNet = Math.Max(
+                        p.NonResLandParity ? simInd.Engine.Trade.OriginComparable(recipe.Output, c2)
+                                           : simInd.Engine.Trade.OriginStat(recipe.Output, c2),
+                        simInd.Engine.Trade.BestExportNet(recipe.Output, c2));
+                    double inputCost = 0;
+                    foreach (var (res, qty) in recipe.Inputs)
+                        inputCost += qty * simInd.Engine.Trade.DeliveredCost(res, c2);
+                    double perSlot = recipe.OutputPerSlot * p.RecipeOutputScale * (outNet - inputCost);
+                    if (perSlot > bv) { second = bv; bv = perSlot; best = recipe.Output; }
+                    else if (perSlot > second) second = perSlot;
+                }
+                if (!(bv - second > 1e-9)) continue;   // tie: argmax vs runner-up indistinguishable
+                webDisc++;
+                LandAccounting.FirmBidPerSlot(simInd.Engine.Access, simInd.Engine.Trade, c2,
+                                              ZoneKind.Industrial, 1, p, out Res chosen2, simInd.W.Clusters);
+                if (chosen2 == best) webAgree++;
+                argmaxKinds.Add(best);
             }
 
             double extractShare = extract > 0 ? (double)extractRight / extract : 0;
@@ -1336,9 +1403,13 @@ namespace CS2Econ.Harness
             WeberPremiseSeen++;
             if (diversePremise) WeberPremiseMet++;
             Check("Weber: extraction follows geology; recipes follow input sourcing",
-                  extract >= 5 && extractShare >= 0.9 && ind >= 5 && indShare >= 0.55,
-                  $"{extract} extractors ({extractShare:P0} on best raw); {ind} single-input industrials " +
-                  $"({indShare:P0} on cheapest-sourced recipe); {outputsSeen.Count} distinct industrial outputs, " +
+                  extract >= 5 && extractShare >= 0.9 && webDisc >= 20 && webAgree == webDisc,
+                  $"{extract} extractors ({extractShare:P0} on best raw); recipe decision: " +
+                  $"{webAgree}/{webDisc} discriminating clusters agree with the hand-computed margin argmax " +
+                  $"(bound: all, floor 20; {argmaxKinds.Count} distinct argmax outputs across clusters); " +
+                  $"standing stock REPORTED: {ind} single-input industrials, {indShare:P0} on argmax-now, " +
+                  $"{(ind > 0 ? (double)indProxy / ind : 0):P0} on the old cheapest-raw proxy; " +
+                  $"{outputsSeen.Count} distinct industrial outputs, " +
                   $"{singleInputOutputs.Count} of them single-input " +
                   $"({(diversePremise ? "discrimination premise met" : "PREMISE NOT MET — one single-input output "
                       + "citywide, so the alignment leg cannot separate places; reported, not failed, "

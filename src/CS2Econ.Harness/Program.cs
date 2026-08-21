@@ -118,6 +118,10 @@ namespace CS2Econ.Harness
                 if (args[i] == "--assess-deliverable") { Sim.ForceAssessDeliverable = true; continue; }
                 if (args[i] == "--uniform-productivity")
                 { Sim.ForceUniformProductivity = true; continue; }
+                if (args[i] == "--redevelop") { Sim.ForceRedevelop = true; continue; }
+                // MUTANT SWITCH (see LandAccounting.MutantWeberSecondBest).
+                if (args[i] == "--mutant-weber-secondbest")
+                { LandAccounting.MutantWeberSecondBest = true; continue; }
                 if (args[i] == "--repair-rounds" && i + 1 < args.Length)
                 { Sim.ForceRepairRounds = int.Parse(args[++i]); continue; }
                 // MUTANT SWITCH (see LandAccounting.MutantFillPriorNeverYields):

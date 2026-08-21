@@ -2772,11 +2772,54 @@ namespace CS2Econ.Harness
                 if (pl.Escrow >= cost) funded++;
                 if (pl.OccupantHouseholds.Count == 0 && pl.OccupantFirm < 0) physVacant++;
             }
+            Console.WriteLine($"  construction: starts={sim.Engine.Construction.StartedTotal} "
+                + $"redevelopments={sim.Engine.Construction.RedevelopmentsTotal} "
+                + $"abandoned={sim.Engine.Construction.AbandonedTotal} scrapes(Leveling)={w.ScrapesTotal}");
             if (derelict > 0)
                 Console.WriteLine($"  scrape gates on {derelict} derelict (cond<=0.25) vacant parcels: "
                     + $"TargetIsScrape={wantScrape} pressure={hasPressure} funded={funded} "
                     + $"physicallyVacant={physVacant} | mean escrow={sumEscrow / derelict:F1} "
                     + $"vs mean scrape cost={sumCost / derelict:F1}");
+
+            // WEBER BY COHORT. The Weber check's alignment leg reads the
+            // STANDING stock against the cheapest-delivered raw NOW, but a firm
+            // commits at entry, and two cohorts never made that choice at all
+            // or made it against other prices: the t=0 seeded cohort
+            // (SeedRecipeOutput picks by a proximity-weighted GEOLOGY heuristic,
+            // not delivered cost, and consults no bid) and old entrants whose
+            // price path moved under them. Splitting the census tells the model
+            // question (do entrants choose by their own margin?) apart from the
+            // fixture question (who is still standing?).
+            {
+                int sN = 0, sOn = 0, eN = 0, eOn = 0, sM = 0, eM = 0;
+                foreach (var f2 in w.Firms)
+                {
+                    if (f2.Dead || f2.Parcel < 0 || f2.Sector != ZoneKind.Industrial) continue;
+                    if (f2.Output == Res.Machinery) continue;
+                    int c2 = w.Parcels[f2.Parcel].Cluster;
+                    var recipe = ResourceCatalog.RecipeFor(f2.Output);
+                    double own = sim.Engine.Trade.DeliveredCost(recipe.Inputs[0].res, c2);
+                    double cheapest = double.PositiveInfinity;
+                    for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
+                        cheapest = Math.Min(cheapest, sim.Engine.Trade.DeliveredCost((Res)rr, c2));
+                    bool on = own <= cheapest * 1.15 + 0.05;
+                    // The model's OWN criterion, asked now: is this firm's
+                    // recipe the margin argmax FirmBidPerSlot would choose at
+                    // this site today? The check's cheapest-raw test is a PROXY
+                    // for this, and with asymmetric output anchors the two can
+                    // disagree while the firm is exactly on its own margin.
+                    LandAccounting.FirmBidPerSlot(
+                        sim.Engine.Access, sim.Engine.Trade, c2, ZoneKind.Industrial,
+                        w.Parcels[f2.Parcel].Level, p, out Res argmaxNow, w.Clusters);
+                    bool onMargin = argmaxNow == f2.Output;
+                    if (f2.EnteredTick == 0) { sN++; if (on) sOn++; if (onMargin) sM++; }
+                    else { eN++; if (on) eOn++; if (onMargin) eM++; }
+                }
+                Console.WriteLine($"  weber cohorts (single-input industrial, alive): "
+                    + $"seeded {sOn}/{sN} on-cheapest-raw, {sM}/{sN} on-margin-argmax-now | "
+                    + $"entrants {eOn}/{eN} on-cheapest-raw, {eM}/{eN} on-margin-argmax-now "
+                    + $"(check bar 55 % on cheapest-raw over the pooled {sN + eN})");
+            }
 
             var la = sim.Engine.Labor;
             if (la != null && la.DoorsTotal > 0)
