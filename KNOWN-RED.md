@@ -1188,6 +1188,29 @@ winning configuration, which `Assess` does not currently expose; exposing it
 prerequisite. Recorded here so the next attempt does not re-derive the same two
 dead ends.
 
+**How close the bar actually is, per arm** (shipping bar, ≥ 1/3):
+
+| composed arm | one-seller leg | office FLOOR leg | Weber |
+|---|---|---|---|
+| `--assess-deliverable` | 7/33 = **21 %** | ALIGNED 0.0 % | 50 % on cheapest-sourced |
+| `--uniform-productivity` | 9/31 = **29 %** | ALIGNED **0.1 %** | **38 %** on cheapest-sourced |
+
+Both are 61/64 with the same three fails, but the margins differ and they cut
+both ways. Uniform is nearly at the one-seller bar (one more parcel would clear
+it) and is the cleaner of the two on the office identity — 0.1 % over 12 offices
+in level-scope, and 0.000 % over the 5 on the parity arm. Against that, **Weber
+is measurably worse under uniform** (38 % vs 50 % of single-input industrials on
+the cheapest-sourced recipe).
+
+That last one is not explained by the level term directly: `quality` multiplies
+every recipe's `(outNet − inputCost)` identically, so it cannot reorder the
+argmax. It is an INDIRECT effect — uniform changes office and extractor output,
+which changes the goods prices industrial firms source at, which moves which
+recipe is cheapest where. Worth understanding before the flip, because Weber is
+the mechanism the whole industrial location story rests on, and "our fix made
+industrial location less Weber-like" is the kind of thing that should be
+explained rather than absorbed.
+
 **A seeding artifact, found on the way, that bounds what this fix could do.**
 `SyntheticCity.SeedFirms` places a firm on 80 % of pre-built non-residential
 parcels at t = 0 **consulting no bid at all**. That is why `--fill-evidence`
