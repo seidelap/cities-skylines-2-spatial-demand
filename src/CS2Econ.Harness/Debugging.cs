@@ -2815,6 +2815,47 @@ namespace CS2Econ.Harness
                     if (f2.EnteredTick == 0) { sN++; if (on) sOn++; if (onMargin) sM++; }
                     else { eN++; if (on) eOn++; if (onMargin) eM++; }
                 }
+                // HOW FAR BEHIND is a firm that is not on the argmax? A firm
+                // commits its recipe at entry and NOTHING in the model ever
+                // changes it (Firm.Output is assigned once, at entry). So the
+                // question "should a near-miss second-best survive" is today
+                // answered with infinite inertia, and whether that is harmless
+                // depends entirely on this distribution: a firm 2 % behind is
+                // a firm with an ordinary amount of hysteresis, one 60 % behind
+                // is a firm making the wrong thing.
+                var gaps = new List<double>();
+                foreach (var f2 in w.Firms)
+                {
+                    if (f2.Dead || f2.Parcel < 0 || f2.Sector != ZoneKind.Industrial) continue;
+                    int c2 = w.Parcels[f2.Parcel].Cluster;
+                    double ownM = double.NaN, bestM = double.NegativeInfinity;
+                    foreach (var recipe in ResourceCatalog.Recipes)
+                    {
+                        double outNet = Math.Max(
+                            p.NonResLandParity ? sim.Engine.Trade.OriginComparable(recipe.Output, c2)
+                                               : sim.Engine.Trade.OriginStat(recipe.Output, c2),
+                            sim.Engine.Trade.BestExportNet(recipe.Output, c2));
+                        double ic = 0;
+                        foreach (var (res, qty) in recipe.Inputs)
+                            ic += qty * sim.Engine.Trade.DeliveredCost(res, c2);
+                        double m = recipe.OutputPerSlot * p.RecipeOutputScale * (outNet - ic);
+                        if (recipe.Output == f2.Output) ownM = m;
+                        if (m > bestM) bestM = m;
+                    }
+                    if (double.IsNaN(ownM) || bestM <= 1e-9) continue;
+                    gaps.Add((bestM - ownM) / bestM);   // 0 = on the argmax
+                }
+                gaps.Sort();
+                if (gaps.Count > 0)
+                {
+                    int within2 = 0, within10 = 0;
+                    foreach (var g in gaps) { if (g <= 0.02) within2++; if (g <= 0.10) within10++; }
+                    Console.WriteLine($"  recipe drift over {gaps.Count} live industrials "
+                        + $"(margin shortfall vs the argmax at their OWN site): "
+                        + $"p50={Pct(gaps, 0.5):P1} p90={Pct(gaps, 0.9):P1} max={gaps[gaps.Count - 1]:P1} "
+                        + $"| within 2 %: {within2} ({100.0 * within2 / gaps.Count:F0} %), "
+                        + $"within 10 %: {within10} ({100.0 * within10 / gaps.Count:F0} %)");
+                }
                 Console.WriteLine($"  weber cohorts (single-input industrial, alive): "
                     + $"seeded {sOn}/{sN} on-cheapest-raw, {sM}/{sN} on-margin-argmax-now | "
                     + $"entrants {eOn}/{eN} on-cheapest-raw, {eM}/{eN} on-margin-argmax-now "

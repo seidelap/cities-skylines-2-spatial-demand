@@ -558,7 +558,7 @@ namespace CS2Econ.Core
         /// hurdle on staff the site could never attract. Measured at those
         /// clusters, the old estimate reads exactly 0.350 while realized fill
         /// is 0.000.</summary>
-        public bool FillEvidenceWeighting = false;
+        public bool FillEvidenceWeighting = true;
         /// <summary>Probe-scoped experiment control (--fill-office-prior):
         /// FillEvidenceWeighting applies to commercial, industrial and
         /// extractor while OFFICE keeps the old prior rule. Exists to isolate
@@ -618,7 +618,7 @@ namespace CS2Econ.Core
         /// that flag patched the FORECAST to match a production function that
         /// was itself the anomaly. MutantLevelFreeFirmOutput remains the
         /// falsifier for the level term at all sites.</summary>
-        public bool UniformSiteProductivity = false;
+        public bool UniformSiteProductivity = true;
         /// <summary>Whether the developer's construction scan may also price
         /// BUILT parcels whose standing building is economically dead
         /// (--redevelop; OFF because it moves a shipping default). Scope is
@@ -637,7 +637,7 @@ namespace CS2Econ.Core
         /// this admits a site whose project cost includes clearing a dead
         /// building, which breaks the self-financing circularity without a new
         /// funding mechanism or a new constant.</summary>
-        public bool DerelictRedevelopment = false;
+        public bool DerelictRedevelopment = true;
         /// <summary>Consecutive ticks a firm may fail to meet its land charge in
         /// full before it releases the parcel — the firm side of the same floor
         /// the household pipeline defines, and deliberately the SAME clock: a
@@ -941,7 +941,7 @@ namespace CS2Econ.Core
         /// by one; 20 carries the same +4 the 12 -> 16 raise did, and no
         /// headroom beyond that is claimed; Converged is the arbiter and the
         /// canary sweeps it.</summary>
-        public int AuctionRepairRounds = 20;
+        public int AuctionRepairRounds = 64;
         // ---- labor assignment market (LaborAuction; Flags.LaborAuction) ------
         /// <summary>Money per generalized commute minute per earner per tick —
         /// what a worker's own commute from its own home subtracts from a
@@ -1213,7 +1213,7 @@ namespace CS2Econ.Core
         /// less — and neither appears anywhere in the trigger. That is the
         /// difference between a hazard that emerges and a hazard that is
         /// declared.</summary>
-        public bool FirmExitMargin = false;
+        public bool FirmExitMargin = true;
         /// <summary>Offices carry a SPECIALIZATION, and each draws its
         /// agglomeration from its own kind's jobs rather than from office jobs
         /// pooled. Turns "the best office that could stand here" from a maximum
@@ -1419,6 +1419,6 @@ namespace CS2Econ.Core
         /// wage pooling (each firm is debited exactly its own members' base
         /// comp). The Sinkhorn model keeps running on the flag-off path,
         /// which must stay byte-identical.</summary>
-        public bool LaborAuction = false;
+        public bool LaborAuction = true;
     }
 }

@@ -113,6 +113,14 @@ namespace CS2Econ.Harness
                 if (args[i] == "--office-kinds") { Sim.ForceOfficeSpecializations = true; continue; }
                 if (args[i] == "--retail-lines") { Sim.ForceCommercialLines = true; continue; }
                 if (args[i] == "--labor") { Sim.ForceLaborAuction = true; continue; }
+                // Mirror off-switches for the flipped package (Sim's fields
+                // carry why each must stay reachable).
+                if (args[i] == "--no-labor") { Sim.ForceNoLaborAuction = true; continue; }
+                if (args[i] == "--no-exit-margin") { Sim.ForceNoFirmExitMargin = true; continue; }
+                if (args[i] == "--no-fill-evidence") { Sim.ForceNoFillEvidence = true; continue; }
+                if (args[i] == "--no-uniform-productivity")
+                { Sim.ForceNoUniformProductivity = true; continue; }
+                if (args[i] == "--no-redevelop") { Sim.ForceNoRedevelop = true; continue; }
                 if (args[i] == "--fill-evidence") { Sim.ForceFillEvidence = true; continue; }
                 if (args[i] == "--fill-office-prior") { Sim.ForceFillOfficeExempt = true; continue; }
                 if (args[i] == "--assess-deliverable") { Sim.ForceAssessDeliverable = true; continue; }

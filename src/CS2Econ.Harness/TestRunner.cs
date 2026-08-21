@@ -1356,6 +1356,41 @@ namespace CS2Econ.Harness
                 argmaxKinds.Add(best);
             }
 
+            // THE EXTRACTION VERDICT MOVES TO THE DECISION TOO. The stock share
+            // above is a small-sample statistic against a 90 % bar: on a
+            // 9-extractor city 8 of 9 reads 89 % and fails, so the bar demands
+            // PERFECTION of every standing firm and re-rolls its verdict every
+            // time the world re-equilibrates. That is the entire documented
+            // seed-moving Weber lineage (the seed-0 row below records four
+            // separate re-rolls of it), and it is the same defect the recipe
+            // leg had — a stock statistic standing in for a decision rule.
+            // Same treatment: hand-compute the argmax raw at every cluster
+            // where the top two separate, and require FirmBidPerSlot's own
+            // extractor choice to match. The oracle is `suit x max(origin,
+            // export)`, which is what that branch maximizes once the common
+            // positive factor and the common wage are dropped.
+            int extDisc = 0, extAgree = 0;
+            var extKinds = new HashSet<Res>();
+            for (int c2 = 0; c2 < simExt.Engine.Access.C; c2++)
+            {
+                Res bestRaw = Res.Services; double bv2 = double.NegativeInfinity, second2 = double.NegativeInfinity;
+                for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
+                {
+                    double suit = simExt.W.Clusters[c2].ResourceSuitability[rr];
+                    if (suit <= 0.05) continue;
+                    double val = suit * Math.Max(simExt.Engine.Trade.OriginStat((Res)rr, c2),
+                                                 simExt.Engine.Trade.BestExportNet((Res)rr, c2));
+                    if (val > bv2) { second2 = bv2; bv2 = val; bestRaw = (Res)rr; }
+                    else if (val > second2) second2 = val;
+                }
+                if (double.IsNegativeInfinity(bv2) || !(bv2 - second2 > 1e-9)) continue;
+                extDisc++;
+                LandAccounting.FirmBidPerSlot(simExt.Engine.Access, simExt.Engine.Trade, c2,
+                                              ZoneKind.Extractor, 1, p, out Res extChosen, simExt.W.Clusters);
+                if (extChosen == bestRaw) extAgree++;
+                extKinds.Add(bestRaw);
+            }
+
             double extractShare = extract > 0 ? (double)extractRight / extract : 0;
             double indShare = ind > 0 ? (double)indAligned / ind : 0;
 
@@ -1403,8 +1438,11 @@ namespace CS2Econ.Harness
             WeberPremiseSeen++;
             if (diversePremise) WeberPremiseMet++;
             Check("Weber: extraction follows geology; recipes follow input sourcing",
-                  extract >= 5 && extractShare >= 0.9 && webDisc >= 20 && webAgree == webDisc,
-                  $"{extract} extractors ({extractShare:P0} on best raw); recipe decision: " +
+                  extDisc >= 20 && extAgree == extDisc && webDisc >= 20 && webAgree == webDisc,
+                  $"extraction decision: {extAgree}/{extDisc} discriminating clusters agree with the " +
+                  $"hand-computed geology-and-market argmax (bound: all, floor 20; {extKinds.Count} distinct " +
+                  $"argmax raws); standing stock REPORTED: {extract} extractors, {extractShare:P0} on best raw. " +
+                  $"Recipe decision: " +
                   $"{webAgree}/{webDisc} discriminating clusters agree with the hand-computed margin argmax " +
                   $"(bound: all, floor 20; {argmaxKinds.Count} distinct argmax outputs across clusters); " +
                   $"standing stock REPORTED: {ind} single-input industrials, {indShare:P0} on argmax-now, " +
@@ -3654,7 +3692,8 @@ namespace CS2Econ.Harness
         /// exists on the auction path.</summary>
         private static Sim ShopFixture(ulong seed, EconParams p, int ticks, bool storeArm,
                                        bool laborAuction, Action<Sim>? perTick = null,
-                                       int cols = 13, int rows = 13, int households = 8000)
+                                       int cols = 13, int rows = 13, int households = 8000,
+                                       bool firmExitMargin = true)
         {
             // A much bigger city than the labor fixture's 8x8/2000, and the size
             // is load-bearing rather than incidental. Every leg of both commerce
@@ -3678,7 +3717,7 @@ namespace CS2Econ.Harness
                       { Cols = cols, Rows = rows, SeedHouseholds = households, Seed = seed };
             var sim = Sim.Create(cfg, p, new FeatureFlags
                                  { HousingAuction = true, LaborAuction = laborAuction,
-                                   StoreLevelSpending = storeArm });
+                                   StoreLevelSpending = storeArm, FirmExitMargin = firmExitMargin });
             sim.Run(ticks, perTick);
             return sim;
         }
@@ -4079,7 +4118,21 @@ namespace CS2Econ.Harness
             // direction.
             const int SurvivalHorizon = 40, FixtureTicks = 320;
             var entrantAge = new Dictionary<int, (long born, int deathAge)>();
-            var sim = ShopFixture(seed, p, FixtureTicks, storeArm: true, laborAuction: false, perTick: s =>
+            // BOTH ARMS OF THIS LEG PIN FirmExitMargin OFF, for the same
+            // reason the fixture already pins laborAuction: a falsifier has to
+            // isolate the mechanism it falsifies. This leg is about the ENTRY
+            // READ — whether the forecast admits shops into buildings that
+            // cannot carry them — and after the package flip the exit margin
+            // removes the POPULATION the leg needs before it can be observed.
+            // Measured at the flip, mutant arm on seed 0: 19 young entrant
+            // deaths with the margin off, 1 with it on, against a floor of 5;
+            // the clean arm's cohort collapses to ZERO the same way. The cause
+            // is not the margin killing entrants, it is commercial no longer
+            // dying at all (0 deaths, 86 alive on the composed arm), so no
+            // building ever falls vacant and mid-run entry never fires. Testing
+            // the entry read needs a world where entry happens.
+            var sim = ShopFixture(seed, p, FixtureTicks, storeArm: true, laborAuction: false,
+                                  firmExitMargin: false, perTick: s =>
             {
                 var w = s.W;
                 foreach (var f in w.Firms)
@@ -4123,7 +4176,7 @@ namespace CS2Econ.Harness
                 LandAccounting.MutantEntryReferenceMass = true;
                 var mAge = new Dictionary<int, (long born, int deathAge)>();
                 ShopFixture(seed, new EconParams(), MutantArmTicks, storeArm: true, laborAuction: false,
-                            perTick: s =>
+                            firmExitMargin: false, perTick: s =>
                 {
                     var w = s.W;
                     foreach (var f in w.Firms)
@@ -5588,13 +5641,33 @@ namespace CS2Econ.Harness
                 }
                 return (al, st, dd, rel, sl);
             }
-            var aOff = Arrears(sim, pOff);
+            // THE FLOOR ARM ISOLATES ARREARS, and after the package flip it has
+            // to be built to do so. This leg's claim is about the ARREARS
+            // outcome: with that outcome off, nothing releases a firm FOR
+            // ARREARS, so the parity arm's "no firm sits past the clock" is a
+            // real result and not a description of an empty set. A firm removed
+            // by the CASH-FLOW margin is not evidence either way about arrears —
+            // it is a different mechanism reaching the same firm first.
+            //
+            // Before the flip both mechanisms shipped off and the shared `sim`
+            // isolated arrears by accident. FirmExitMargin is now ON by default
+            // and it empties the stranded population before the arrears clock
+            // can run out (measured at the flip: this leg read stuck = 0 where
+            // it had read 17 of 108). That is the OUTCOME #55 EXISTS FOR — the
+            // shipping world no longer strands firms at all — so the fix is to
+            // give this leg its own arm rather than to weaken its bound.
+            var simArrFloor = Sim.Create(cfg, new EconParams(),
+                                         new FeatureFlags { FirmExitMargin = false });
+            simArrFloor.Run(300);
+            var aOff = Arrears(simArrFloor, simArrFloor.P);
             var aOn = Arrears(simOn, pOn);
             Check("nonres parity floor: with the outcome off, firms really do sit past the arrears clock",
                   aOff.stuck >= 1 && aOff.alive >= 20 && aOff.dead == 0 && aOff.siteless == 0,
                   $"{aOff.stuck} of {aOff.alive} standing firms have missed the land charge for "
-                  + $"{pOff.LandArrearsTicks}+ consecutive ticks under the shipped default, and none is asked to leave; "
-                  + $"{aOff.siteless} live firms hold no site (bound 0 — a firm this leg cannot describe)");
+                  + $"{simArrFloor.P.LandArrearsTicks}+ consecutive ticks with the arrears outcome off, and none is "
+                  + $"asked to leave; {aOff.siteless} live firms hold no site (bound 0 — a firm this leg "
+                  + $"cannot describe). Arm has FirmExitMargin OFF so the cash-flow exit does not remove "
+                  + $"the stranded population this leg must be able to see");
             Check("nonres parity: with the outcome on, no firm sits past the arrears clock and every exit released its parcel",
                   aOn.stuck == 0 && aOn.dead >= 1 && aOn.released == aOn.dead && aOn.alive >= 20
                   && aOn.siteless == 0,

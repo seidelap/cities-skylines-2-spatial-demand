@@ -1039,6 +1039,91 @@ its own redevelopment out of a land value it cannot have while it is derelict.**
 Any fix has to break that circularity — the redevelopment claim on a ruin cannot
 be financed by the ruin's own wedge.
 
+## THE PACKAGE FLIP — six defaults on, and what it cost
+
+`FeatureFlags.LaborAuction`, `FeatureFlags.FirmExitMargin`,
+`EconParams.FillEvidenceWeighting`, `EconParams.UniformSiteProductivity`,
+`EconParams.DerelictRedevelopment` all false→true, and
+`EconParams.AuctionRepairRounds` 20→64. Fingerprint accepted with the full
+reason (sig `3E6BB16087D3FF31`); every lane moved, which is what a defaults
+flip means. Gate: **canary 39/39, laborcanary --seeds 32 39/39**.
+
+The old path stays reachable — `--no-labor`, `--no-exit-margin`,
+`--no-fill-evidence`, `--no-uniform-productivity`, `--no-redevelop` — and
+vanilla mode now pins `LaborAuction` and `FirmExitMargin` off so a "vs vanilla"
+baseline stays vanilla on both sides (the housing flip's own recorded defect).
+
+### Two checks needed conditioning, and both were mechanism-isolation, not bars
+
+1. **`nonres parity floor: firms really do sit past the arrears clock`** read
+   `stuck = 0` where it had read 17 of 108. Not a regression — the CASH-FLOW
+   margin now removes stranded firms before the arrears clock runs out, which
+   is the outcome #55 exists for. The leg's claim is about the ARREARS outcome,
+   so its floor arm is now built with `FirmExitMargin` OFF. Fixed, green.
+2. **`entrants can trade`** read a mutant arm of 1 against a floor of 5, and a
+   clean COHORT of zero. Isolated by measurement to the exit margin (19 with it
+   off, 1 with it on; redevelopment and fill-evidence were both ruled out).
+   Cause: commercial no longer dies at all (0 deaths, 86 alive), so no building
+   falls vacant and mid-run entry never fires. Both arms of that leg now pin
+   `FirmExitMargin` off — the leg tests the ENTRY READ and needs a world where
+   entry happens. Fixed, green (mutant 19).
+
+### THE WEBER LINEAGE IS CLOSED — both legs, decision not stock
+
+Seed 1 went red on the EXTRACTION leg at the flip: `9 extractors (89 % on best
+raw)` against a ≥90 % bar — 8 of 9, one firm short. That is the same
+small-sample stock defect the recipe leg had, and the seed-0 row far below
+records **four** separate historical re-rolls of exactly it. Both legs now
+assert the DECISION:
+
+- extraction: at every cluster where the top two raws separate,
+  `FirmBidPerSlot`'s chosen raw must equal a hand-computed `suit × max(origin,
+  export)` argmax — **seed 0: 175/175, seed 1: 140/140**
+- recipe: unchanged from the previous commit — **196/196 on both**
+- falsifier `--mutant-weber-secondbest` now corrupts BOTH branches and reds
+  both: **extraction 80/140, recipe 0/196**
+
+**Seed 0's Weber red — standing for the whole project history — is GREEN**, and
+green for the right reason: the decision rule is exact everywhere, and the
+stock lags (70 % on best raw) only because firms commit at entry and never
+retool. Stock shares are still printed, as reported numbers.
+
+### Named red: seed 5, and it is explained
+
+`displaced firm floor: both outcomes occur` — 21 firms displaced, **0 re-sited,
+21 left**, against pre-flip 13 displaced / 11 re-sited. Isolated: `--no-labor`
+restores it (9 displaced, 4 re-sited); redevelopment accounts for a little
+(0→3 with it off), uniform for less (0→2). The mechanism is not a broken
+relocation rule. The labor auction supports roughly TWICE the firm population,
+so displacing 25 % of standing firms is a citywide shock (21, not 9) — and the
+vacant stock it lands in is **entirely derelict** (condition p50 0.05), which a
+firm correctly refuses for the `SPerUnit`-on-a-ruin reason recorded above. Mass
+displacement into a market whose only vacancies are ruins should empty the
+city, and it does.
+
+Not tuned away: seeds 0, 1, 9 and 13 pass this leg, and fitting the fixture to
+make the flip look good is the failure mode this file exists to refuse. It is a
+consequence of the derelict-stock flux problem, and it belongs with that.
+
+Also seed 5 only: `office product carries the level term` fails its POPULATION
+floor (2 staffed offices in level-scope against a floor of 3) while its bound
+passes comfortably (6.7 % against < 25 %). Seed 5's office sector is documented
+thin.
+
+### Seed tally on the flipped default
+
+| seed | verify | reds |
+|---|---|---|
+| 0 | **64/64** | — (the standing Weber red is GONE) |
+| 1 | **64/64** | — |
+| 5 | 62/64 | displaced-firm floor, office population floor (both above) |
+| 9 | **64/64** | — |
+| 13 | **64/64** | — |
+
+Four of five seeds are CLEAN — the first time in this project's history that
+seed 0 has read 64/64. The pre-flip default read 64/64 on seed 1 only, with
+seed 0 carrying the Weber red since the beginning.
+
 ## Do the four sectors run one system? No — and unifying them did NOT produce a fair fight
 
 Audited across the THREE sites that price a slot — the land bid

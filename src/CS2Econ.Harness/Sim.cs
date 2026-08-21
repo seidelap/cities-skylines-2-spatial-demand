@@ -71,6 +71,13 @@ namespace CS2Econ.Harness
         /// pays class wages whatever its product, while the auction's door cap
         /// refuses a hire above the firm's own marginal-revenue forecast.</summary>
         public static bool ForceLaborAuction;
+        /// <summary>MIRROR OFF-SWITCHES for the flipped package. Each shipped
+        /// OFF and is now ON, so without these NOTHING in the harness could
+        /// reach the old path — exactly the defect the housing flip's own
+        /// inventory found and the reason `--posted` and `--pooled` exist.
+        /// Applied AFTER the corresponding force-on so an explicit off wins.</summary>
+        public static bool ForceNoLaborAuction, ForceNoFirmExitMargin, ForceNoFillEvidence,
+                           ForceNoUniformProductivity, ForceNoRedevelop;
         /// <summary>Set by `--fill-evidence`: turns on
         /// EconParams.FillEvidenceWeighting so the arm can be measured without
         /// editing a default that ships off.</summary>
@@ -118,6 +125,11 @@ namespace CS2Econ.Harness
             if (ForceAssessDeliverable) p.AssessDeliverableQuality = true;
             if (ForceUniformProductivity) p.UniformSiteProductivity = true;
             if (ForceRedevelop) p.DerelictRedevelopment = true;
+            if (ForceNoLaborAuction) flags.LaborAuction = false;
+            if (ForceNoFirmExitMargin) flags.FirmExitMargin = false;
+            if (ForceNoFillEvidence) p.FillEvidenceWeighting = false;
+            if (ForceNoUniformProductivity) p.UniformSiteProductivity = false;
+            if (ForceNoRedevelop) p.DerelictRedevelopment = false;
             if (ForceRepairRounds >= 0) p.AuctionRepairRounds = ForceRepairRounds;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
@@ -141,6 +153,14 @@ namespace CS2Econ.Harness
                 // while it is a no-op, so the flip cannot forget it — the
                 // housing flip hit exactly this defect and it is recorded.
                 flags.StoreLevelSpending = false;
+                // Same reason, now LOAD-BEARING rather than pre-emptive: with
+                // LaborAuction the default, inheriting it here would run the
+                // vanilla spawner against the assignment labor market — a
+                // hybrid nothing ships — and every "vs vanilla" baseline would
+                // quietly stop being vanilla. The housing flip hit exactly this
+                // defect; this is the same pin for the labor side.
+                flags.LaborAuction = false;
+                flags.FirmExitMargin = false;
                 sim.Vanilla = new VanillaSpawner();
             }
             return sim;

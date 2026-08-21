@@ -648,6 +648,8 @@ namespace CS2Econ.Core
                     // (the engine's extractor case carries the comment).
                     double extQ = !p.AssessDeliverableQuality || p.NonResLandParity
                                   || p.UniformSiteProductivity ? quality : 1.0;
+                    Res extRunnerUp = Res.Services; double extRunnerVal = double.NegativeInfinity;
+                    bool extRunnerSeen = false;
                     profitPerFilledSlot = double.NegativeInfinity;
                     var suit = workCluster != null ? workCluster[cluster].ResourceSuitability : null;
                     for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)
@@ -663,9 +665,19 @@ namespace CS2Econ.Core
                             prices.BestExportNet(res, cluster));
                         double perSlot = p.ExtractorOutputPerSlot * extQ * s2 * outNet - p.WageBasic;
                         if (perSlot > profitPerFilledSlot)
-                        { profitPerFilledSlot = perSlot; chosenOutput = res; }
+                        {
+                            extRunnerUp = chosenOutput; extRunnerVal = profitPerFilledSlot;
+                            extRunnerSeen = profitPerFilledSlot > double.NegativeInfinity;
+                            profitPerFilledSlot = perSlot; chosenOutput = res;
+                        }
+                        else if (!extRunnerSeen || perSlot > extRunnerVal)
+                        { extRunnerUp = res; extRunnerVal = perSlot; extRunnerSeen = true; }
                     }
                     if (double.IsNegativeInfinity(profitPerFilledSlot)) return 0;
+                    // Same falsifier as the industrial branch, same reason: the
+                    // extraction verdict is now the DECISION, so the check
+                    // needs a defect shaped like a bad decision to catch.
+                    if (MutantWeberSecondBest && extRunnerSeen) chosenOutput = extRunnerUp;
                     break;
                 }
                 default: return 0;
