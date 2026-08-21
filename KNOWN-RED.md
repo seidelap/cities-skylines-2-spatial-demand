@@ -1176,7 +1176,19 @@ level does NOT identify it: `Assess` maxes over EVERY level, so the winning
 configuration can sit at another level with another argmax output. Measured on
 the default arm, that filter kept the one parcel that did not move and excluded
 the one that did — **0/1 filtered against 1/2 unfiltered**, i.e. it selected
-exactly backwards. A second exclusion tried at the same time (drop parcels where
+exactly backwards.
+
+TWO separate defects, and the second is the one that actually sinks the design.
+On the COMPOSED arm the same filter read **6/10** (against 7/33 unfiltered), so
+it is not uniformly broken — it selects a plausible subset once the population is
+large enough, and the 0/1 above is the small-sample face of the level mismatch.
+But 6/10 is not 10/10: **even on a well-selected subset the "all of them must
+move" bar is unsupported**, so legitimate non-movers remain that the
+argmax-output test does not capture. A next attempt needs BOTH the right subset
+AND a bar derived from what the mechanism actually guarantees. Neither is in
+hand, which is why this is reverted rather than retuned.
+
+A second exclusion tried at the same time (drop parcels where
 exit parity already beats the origin read) is wrong on its own terms: admitting a
 second seller RAISES `OriginComparable`, which can overtake `BestExportNet`, so
 the pre-admission comparison does not predict the post-admission one — it emptied
