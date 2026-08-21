@@ -2502,7 +2502,69 @@ namespace CS2Econ.Harness
             var cfg = new SyntheticCity.Config { Cols = 10, Rows = 10, SeedHouseholds = 3000, Seed = seed };
             var sim = Sim.Create(cfg, p, new FeatureFlags());
             var w = sim.W;
-            sim.Run(ticks);
+
+            // SUCCESSION CENSUS. "Does the business of a plot ever switch?"
+            // is a question about TURNOVER, not about a living firm's product
+            // (which is fixed at entry, deliberately). A firm dies, the
+            // building stands, an entrant takes the standing building and
+            // re-decides everything from today's prices — recipe, office
+            // kind, retail line. This tracks every occupant handover on a
+            // parcel and asks whether the successor is a DIFFERENT business:
+            // different output for industrial/extractor, different
+            // specialization for office, different line for commercial.
+            var lastOcc = new Dictionary<int, int>();          // parcel -> firm id
+            var succN = new Dictionary<ZoneKind, int>();
+            var succChanged = new Dictionary<ZoneKind, int>();
+            var vacGap = new List<int>();                      // ticks the site sat empty
+            var vacSince = new Dictionary<int, long>();        // parcel -> tick it fell vacant
+            sim.Run(ticks, s2 =>
+            {
+                foreach (var pl in s2.W.Parcels)
+                {
+                    if (pl.IsResidential || pl.Use == ZoneKind.None || pl.Warehousing) continue;
+                    int cur = pl.State == ParcelState.Built ? pl.OccupantFirm : -1;
+                    lastOcc.TryGetValue(pl.Id, out int prev0);
+                    int prev = lastOcc.ContainsKey(pl.Id) ? prev0 : -1;
+                    if (cur < 0 && prev >= 0 && !vacSince.ContainsKey(pl.Id))
+                        vacSince[pl.Id] = s2.W.Tick;
+                    if (cur >= 0 && prev >= 0 && cur != prev)
+                    {
+                        var a = s2.W.Firms[prev]; var b = s2.W.Firms[cur];
+                        succN.TryGetValue(b.Sector, out int n0); succN[b.Sector] = n0 + 1;
+                        bool changed = b.Sector switch
+                        {
+                            ZoneKind.Industrial => a.Output != b.Output,
+                            ZoneKind.Extractor => a.Output != b.Output,
+                            ZoneKind.Office => a.Office != b.Office,
+                            ZoneKind.Commercial => a.Retail != b.Retail,
+                            _ => false,
+                        };
+                        if (changed)
+                        { succChanged.TryGetValue(b.Sector, out int c0); succChanged[b.Sector] = c0 + 1; }
+                        if (vacSince.TryGetValue(pl.Id, out long t0))
+                        { vacGap.Add((int)(s2.W.Tick - t0)); vacSince.Remove(pl.Id); }
+                    }
+                    if (cur >= 0) { lastOcc[pl.Id] = cur; vacSince.Remove(pl.Id); }
+                    else if (prev >= 0) lastOcc[pl.Id] = prev;   // remember through the gap
+                }
+            });
+            {
+                int totS = 0, totC = 0;
+                var parts = new List<string>();
+                foreach (var kv in succN)
+                {
+                    succChanged.TryGetValue(kv.Key, out int ch);
+                    totS += kv.Value; totC += ch;
+                    parts.Add($"{kv.Key} {ch}/{kv.Value}");
+                }
+                vacGap.Sort();
+                Console.WriteLine($"  successions (a NEW firm took a previously-occupied building): "
+                    + $"{totS} total, {totC} changed business ({(totS > 0 ? 100.0 * totC / totS : 0):F0} %) "
+                    + $"| by sector (changed/total): {string.Join(", ", parts)}"
+                    + (vacGap.Count > 0
+                       ? $" | vacancy gap ticks p50={vacGap[vacGap.Count / 2]} max={vacGap[vacGap.Count - 1]}"
+                       : ""));
+            }
 
             Console.WriteLine($"seed {seed} ticks {ticks} exitMargin={sim.Flags.FirmExitMargin} "
                 + $"noMargin={EconomyEngine.MutantFirmExitNoMargin} flatPatience={EconomyEngine.MutantFirmFlatPatience}"
