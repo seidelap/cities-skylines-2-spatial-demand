@@ -993,6 +993,52 @@ Vacant-condition p90 collapsed to 0.05 on the fix arm: what still stands empty
 is uniformly rotted stock, which is #56's redevelopment loop, not a pricing
 error at entry.
 
+### The residual re-entry miss is SPerUnit on a ruin, exactly — and entry is RIGHT to refuse
+
+The median (bid − assess) sat at −0.035 or −0.053 on every arm measured, which
+is too constant to be a market outcome. It is arithmetic:
+
+    SPerUnit(ℓ=1, cond=0.05) = (h + δ + m) · cond · RC1PerUnit
+                             = (0.0004 + 0.00035 + 0.00025) · 0.05 · 700 = 0.035
+    SPerUnit(ℓ=2, cond=0.05) = 0.035 · LevelCostGamma(1.5)              = 0.0525
+
+Both observed medians, to the digit. A derelict building produces ~nothing (its
+bid → 0 as condition → floor) and still owes the structure charge, and
+`UnitAssessment = s + land + structureTax ≥ s > 0` always. So the gate cannot
+open — and it SHOULD NOT. Nobody should occupy a ruin. **The entry gate is not
+the defect; the missing mechanism is demolition.**
+
+### #56, corrected: the registry's account of it is wrong
+
+This file previously said the loop is that `Assess` prices a ruin HIGH because
+redevelopment pays, and `ExpectedFlow` then deducts that land charge so the
+hurdle is never cleared. Measured, that is not what happens.
+
+There IS a demolition path — `Leveling.cs` scrape-and-rebuild, Built →
+UnderConstruction (not → Empty, which is why a grep for `ParcelState.Empty`
+misses it). It needs four things at once. On the composed+uniform arm, seed 1,
+over the 65 derelict vacant parcels:
+
+| gate | count | verdict |
+|---|---|---|
+| `TargetIsScrape` | **0 / 65** | assessment NEVER names a scrape |
+| sustained wedge pressure | 19 / 65 | partially met |
+| `Escrow ≥ cost` | **0 / 65** | mean escrow **0.0** vs mean cost **12,418.9** |
+| physically vacant | 65 / 65 | fully met |
+
+Two gates are hard-shut and either is fatal alone. They share one cause, and it
+is the opposite of "priced high": a derelict parcel's assessed land value is
+~ZERO, because the entrant bid that would price it is ~zero. Zero land value
+means zero wedge, which means escrow never accumulates (0.0 against a 12,419
+bill — a gap, not a margin), and it means the scrape candidate's residual never
+beats the standing configuration, so `TargetIsScrape` is never set and
+`Leveling`'s scrape block is never entered for these parcels at all.
+
+So the self-defeating loop is real but runs the other way: **a parcel must fund
+its own redevelopment out of a land value it cannot have while it is derelict.**
+Any fix has to break that circularity — the redevelopment claim on a ruin cannot
+be financed by the ruin's own wedge.
+
 ## Do the four sectors run one system? No — and unifying them did NOT produce a fair fight
 
 Audited across the THREE sites that price a slot — the land bid

@@ -2749,6 +2749,35 @@ namespace CS2Econ.Harness
                     + $"| (bid − assess) p10={Pct(excesses, 0.1):F3} p50={Pct(excesses, 0.5):F3} "
                     + $"p90={Pct(excesses, 0.9):F3}");
 
+            // WHY IS THE RUIN STILL STANDING? Entry is refused correctly -- a
+            // derelict building produces ~nothing and still owes SPerUnit, so
+            // bid < assess is the right answer, and the constant residual is
+            // exactly that charge. The question is therefore not entry but
+            // DEMOLITION: Leveling's scrape path needs four things at once, and
+            // this reports which of them the standing ruins actually have.
+            int derelict = 0, wantScrape = 0, hasPressure = 0, funded = 0, physVacant = 0;
+            double sumEscrow = 0, sumCost = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.IsResidential || pl.Use == ZoneKind.None) continue;
+                if (pl.OccupantFirm >= 0 || pl.Condition > 0.25) continue;
+                derelict++;
+                if (pl.TargetIsScrape) wantScrape++;
+                if (pl.Wedge > 0.15 * Math.Max(1e-9, Math.Abs(pl.CurrentResidual) + pl.Wedge)) hasPressure++;
+                int newUnits = LandAccounting.UnitsFor(pl.TargetUse);
+                double vNow = pl.Condition * p.RC(pl.Level, pl.Units);
+                double cost = Math.Max(0, p.DemolitionPerUnit * pl.Units
+                                          + p.RC(pl.TargetLevel, newUnits) - p.SalvageFraction * vNow);
+                sumEscrow += pl.Escrow; sumCost += cost;
+                if (pl.Escrow >= cost) funded++;
+                if (pl.OccupantHouseholds.Count == 0 && pl.OccupantFirm < 0) physVacant++;
+            }
+            if (derelict > 0)
+                Console.WriteLine($"  scrape gates on {derelict} derelict (cond<=0.25) vacant parcels: "
+                    + $"TargetIsScrape={wantScrape} pressure={hasPressure} funded={funded} "
+                    + $"physicallyVacant={physVacant} | mean escrow={sumEscrow / derelict:F1} "
+                    + $"vs mean scrape cost={sumCost / derelict:F1}");
+
             var la = sim.Engine.Labor;
             if (la != null && la.DoorsTotal > 0)
                 Console.WriteLine($"  labor doors: {la.DoorsUnlisted}/{la.DoorsTotal} on NO worker's "
