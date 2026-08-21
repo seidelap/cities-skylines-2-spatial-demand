@@ -413,6 +413,17 @@ namespace CS2Econ.Core
         /// band — see the band's own comment in FirmLifecycle for why the
         /// clock asymmetry could not serve as one.</summary>
         public double CashFlowMadEma;
+        /// <summary>DIAGNOSTIC ONLY: the payroll actually DEBITED this tick,
+        /// latched into PayrollLastTick beside the cash-flow close. Exists
+        /// because a probe that reconstructs a wage bill from
+        /// FilledByClass x EconParams.Wage(class) reports the POSTED class
+        /// wage, which under the labor auction is not what the firm pays: the
+        /// auction bills cleared BASE comp, and for a worker collective most
+        /// of a member's take is the dividend -- a distribution of surplus,
+        /// deliberately not an avoidable cost. Reconstructing it overstated
+        /// office payroll by ~324/tick against an actual near-zero base.</summary>
+        public double PayrollThisTick;
+        public double PayrollLastTick;
         /// <summary>Whether this firm has ever completed a tick it could have
         /// operated in. Until it has, CashFlowEma is not a forecast it could
         /// hold, and the first observation SEEDS the EMA rather than being

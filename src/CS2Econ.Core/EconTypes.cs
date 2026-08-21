@@ -586,6 +586,39 @@ namespace CS2Econ.Core
         /// quality-scaled unconditionally, so their forecasts already match.
         /// With parity ON this flag is a no-op by design.</summary>
         public bool AssessDeliverableQuality = false;
+        /// <summary>ONE productivity rule for all four non-residential sectors,
+        /// applied at all THREE sites that price a slot: the land bid
+        /// (LandAccounting.FirmBidPerSlot), the labor auction's door cap
+        /// (LaborAuction's per-sector MRP), and realized production
+        /// (EconomyEngine). Ships OFF because it moves a shipping default.
+        ///
+        /// WHY IT EXISTS. Audited across those three sites, the four sectors do
+        /// not run one system or even two — industrial is the only one coherent
+        /// end to end (cond x Quality(l) everywhere), while OFFICE gives three
+        /// different answers at its three sites (bid: level premium; door cap:
+        /// neither term; production: both, but only under NonResLandParity) and
+        /// EXTRACTOR gives two. On the shipping default an office's output
+        /// therefore ignores its building's CONDITION entirely, which no other
+        /// sector does.
+        ///
+        /// WHY IT MATTERS BEYOND TIDINESS. A parcel's land value is a maximum
+        /// over the configurations its zoning permits. That maximum is only
+        /// meaningful if the candidates are commensurable — if office and
+        /// extractor price a slot level-free while industrial and commercial
+        /// price it at Quality(l), then on any plot where several uses are
+        /// allowed the winner is decided by which formula each sector happens
+        /// to be wired to, not by which use is worth more there. The four have
+        /// to fight on the same terms for the maximum to mean anything.
+        ///
+        /// WHAT IT DOES: every sector's per-slot productivity carries
+        /// condition x Quality(l)/Quality(1) at every site, unconditionally.
+        /// Commercial already complies (its capture mass is units x cond x
+        /// Quality(l)); industrial already complies; this brings office and
+        /// extractor into line and makes AssessDeliverableQuality redundant —
+        /// that flag patched the FORECAST to match a production function that
+        /// was itself the anomaly. MutantLevelFreeFirmOutput remains the
+        /// falsifier for the level term at all sites.</summary>
+        public bool UniformSiteProductivity = false;
         /// <summary>Consecutive ticks a firm may fail to meet its land charge in
         /// full before it releases the parcel — the firm side of the same floor
         /// the household pipeline defines, and deliberately the SAME clock: a

@@ -116,6 +116,8 @@ namespace CS2Econ.Harness
                 if (args[i] == "--fill-evidence") { Sim.ForceFillEvidence = true; continue; }
                 if (args[i] == "--fill-office-prior") { Sim.ForceFillOfficeExempt = true; continue; }
                 if (args[i] == "--assess-deliverable") { Sim.ForceAssessDeliverable = true; continue; }
+                if (args[i] == "--uniform-productivity")
+                { Sim.ForceUniformProductivity = true; continue; }
                 if (args[i] == "--repair-rounds" && i + 1 < args.Length)
                 { Sim.ForceRepairRounds = int.Parse(args[++i]); continue; }
                 // MUTANT SWITCH (see LandAccounting.MutantFillPriorNeverYields):
@@ -571,6 +573,13 @@ namespace CS2Econ.Harness
                     for (int i = 1; i + 1 < args.Length; i += 2)
                         if (args[i] == "--ticks") ticks = int.Parse(args[i + 1]);
                     return Debugging.ParityProbe(seed, ticks);
+                }
+                case "zonefight":
+                {
+                    int zticks = 400;
+                    for (int i = 1; i + 1 < args.Length; i++)
+                        if (args[i] == "--ticks") zticks = int.Parse(args[i + 1]);
+                    return Debugging.ZoneFight(seed, zticks);
                 }
                 case "marginprobe":
                 {

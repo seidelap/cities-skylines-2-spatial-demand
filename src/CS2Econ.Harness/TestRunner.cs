@@ -5398,7 +5398,24 @@ namespace CS2Econ.Harness
             // from the parcel as the assessor would read it now, and for an
             // office that met its charge nothing between production and here
             // moves either term — so a correct build reads zero, not a band.
-            (int n, double medErr) Office(Sim s, EconParams p)
+            // WHICH TERM DOES PRODUCTION DELIVER, and which does the BID price?
+            // Two independent predicates, because three flags now move them and
+            // they do not move together:
+            //   production carries cond×Quality(ℓ)  <=  NonResLandParity OR
+            //                                          UniformSiteProductivity
+            //   the bid prices Quality(ℓ)           <=  NOT AssessDeliverableQuality
+            //                                          OR either of the above
+            // The DEFECT this leg pins is the two disagreeing — land priced on a
+            // level premium production does not deliver. So the comparison is
+            // realized product against the term THE BID PRICED, and the scope
+            // filter reads the building's LEVEL (flag-independent) rather than a
+            // term one of the flags can flatten to 1 — otherwise turning a fix on
+            // would empty the population and the leg would pass by being vacuous,
+            // which is the failure mode this whole file exists to refuse.
+            bool ProdLevel(EconParams p) => p.NonResLandParity || p.UniformSiteProductivity;
+            bool BidLevel(EconParams p) => !p.AssessDeliverableQuality
+                                           || p.NonResLandParity || p.UniformSiteProductivity;
+            (int n, double medErr) Office(Sim s, EconParams p, bool againstBid)
             {
                 var errs = new List<double>();
                 foreach (var f in s.W.Firms)
@@ -5408,22 +5425,34 @@ namespace CS2Econ.Harness
                     double base_ = f.WorkersFilled * p.OfficeOutputPerSlot * p.OfficeOutputPrice
                                    * s.Engine.Access.OfficeAgglomMult[pl.Cluster];
                     if (base_ <= 1e-9) continue;
-                    // Only offices whose assessed level×condition term is a REAL
-                    // lift are in scope: at term == 1 the identity reads 1 ≈ 1 on
-                    // both arms and asserts nothing.
-                    double term = Math.Max(0.2, pl.Condition) * p.Quality(pl.Level) / p.Quality(1);
-                    if (term < 1.15) continue;
+                    double lvlTerm = p.Quality(pl.Level) / p.Quality(1);
+                    if (lvlTerm < 1.15) continue;          // scope: level, not a flagged term
+                    double term = againstBid
+                        ? (BidLevel(p) ? lvlTerm : 1.0)                                  // what land is priced on
+                        : (ProdLevel(p) ? Math.Max(0.2, pl.Condition) * lvlTerm : 1.0);  // what output should be
                     errs.Add(Math.Abs(f.GrossRevenueLastTick / base_ - term) / term);
                 }
                 errs.Sort();
                 return (errs.Count, errs.Count > 0 ? Pct(errs, 0.5) : 0);
             }
-            var oOff = Office(sim, pOff);
-            var oOn = Office(simOn, pOn);
-            Check("nonres parity floor: staffed offices carry an assessed level term, and the default does not produce it",
-                  oOff.n >= 3 && oOff.medErr > 0.25,
-                  $"{oOff.n} staffed offices assessed on a level×condition term ≥ 1.15 on the default arm, where "
-                  + $"realized product misses that term by a median {oOff.medErr * 100:F1}%");
+            var oOff = Office(sim, pOff, againstBid: true);
+            var oOn = Office(simOn, pOn, againstBid: false);
+            // TWO-SIDED, so neither arm can be vacuous. Where the bid prices a
+            // term production does not deliver the mismatch must be LARGE (the
+            // defect, which is the shipping default and what the parity leg
+            // below is the fix for); where the two agree it must be SMALL. The
+            // residual band on the aligned side is the cond asymmetry: the bid
+            // applies condition through CondFactor outside FirmBidPerSlot while
+            // production applies raw cond, so the two agree on the level term
+            // and only approximately on condition.
+            bool officeAligned = ProdLevel(pOff) == BidLevel(pOff);
+            Check("nonres parity floor: office product carries the level term its land is priced on exactly when the two rules agree",
+                  oOff.n >= 3 && (officeAligned ? oOff.medErr < 0.25 : oOff.medErr > 0.25),
+                  $"{oOff.n} staffed offices in level-scope on the default arm; production rule "
+                  + $"{(ProdLevel(pOff) ? "carries" : "drops")} the level term, bid rule "
+                  + $"{(BidLevel(pOff) ? "prices" : "drops")} it => {(officeAligned ? "ALIGNED" : "MISMATCHED")}; "
+                  + $"realized product differs from the priced term by a median {oOff.medErr * 100:F1}% "
+                  + $"(bound {(officeAligned ? "< 25%" : "> 25%")})");
             // The identity is EXACT, not statistical — a broken production term
             // puts every office in scope at ~51% — so one office in scope is a
             // verdict, and the paired floor leg above is what proves the

@@ -1112,6 +1112,7 @@ namespace CS2Econ.Core
                         double w = wageByClass[cl] * (f.FilledByClass[cl] / filledTotals[cl]);
                         f.Money -= w;
                         f.OperatingCostThisTick += w;   // avoidable: the pooled-path wage bill
+                        f.PayrollThisTick += w;
                     }
             }
         }
@@ -1198,6 +1199,7 @@ namespace CS2Econ.Core
                 }
                 f.Money -= bill;
                 f.OperatingCostThisTick += bill;   // avoidable: the labor-auction payroll
+                f.PayrollThisTick += bill;
                 firmDebits += bill;
                 firmCredits += creditByFirm[f.Id];
                 gap += Math.Abs(bill - creditByFirm[f.Id]);
@@ -1619,7 +1621,8 @@ namespace CS2Econ.Core
                         // the assessment pricing a configuration that does not
                         // exist. Industrial and commercial already carry it.
                         f.OutputThisTick = f.WorkersFilled * P.ExtractorOutputPerSlot * suit * cond
-                                           * (P.NonResLandParity && !MutantLevelFreeFirmOutput
+                                           * ((P.NonResLandParity || P.UniformSiteProductivity)
+                                              && !MutantLevelFreeFirmOutput
                                               ? P.Quality(pl.Level) / P.Quality(1) : 1.0);
                         _supplyByCluster[(int)f.Output][c] += f.OutputThisTick;
                         _supplyTotal[(int)f.Output] += f.OutputThisTick;
@@ -1683,9 +1686,17 @@ namespace CS2Econ.Core
                         // has to earn: an office that committed to the right
                         // kind for its site realizes what it was billed for, and
                         // one whose neighbourhood moved under it does not.
+                        // NOTE the term this gate carries: cond AND the level
+                        // premium. With the gate shut an office's product
+                        // ignores the CONDITION of its own building, which no
+                        // other sector does — a derelict tower produces exactly
+                        // what a new one does. UniformSiteProductivity opens it
+                        // unconditionally, which is what puts office on the
+                        // same footing as the other three.
                         double rev = f.WorkersFilled * P.OfficeOutputPerSlot * P.OfficeOutputPrice
                                      * Access.OfficeAgglom(f.Office, c, P)
-                                     * (P.NonResLandParity && !MutantLevelFreeFirmOutput
+                                     * ((P.NonResLandParity || P.UniformSiteProductivity)
+                                        && !MutantLevelFreeFirmOutput
                                         ? cond * P.Quality(pl.Level) / P.Quality(1) : 1.0);
                         f.Money += rev; f.RevenueThisTick = rev;
                         W.Ledger.Transfer(Account.OutsideWorld, Account.Firms, rev);
@@ -1887,6 +1898,7 @@ namespace CS2Econ.Core
                     f.CashFlowEma = MathUtil.Ema(f.CashFlowEma, cashFlow, 0.05);
                 }
                 f.OperatingCostThisTick = 0;
+                f.PayrollLastTick = f.PayrollThisTick; f.PayrollThisTick = 0;
 
                 f.GrossRevenueLastTick = f.RevenueThisTick;
                 f.RevenueThisTick = 0; f.OutputThisTick = 0;

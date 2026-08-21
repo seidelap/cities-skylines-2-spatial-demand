@@ -2405,6 +2405,92 @@ namespace CS2Econ.Harness
         /// inputs plus the land charge OWED — for every sector, and it reports
         /// re-letting beside exits, because an exit into a market that cannot
         /// re-let the building is not a fix.</summary>
+        /// <summary>THE FAIR-FIGHT TEST. A parcel's land value is a maximum
+        /// over the configurations its zoning permits; that maximum is only
+        /// meaningful if the candidates are COMMENSURABLE. This puts all four
+        /// non-residential sectors on the SAME parcel -- same cluster, same
+        /// level, same condition, each given the entrant mass its own entry
+        /// path would give it -- and reports who wins and by how much.
+        ///
+        /// The diagnostic is the LEVEL PROFILE. If the sectors price a slot on
+        /// different terms, the winner is decided by which formula each is
+        /// wired to rather than by what the site is worth to each use, and the
+        /// tell is that the winner distribution swings systematically with
+        /// LEVEL rather than with location. A regime where one pair of sectors
+        /// sweeps every high-level plot and the other pair sweeps every
+        /// low-level one is the signature of a term asymmetry, not of
+        /// geography.</summary>
+        public static int ZoneFight(ulong seed, int ticks)
+        {
+            var sim = Sim.Create(new SyntheticCity.Config
+                                 { Seed = seed, Cols = 12, Rows = 12, SeedHouseholds = 6000 },
+                                 new EconParams(), new FeatureFlags());
+            var p = sim.P; var w = sim.W;
+            sim.Run(ticks);
+
+            var sectors = new[] { ZoneKind.Commercial, ZoneKind.Industrial,
+                                  ZoneKind.Office, ZoneKind.Extractor };
+            Console.WriteLine($"seed {seed} ticks {ticks} "
+                + $"uniform={p.UniformSiteProductivity} parity={p.NonResLandParity} "
+                + $"assessDeliverable={p.AssessDeliverableQuality}");
+            Console.WriteLine("-- all four sectors bidding for the SAME parcel --");
+
+            // winner counts by level, and the four sectors' mean bid by level.
+            var winByLevel = new Dictionary<int, int[]>();
+            var sumByLevel = new Dictionary<int, double[]>();
+            var nByLevel = new Dictionary<int, int>();
+            int scored = 0;
+            foreach (var pl in w.Parcels)
+            {
+                if (pl.State != ParcelState.Built || pl.IsResidential || pl.Use == ZoneKind.None) continue;
+                if (pl.Warehousing) continue;
+                var bids = new double[4];
+                for (int k = 0; k < 4; k++)
+                {
+                    // Each sector gets EXACTLY the entrant read its own entry
+                    // path uses, so this compares the sectors as the engine
+                    // would actually ask them -- not a tidied-up version.
+                    double em = sectors[k] == ZoneKind.Commercial
+                        ? pl.Units * Math.Max(0.2, pl.Condition) * p.Quality(pl.Level) : 0;
+                    double b = LandAccounting.FirmBidPerSlot(
+                        sim.Engine.Access, sim.Engine.Trade, pl.Cluster, sectors[k], pl.Level, p,
+                        out _, w.Clusters, out bool condPriced,
+                        em, em > 0 ? pl.Units : 0, em > 0 ? pl.Condition : 0);
+                    if (!condPriced) b *= p.CondFactor(pl.Condition);
+                    bids[k] = b;
+                }
+                int win = 0;
+                for (int k = 1; k < 4; k++) if (bids[k] > bids[win]) win = k;
+                if (!winByLevel.ContainsKey(pl.Level))
+                { winByLevel[pl.Level] = new int[4]; sumByLevel[pl.Level] = new double[4]; nByLevel[pl.Level] = 0; }
+                winByLevel[pl.Level][win]++;
+                for (int k = 0; k < 4; k++) sumByLevel[pl.Level][k] += bids[k];
+                nByLevel[pl.Level]++;
+                scored++;
+            }
+            var levels = new List<int>(winByLevel.Keys); levels.Sort();
+            Console.WriteLine($"  {scored} parcels scored, all four sectors priced at each");
+            Console.WriteLine($"  {"level",-6}{"n",-5}| winners: com / ind / off / ext "
+                + "| mean bid: com / ind / off / ext");
+            foreach (int lv in levels)
+            {
+                var wl = winByLevel[lv]; var sl = sumByLevel[lv]; int n = nByLevel[lv];
+                Console.WriteLine($"  L{lv,-5}{n,-5}| {wl[0],4} {wl[1],4} {wl[2],4} {wl[3],4}"
+                    + $"        | {sl[0] / n,7:F3} {sl[1] / n,7:F3} {sl[2] / n,7:F3} {sl[3] / n,7:F3}");
+            }
+            // The summary statistic: does any sector win NOTHING, and does the
+            // winner set change with level? Both are reported rather than
+            // asserted -- this is a probe, and the check that asserts on it
+            // lives in the suite.
+            var totals = new int[4];
+            foreach (int lv in levels) for (int k = 0; k < 4; k++) totals[k] += winByLevel[lv][k];
+            int shutOut = 0;
+            for (int k = 0; k < 4; k++) if (totals[k] == 0) shutOut++;
+            Console.WriteLine($"  totals: com={totals[0]} ind={totals[1]} off={totals[2]} ext={totals[3]}"
+                + $" | sectors that win NOTHING anywhere: {shutOut}/4");
+            return 0;
+        }
+
         public static int MarginProbe(ulong seed, int ticks,
                                       double recipeScale = -1, double extractSlot = -1,
                                       double condBidFloor = -1)
@@ -2530,13 +2616,17 @@ namespace CS2Econ.Harness
                 {
                     if (f.Dead || f.Parcel < 0 || f.Sector != ZoneKind.Office) continue;
                     var pl = w.Parcels[f.Parcel];
-                    double wages = 0;
+                    // BILLED payroll, not FilledByClass x Wage(class): the
+                    // latter is the POSTED class wage and the auction bills
+                    // cleared base comp (Firm.PayrollThisTick carries why).
+                    double notional = 0;
                     for (int cl = 0; cl < 3; cl++)
-                        wages += f.FilledByClass[cl] * p.Wage((LaborClass)cl);
+                        notional += f.FilledByClass[cl] * p.Wage((LaborClass)cl);
                     double landBill = LandAccounting.UnitAssessment(pl, p) * pl.Units;
-                    Console.WriteLine($"    office {f.Id} L{pl.Level} cl={pl.Cluster} "
+                    Console.WriteLine($"    office {f.Id} L{pl.Level} cl={pl.Cluster} cond={pl.Condition:F2} "
                         + $"staff={f.WorkersFilled}/{f.JobSlots} revEma={f.ProfitEma,8:F2} "
-                        + $"wages={wages,7:F2} landBill={landBill,7:F2} cashEma={f.CashFlowEma,8:F2}");
+                        + $"payroll={f.PayrollLastTick,7:F2} (posted {notional,6:F0}) "
+                        + $"landBill={landBill,7:F2} cashEma={f.CashFlowEma,8:F2}");
                 }
             }
 

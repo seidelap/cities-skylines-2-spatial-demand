@@ -341,7 +341,9 @@ namespace CS2Econ.Core
                         // market's realized sales, not a citywide scalar.
                         mrp = p.ExtractorOutputPerSlot
                               * w.Clusters[pl.Cluster].ResourceSuitability[(int)f.Output]
-                              * cond * trade.OriginStat(f.Output, pl.Cluster);
+                              * cond * trade.OriginStat(f.Output, pl.Cluster)
+                              * (p.UniformSiteProductivity && !EconomyEngine.MutantLevelFreeFirmOutput
+                                 ? p.Quality(pl.Level) / p.Quality(1) : 1.0);
                         break;
                     case ZoneKind.Industrial:
                     {
@@ -357,8 +359,15 @@ namespace CS2Econ.Core
                         break;
                     }
                     case ZoneKind.Office:
+                        // The only door cap of the four that priced a slot at
+                        // neither the building's condition nor its level: an
+                        // office forecast one more worker's product as if every
+                        // tower were identical. Industrial's leg above has
+                        // carried both terms all along.
                         mrp = p.OfficeOutputPerSlot * p.OfficeOutputPrice
-                              * acc.OfficeAgglomMult[pl.Cluster];
+                              * acc.OfficeAgglomMult[pl.Cluster]
+                              * (p.UniformSiteProductivity && !EconomyEngine.MutantLevelFreeFirmOutput
+                                 ? cond * p.Quality(pl.Level) / p.Quality(1) : 1.0);
                         break;
                     default:
                         if (storeLevel && !MutantRevenueEmaCap)

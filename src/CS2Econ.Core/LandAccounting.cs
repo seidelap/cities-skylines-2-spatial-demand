@@ -592,7 +592,14 @@ namespace CS2Econ.Core
                     // office case); pricing Quality(ℓ) here in the parity-off
                     // world bills an L5 tower 460+/tick against a gross
                     // ceiling of ~442 — insolvent at zero wages, measured.
-                    double offQ = !p.AssessDeliverableQuality || p.NonResLandParity ? quality : 1.0;
+                    // UniformSiteProductivity makes production deliver the
+                    // premium unconditionally, so the forecast carries it
+                    // again -- and AssessDeliverableQuality becomes moot,
+                    // which is the point: it patched the forecast to match an
+                    // anomalous production function instead of fixing the
+                    // anomaly.
+                    double offQ = !p.AssessDeliverableQuality || p.NonResLandParity
+                                  || p.UniformSiteProductivity ? quality : 1.0;
                     profitPerFilledSlot = double.NegativeInfinity;
                     for (int k = 0; k < AccessState.OfficeKindCount; k++)
                     {
@@ -609,7 +616,8 @@ namespace CS2Econ.Core
                     // Same deliverable-quality condition as the office branch:
                     // extractor output is Quality-scaled only under parity
                     // (the engine's extractor case carries the comment).
-                    double extQ = !p.AssessDeliverableQuality || p.NonResLandParity ? quality : 1.0;
+                    double extQ = !p.AssessDeliverableQuality || p.NonResLandParity
+                                  || p.UniformSiteProductivity ? quality : 1.0;
                     profitPerFilledSlot = double.NegativeInfinity;
                     var suit = workCluster != null ? workCluster[cluster].ResourceSuitability : null;
                     for (int rr = 0; rr < ResourceCatalog.RawCount; rr++)

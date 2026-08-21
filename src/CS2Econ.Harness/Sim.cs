@@ -86,6 +86,10 @@ namespace CS2Econ.Harness
         /// production function delivers it (EconParams.AssessDeliverableQuality;
         /// its doc carries the measured L5 insolvency-by-construction).</summary>
         public static bool ForceAssessDeliverable;
+        /// <summary>Set by `--uniform-productivity`: one productivity rule for
+        /// all four non-residential sectors at all three sites that price a
+        /// slot (EconParams.UniformSiteProductivity carries the audit).</summary>
+        public static bool ForceUniformProductivity;
         /// <summary>Set by `--repair-rounds N`: raises the housing auction's
         /// repair budget (EconParams.AuctionRepairRounds, default 20) for every
         /// sim this process builds. Not a model knob — a SOLVER budget, and it
@@ -108,6 +112,7 @@ namespace CS2Econ.Harness
             if (ForceFillEvidence) p.FillEvidenceWeighting = true;
             if (ForceFillOfficeExempt) p.FillEvidenceOfficeExempt = true;
             if (ForceAssessDeliverable) p.AssessDeliverableQuality = true;
+            if (ForceUniformProductivity) p.UniformSiteProductivity = true;
             if (ForceRepairRounds >= 0) p.AuctionRepairRounds = ForceRepairRounds;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);

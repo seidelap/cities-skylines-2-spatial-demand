@@ -993,6 +993,80 @@ Vacant-condition p90 collapsed to 0.05 on the fix arm: what still stands empty
 is uniformly rotted stock, which is #56's redevelopment loop, not a pricing
 error at entry.
 
+## Do the four sectors run one system? No — and unifying them did NOT produce a fair fight
+
+Audited across the THREE sites that price a slot — the land bid
+(`FirmBidPerSlot`), the labor auction's door cap (per-sector MRP), and realized
+production (`EconomyEngine`) — the four sectors do not run one system or two:
+
+| sector | bid | door cap | production |
+|---|---|---|---|
+| Commercial | quality ✓ cond ✓ | own tech ceiling | mass = units × cond × Quality(ℓ) ✓ |
+| **Industrial** | quality ✓ | cond ✓ Quality(ℓ) ✓ | cond ✓ Quality(ℓ) ✓ |
+| Office | quality ✓ | **neither term** | cond × Quality(ℓ), gated on parity |
+| Extractor | quality ✓ | cond only | cond ✓, Quality(ℓ) gated on parity |
+
+**Industrial is the only sector coherent end to end.** Office gives three
+different answers at its three sites; on the shipping default an office's output
+ignores its own building's CONDITION entirely (a derelict tower produces exactly
+what a new one does) and its door cap prices every tower identically.
+
+`EconParams.UniformSiteProductivity` (`--uniform-productivity`, ships OFF) puts
+cond × Quality(ℓ)/Quality(1) at every site for every sector. It fixes those
+inconsistencies and it keeps the level premium REAL — measured on the composed
+arm, surviving offices become L5 towers earning ~900/tick rather than L1/L2
+boxes earning ~442 (seed 1: 5 alive @ +615.56, 0 % under water; seed 9: 8 @
++575.33). That is the opposite direction from `AssessDeliverableQuality`, which
+made the books balance by zeroing the premium instead of by delivering it.
+
+### THE FAIR-FIGHT TEST, and it fails on BOTH wirings
+
+`zonefight` prices all four sectors at the SAME parcel — same cluster, level and
+condition, each given the entrant read its own entry path uses — and reports who
+would win. Seed 1, 400 ticks:
+
+| wiring | L1 | L2 | L5 | totals | sectors winning NOTHING |
+|---|---|---|---|---|---|
+| default | ind 62 / off 36 | ind 51 / off 56 | ind 10 / off 13 | com 0, ind 125, off 105, ext 0 | **2 of 4** |
+| uniform | off 99 | off 107 | off 17 | com 0, ind 0, **off 224**, ext 0 | **3 of 4** |
+
+**Unifying the productivity terms made the fight LESS fair, not more.** The
+answer to "can all four use one system so they'd fight fairly" is: one system is
+necessary and is now built, but it is NOT sufficient, and this measurement is
+why the claim must not be made from the code alone.
+
+The blocker is not the level term. It is that the sectors' per-slot bids live on
+different SCALES — at L5, mean bid ext 1.42, com 13.27, ind 16.02, off 24.99 —
+and that **office is very nearly location-invariant**: `OfficeAgglomMult` spans
+1.003–1.028 across live sites, a ~2 % range, against Weber input-sourcing spreads
+for industrial and geology spreads for extractor that are order-of-magnitude.
+A near-flat high bid wins everywhere. For a mod whose premise is that decisions
+are driven by LOCAL effects, office is the sector with almost no local variation,
+and that is the finding to carry forward.
+
+**This hypothetical is not currently exercised anywhere.** `Assess` maxes over
+LEVELS within `parcel.Zoned` (`zonedUse = parcel.Zoned`; the loop is `for lvl`)
+— there is no cross-sector maximum in the model, so today only one sector ever
+bids for a given plot. Making the fight real means (a) `Assess` ranging over
+permitted USES, and (b) the bid scales above being commensurable first. (a) is
+cheap and (b) is not; doing (a) without (b) would hand every plot to office.
+
+### A firm's cash payroll can clear to ZERO, and office's does
+
+Reconstructing a wage bill as `FilledByClass × Wage(class)` reports the POSTED
+class wage, which under the labor auction is not what the firm pays. `Firm.
+PayrollLastTick` now records the DEBITED payroll, and for office it reads
+**0.00 against a posted 324** — members are paid entirely through the
+worker-collective dividend, which is deliberately excluded from the cash-flow
+measure as a distribution of surplus rather than an avoidable cost.
+
+Consequences worth holding: office cash flow is revenue minus RENT only (906.28
+− 255.35 = 650.93 ≈ the 648.11 measured), the exit margin for such a firm never
+sees labor at all, and "office at +615" means +615 of surplus distributed to
+workers, not retained profit. An earlier office table in this file printed the
+posted wage in a column labelled `wages`; the 460–471-bill-vs-442-gross finding
+it supported does not involve wages and stands unchanged.
+
 **Named reds of the `--assess-deliverable` arm** (`verify --seed 1 --labor
 --fill-evidence --assess-deliverable --repair-rounds 64` reads 60/64: Weber and
 entrants-can-trade pre-existing, plus these two — the SHIPPING default is
@@ -1005,18 +1079,43 @@ untouched, fingerprint all lanes match and plain `verify --seed 1` reads 64/64):
    cell's, which the check's own docstring names as legitimate non-movers. The
    1/3 bar encodes the old world's configuration mix.
 2. `nonres parity floor: staffed offices carry an assessed level term, and the
-   default does not produce it` — this check EXISTS TO PIN THE WEDGE (it is the
-   non-degeneracy floor proving the parity leg's population is real), and a red
-   here reads "the defect you pinned is deliberately absent on this arm." Its
-   19.7 % median miss over 4 offices is `1 − 1/term` over small-term survivors,
-   exactly level-free production measured working.
+   default does not produce it` — **REWRITTEN, and now green on every arm.**
 
-Both checks need flag-conditioning before any flip: when
-`AssessDeliverableQuality` is active and parity is not, leg 2's assertion should
-INVERT (the assessed term is no longer carried, so the identity to check is
-realized/base ≈ 1 against the old arm's ~51 % miss), and leg 1's bar needs a
-population-aware floor. That rewrite is the same FLOOR-leg work already blocking
-#55's flip, and the two should land together.
+### The office FLOOR leg, rewritten two-sided (the #55 blocker)
+
+The old leg hard-coded the old world: it asserted the default arm's realized
+office product misses `cond × Quality(ℓ)` by > 25 %. Three flags now move that
+question and they do not move together, so the leg was measuring one cell of a
+table it did not know existed. It now reads the two rules SEPARATELY —
+
+- production carries `cond × Quality(ℓ)` ⟸ `NonResLandParity` **or** `UniformSiteProductivity`
+- the bid prices `Quality(ℓ)` ⟸ **not** `AssessDeliverableQuality`, or either of the above
+
+— compares realized product against **the term the bid actually priced**, and
+asserts a LARGE mismatch where the two rules disagree and a SMALL one where they
+agree. The scope filter reads the building's LEVEL, which no flag can flatten;
+scoping on a flagged term would let a fix empty the population and the leg would
+pass by being vacuous, which is the one failure mode this file exists to refuse.
+
+Measured, `verify --seed 1 --only "nonres parity"`, all three arms PASS and each
+names its own regime:
+
+| arm | production | bid | regime | median | bound |
+|---|---|---|---|---|---|
+| default | drops | prices | **MISMATCHED** | 51.5 % | > 25 % |
+| `--assess-deliverable` | drops | drops | ALIGNED | 0.0 % | < 25 % |
+| `--uniform-productivity` | carries | prices | ALIGNED | 4.4 % | < 25 % |
+
+The 4.4 % residual on the uniform arm is the cond asymmetry, and it is real: the
+bid applies condition through `CondFactor` OUTSIDE `FirmBidPerSlot` while
+production applies raw `cond`. The two agree on the level term exactly and on
+condition only approximately. Not worth a flag of its own yet; recorded so the
+next reader does not mistake 4.4 % for noise.
+
+Leg 1 (`assessment never rests on a one-seller cell's own record`) passes on all
+three narrow arms (1/2, 1/1, 3/4 against a ≥ 1/3 bar). Its 7/33 red was measured
+on the FULL composed arm, where the population is much larger — a
+population-composition bar, still open.
 
 **A seeding artifact, found on the way, that bounds what this fix could do.**
 `SyntheticCity.SeedFirms` places a firm on 80 % of pre-built non-residential
