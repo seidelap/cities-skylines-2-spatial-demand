@@ -5335,6 +5335,19 @@ namespace CS2Econ.Harness
             // argmax recipe outputs a different resource, or one already beaten
             // by exit parity, is priced off that cell either way. The bar is a
             // third of the population, and the default read moves none of them.
+            // ONE ATTEMPT TO STRENGTHEN THIS BAR WAS MADE AND REVERTED; see
+            // KNOWN-RED. The 1/3 bar makes the verdict depend on the
+            // configuration MIX (the composed arm reads 7/33 with the mechanism
+            // working), so the fix is to keep only parcels whose parity
+            // assessment actually READS this (output, cluster) cell and require
+            // all of them to move. Selecting that subset by the argmax output of
+            // FirmBidPerSlot at the parcel's CURRENT level does not do it:
+            // Assess maxes over EVERY level, so the winning configuration can
+            // sit at another level with another argmax. Measured on the default
+            // arm, that filter kept the one parcel that did NOT move and
+            // excluded the one that did (0/1 filtered against 1/2 unfiltered).
+            // The subset has to come from the assessment's own winner, which
+            // Assess does not currently expose.
             var singles = new List<Parcel>();
             foreach (var pl in w.Parcels)
             {

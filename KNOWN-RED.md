@@ -1158,10 +1158,35 @@ production applies raw `cond`. The two agree on the level term exactly and on
 condition only approximately. Not worth a flag of its own yet; recorded so the
 next reader does not mistake 4.4 % for noise.
 
-Leg 1 (`assessment never rests on a one-seller cell's own record`) passes on all
-three narrow arms (1/2, 1/1, 3/4 against a ≥ 1/3 bar). Its 7/33 red was measured
-on the FULL composed arm, where the population is much larger — a
-population-composition bar, still open.
+### Leg 1 (one-seller cells) — STILL OPEN, and one strengthening attempt failed
+
+`assessment never rests on a one-seller cell's own record` passes on all three
+narrow arms (1/2, 1/1, 3/4 against a ≥ 1/3 bar) and reds on the FULL composed
+arm at **7/33**. The mechanism works there — largest move 126.078 → 183.657 —
+so the red is the BAR, not the behaviour: "a third of one-seller parcels must
+re-price" makes the verdict depend on the configuration MIX, and the check's own
+docstring already names two reasons a parcel is legitimately priced off some
+other cell.
+
+**The right fix and why the obvious implementation of it is wrong.** Keep only
+the parcels whose parity assessment actually READS this (output, cluster) cell,
+then require ALL of them to move — no slack bar, no mix dependence. Selecting
+that subset by the argmax output of `FirmBidPerSlot` at the parcel's CURRENT
+level does NOT identify it: `Assess` maxes over EVERY level, so the winning
+configuration can sit at another level with another argmax output. Measured on
+the default arm, that filter kept the one parcel that did not move and excluded
+the one that did — **0/1 filtered against 1/2 unfiltered**, i.e. it selected
+exactly backwards. A second exclusion tried at the same time (drop parcels where
+exit parity already beats the origin read) is wrong on its own terms: admitting a
+second seller RAISES `OriginComparable`, which can overtake `BestExportNet`, so
+the pre-admission comparison does not predict the post-admission one — it emptied
+the population to 0/0 and the non-degeneracy guard caught it.
+
+Reverted rather than shipped. The subset has to come from the assessment's own
+winning configuration, which `Assess` does not currently expose; exposing it
+(alongside `TargetLevel`/`TargetUse`, which it already writes) is the actual
+prerequisite. Recorded here so the next attempt does not re-derive the same two
+dead ends.
 
 **A seeding artifact, found on the way, that bounds what this fix could do.**
 `SyntheticCity.SeedFirms` places a firm on 80 % of pre-built non-residential
