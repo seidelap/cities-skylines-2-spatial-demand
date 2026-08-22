@@ -1884,6 +1884,63 @@ exist.
 derelict land misses the re-entry bar by a hair, not a mile, so this is a
 near-threshold problem rather than a structural one.
 
+### MEASURED: the idle land splits in two, and #48 owns only half of it
+
+`firmprobe` block F was already in the harness, computing entrant excess at the
+assessed LR **and at LR = 0** — the exact #48 counterfactual — and had never
+been run. Run at `10f7754`, seeds 1 and 9, 400 ticks. Vacant non-residential
+parcels, entrant excess (bid − assessment), p50 and the count that clears zero:
+
+| sector | vacant (s1/s9) | now p50 | clears now | **at LR=0** p50 | **clears at LR=0** |
+|---|---|---|---|---|---|
+| Commercial | 20 / 23 | −0.05 / −0.05 | 0 % / 0 % | −0.04 / −0.04 | **5 % / 0 %** |
+| Industrial | 29 / 31 | −2.76 / −3.10 | 0 % / 0 % | +0.89 / +0.94 | **100 % / 100 %** |
+| Office | 24 / 16 | −11.52 / −12.01 | 0 % / 0 % | +1.99 / +2.23 | **100 % / 100 %** |
+| Extractor | 62 / 75 | −0.05 / −0.98 | 2 % / 0 % | −0.05 / −0.04 | **2 % / 23 %** |
+
+**Two populations with different diseases, and one fix cannot serve both.**
+
+**INDUSTRIAL AND OFFICE — the land leg IS the blocker, and #48 clears it
+completely.** Excess goes from −2.76/−11.52 to +0.89/+1.99, and from ZERO of
+53 parcels enterable to ALL of them, on both seeds. These parcels are priced
+out of use by a computed assessment: block E reads their land leg at
+`landShare p50` 0.87 and 0.82 of the whole bill, and office's bill falls
+276.5 → 49.6 at LR = 0. This is the case #48 exists for and the measurement
+supports building it.
+
+**COMMERCIAL AND EXTRACTOR — the land leg is NOT the blocker and #48 is aimed
+at the wrong term.** At LR = 0 they are still negative (−0.04, −0.05) and still
+0–23 % enterable. The residual is `SPerUnit` on a ruin:
+`(HurdleRate + Depreciation + MaintenanceRate) × condition × RC1PerUnit`
+= `0.001 × 0.05 × 700` ≈ **0.035/unit**, which is the whole of the −0.04 gap.
+Seed 1 makes it unarguable: occupied extractors read `landShare p50 = 0.00`
+and `ΣAssessedLR = 0` — there is NO land charge on extractor land to remove.
+
+The distinction is economic, not arithmetic. On a condition-0.05 commercial or
+extractor ruin the entrant's BID is essentially zero — a derelict shop draws no
+custom — so the parcel is not overpriced, it is **worthless**. Nothing an
+assessment reform can do will make a firm want it. That land needs
+REDEVELOPMENT (#56), not a cheaper bill.
+
+**SCOPE, by parcel count.** Seed 1: #48 unblocks 53 of 135 vacant non-res
+parcels (39 %); the other 82 are commercial/extractor ruins. Seed 9: 47 of 145
+(32 %). So #48 is justified but is NOT the fix for the 39–48 % idle-land
+headline — it is the fix for a bit over a third of it.
+
+**This resolves the ordering question that was blocking both items.** The open
+worry was that if `SPerUnit` rather than the land leg bound on a derelict
+parcel, #48 would not open the re-entry gate at all and the whole item belonged
+to #56. The answer is BOTH, partitioned by sector: #48 for industrial and
+office, #56 for commercial and extractor. They do not contend for the same
+parcels and can proceed independently.
+
+**A caveat that must ride with any #48 bar.** Block E shows occupied firms are
+comfortable in every sector — `rev/bill p50` 3.30–18.05 (s1) and 3.14–21.78
+(s9), with `rev<bill now = 0/n` in every sector but one extractor on seed 1.
+So #48 must NOT be justified as rescuing sitting firms; they are not in
+trouble. Its bar is the re-entry gate and idle-land share on industrial and
+office specifically, per the #57 correction's instruction.
+
 **Restating the task.** #57 as written is closed — the sectors pay. What
 survives is the land: 39–48 % of non-residential stock idle behind an
 assessment nobody tested. That is #56 (the scrape/redevelopment path is
