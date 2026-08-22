@@ -1061,6 +1061,9 @@ touched — and the principled case is the project's own: the constant stops
 deciding entry and only paces it, exactly the household split. Old path:
 `--no-firm-prospects`; vanilla mode pins the flag false.
 
+Gate on the flipped default: **canary 39/39 (1148s), laborcanary 39/39
+(447s)**. Fully green.
+
 ### `FirmRetooling` — built, measured, and it STAYS OFF for a measured reason
 
 Seed 9 is the dream: drift tail p90 25.7 → **1.5 %**, max 27.2 → 2.9 %,
