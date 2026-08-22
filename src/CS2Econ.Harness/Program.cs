@@ -23,6 +23,10 @@ namespace CS2Econ.Harness
                 if (args[i] == "--posted") { Sim.ForcePosted = true; continue; }
                 if (args[i] == "--nonres-parity") { Sim.ForceNonResLandParity = true; continue; }
                 if (args[i] == "--pooled") { Sim.ForcePooled = true; continue; }
+                if (args[i] == "--vacant-reprice") { Sim.ForceVacantRepricing = true; continue; }
+                if (args[i] == "--no-vacant-reprice") { Sim.ForceNoVacantRepricing = true; continue; }
+                if (args[i] == "--vacant-decay" && i + 1 < args.Length)
+                { Sim.ForceVacantDecay = double.Parse(args[i + 1]); i++; continue; }
                 // MUTANT SWITCH (see AccessState.MutantCitywideProspectOdds):
                 // restores the zero-diluted citywide prospect odds so the
                 // prospect-local-odds check can be shown to fail. Never a

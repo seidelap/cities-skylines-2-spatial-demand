@@ -982,6 +982,31 @@ namespace CS2Econ.Core
                 }
             }
 
+            // VACANCY REPRICES (EconParams.VacantRepricing — the flag's comment
+            // carries the design and the measurements). The ladder above asks
+            // "what is the best configuration worth"; a parcel that has stood
+            // open at that answer without a taker has had the answer refused,
+            // and the refusals are real events — every prospects looker that
+            // surveyed this parcel and entered elsewhere declined it at this
+            // price. So the spell's quote walks down and the ladder's value
+            // becomes a CEILING rather than the charge. The first firm whose
+            // own arithmetic clears the quote takes the site and ends the walk;
+            // occupancy resets the spell, so the next vacancy starts fresh from
+            // the computed value. Built non-residential only: residential
+            // vacancy already reprices through the housing auction each
+            // refresh, and unbuilt land's price is the construction pipeline's
+            // question, not a standing offer anyone has refused.
+            if (p.VacantRepricing && parcel.State == ParcelState.Built
+                && !parcel.IsResidential && !parcel.Warehousing
+                && parcel.OccupantFirm < 0)
+            {
+                parcel.VacantMarkLR = parcel.VacantMarkLR < 0
+                    ? bestLR
+                    : parcel.VacantMarkLR * p.VacantLRDecay;
+                if (parcel.VacantMarkLR < bestLR) bestLR = parcel.VacantMarkLR;
+            }
+            else parcel.VacantMarkLR = -1;
+
             parcel.AssessedLR = bestLR;
             parcel.CurrentResidual = currentResidual;
             parcel.Wedge = Math.Max(0, bestLR - Math.Max(0, currentResidual));

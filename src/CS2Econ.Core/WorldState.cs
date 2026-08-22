@@ -66,6 +66,15 @@ namespace CS2Econ.Core
         public double AssessedLR;       // best-permitted-use land flow per tick (all units)
         public double CurrentResidual;  // Bid_current − S_current (all units)
         public double Wedge;            // AssessedLR − CurrentResidual, ≥ 0
+        /// <summary>The running quote of the CURRENT vacancy spell under
+        /// EconParams.VacantRepricing: seeded at the computed ladder value when
+        /// a Built non-residential parcel is assessed unoccupied, marked down
+        /// by VacantLRDecay each refresh while no taker appears, and reset to
+        /// the −1 sentinel by occupancy or ineligibility so the next spell
+        /// starts fresh from the computed value — a new building has been
+        /// refused by nobody, and must not inherit a dead spell's markdown.
+        /// Flag off it stays −1 and nothing reads it.</summary>
+        public double VacantMarkLR = -1;
         public double Escrow;           // upgrade escrow balance (earmarked wedge)
         public int TargetLevel;         // ℓ* of the winning configuration
         public ZoneKind TargetUse;      // use of the winning configuration

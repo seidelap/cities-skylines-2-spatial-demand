@@ -559,6 +559,38 @@ namespace CS2Econ.Core
         /// exists this ships built, checked on both arms, and off.</summary>
         public bool NonResLandParity = false;
 
+        /// <summary>VACANCY REPRICES (task #48 P1, `--vacant-reprice`; OFF until
+        /// gated). While a Built non-residential parcel stands unoccupied, each
+        /// assessment refresh marks its land flow down by VacantLRDecay from the
+        /// running quote of THIS vacancy spell (Parcel.VacantMarkLR, seeded at
+        /// the computed value when the spell starts); occupancy or ineligibility
+        /// resets the spell. A Dutch walk: the price is not set by the ladder's
+        /// max-over-hypothetical-configurations — it FALLS until an individual
+        /// firm's own arithmetic says yes, and the first taker ends it.
+        ///
+        /// Why this is the market's answer and not another administered price:
+        /// the evidence stream really exists. Every firm-prospects looker
+        /// surveys every vacant same-sector parcel and declines it (measured:
+        /// 92–98 % of vacant non-res parcels clear no entrant at the computed
+        /// assessment, median miss −0.053/unit), and continued vacancy is that
+        /// refusal repeated. The computed ladder stays the CEILING — the quote
+        /// can never exceed it — so the walk only concedes what refusals have
+        /// already demonstrated. The measured counterfactual this acts on
+        /// (firmprobe block F): at LR = 0, vacant industrial and office go from
+        /// 0 of 53 enterable to ALL, while commercial and extractor ruins stay
+        /// unenterable — their blocker is S on a ruin, i.e. #56's redevelopment,
+        /// not this. Residential is out of scope: the housing auction already
+        /// reprices vacancy there every refresh.</summary>
+        public bool VacantRepricing = false;
+
+        /// <summary>Markdown per assessment refresh of the vacancy-spell quote
+        /// (a parcel is reassessed every AssessSlices ticks, so 0.9 here is
+        /// roughly a 1 %/tick concession; the measured office gap — excess
+        /// −11.5 needing ~85 % of the land leg conceded — clears in ~180
+        /// ticks). The appraiser's own learning rate on refusals, not a market
+        /// quantity: bounded above by the computed ladder either way.</summary>
+        public double VacantLRDecay = 0.9;
+
         /// <summary>Whether a developer's staffing forecast lets a cluster's own
         /// hiring record outweigh the no-evidence prior
         /// (LandAccounting.FirmFillEstimate carries the rule and the

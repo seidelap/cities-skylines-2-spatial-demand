@@ -118,6 +118,15 @@ namespace CS2Econ.Harness
         /// allocation is not an equilibrium". The labor auction already carries
         /// 64 for the same contract; housing has never had a way to ask.</summary>
         public static int ForceRepairRounds = -1;
+        /// <summary>Set by `--vacant-reprice` / `--no-vacant-reprice`: force
+        /// EconParams.VacantRepricing (task #48 P1) on or off for every sim
+        /// this process builds, so the arm can be measured without editing a
+        /// default that ships off. Off-switch wins, matching the others.</summary>
+        public static bool ForceVacantRepricing;
+        public static bool ForceNoVacantRepricing;
+        /// <summary>Set by `--vacant-decay N`: overrides EconParams.VacantLRDecay
+        /// for rate-sensitivity arms. −1 = unset.</summary>
+        public static double ForceVacantDecay = -1;
 
         public static Sim Create(SyntheticCity.Config cfg, EconParams p, FeatureFlags flags, bool vanillaMode = false)
         {
@@ -145,6 +154,9 @@ namespace CS2Econ.Harness
             if (ForceStartCongestion) p.StartCongestionPricing = true;
             if (ForceNoFirmProspects) flags.FirmProspects = false;
             if (ForceRepairRounds >= 0) p.AuctionRepairRounds = ForceRepairRounds;
+            if (ForceVacantRepricing) p.VacantRepricing = true;
+            if (ForceNoVacantRepricing) p.VacantRepricing = false;
+            if (ForceVacantDecay >= 0) p.VacantLRDecay = ForceVacantDecay;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
             sim.Engine = new EconomyEngine(sim.W, sim.Access, p, flags);
