@@ -1996,8 +1996,9 @@ namespace CS2Econ.Core
                         f.DividendPerEarnerEma = MathUtil.Ema(f.DividendPerEarnerEma, paidPerEarner, 0.05);
                 }
 
-                // THE EXIT MARGIN (Flags.FirmExitMargin — OFF by default; the
-                // flag's own comment carries why). Dixit: a firm leaves when
+                // THE EXIT MARGIN (Flags.FirmExitMargin — ON by default since
+                // the package flip; the flag's own comment carries the history).
+                // Dixit: a firm leaves when
                 // revenue persistently fails to cover its AVOIDABLE costs, and
                 // the sunk ones are irrelevant to that decision. Here they are
                 // not merely irrelevant, they are absent — a firm owns nothing

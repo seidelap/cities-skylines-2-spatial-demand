@@ -1210,7 +1210,13 @@ namespace CS2Econ.Core
         /// revenue-less-avoidable-cost stays negative past its patience gives up
         /// its site and leaves — after first trying the site it could carry.
         ///
-        /// OFF BY DEFAULT, and the reason is a check, not caution. The
+        /// WAS OFF BY DEFAULT; SHIPS ON as of the package flip. The
+        /// paragraph below is kept because it records what had to be true
+        /// before the flip was allowed, and the FLOOR leg it names was duly
+        /// rewritten with its own `FirmExitMargin = false` arm so its
+        /// population survives. The original reasoning:
+        ///
+        /// Off by default, and the reason is a check, not caution. The
         /// nonres-parity fixture's OFF-arm FLOOR leg asserts that firms really
         /// do sit past the arrears clock on the shipped default
         /// (`aOff.stuck >= 1`) — that leg states the defect and is the

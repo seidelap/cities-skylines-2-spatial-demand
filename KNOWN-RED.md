@@ -1730,6 +1730,10 @@ THE STRUCTURE, three interlocking mechanisms:
    and #56, at the sector's front door.
 
 2. **THE DEFAULT LABOR PATH HIRES WITH NO PRICE AT THE DOOR.**
+   *(STALE AS WRITTEN — `LaborAuction = true` ships as of `4a19667`. The
+   paragraph is kept because it states WHY the flip mattered: it is the
+   diagnosis the flip acted on, and the re-measurement credits it as the
+   fix that did most of the work.)*
    `FeatureFlags.LaborAuction = false` ships, so `AssignWorkplaces` fills slots
    by commute softmax and the firm pays class wages regardless of product: an
    extractor whose marginal product is 1.9/slot pays 10/slot because nothing in
@@ -1766,7 +1770,17 @@ need all three.
 
 ## THE FINDING UNDER ALL OF THESE: three of four sectors do not pay for themselves
 
-`marginprobe`, **shipping default**, seeds 1/9/13, 400 ticks:
+> **PRE-FLIP, SUPERSEDED — DO NOT QUOTE THIS TABLE.** Every number below was
+> measured on a tree where `LaborAuction` and `FirmExitMargin` were FALSE
+> (last write 2026-08-20 18:59; the package flip `4a19667` landed
+> 2026-08-21 22:06, and `StoreLevelSpending` at `e39bfbc` 2026-08-22 05:21).
+> On the arm that actually ships, ALL FOUR SECTORS PAY FOR THEMSELVES.
+> See "#57 IS STALE" below for the re-measurement and for what the defect
+> turned into. The words "shipping default" on the next line were true when
+> written and false within 27 hours.
+
+`marginprobe`, **shipping default AS OF 2026-08-20 — NO LONGER THE DEFAULT**,
+seeds 1/9/13, 400 ticks:
 
 | sector | cash flow p50 | underwater | capital deaths |
 |---|---|---|---|
@@ -2040,7 +2054,10 @@ replaced with another industry which is more viable" does not exist here — so
 the exit margin ALONE converts zombie firms into zombie buildings, which is the
 worse failure and the one this registry should have said out loud first.
 
-**SO IT SHIPS OFF.** `FeatureFlags.FirmExitMargin = false`. `fingerprint --check`
+**SO IT SHIPPED OFF, AND NO LONGER DOES.** *(STALE: `FirmExitMargin = true`
+as of `4a19667`; the FLOOR leg named here was rewritten with its own
+`FirmExitMargin = false` arm to keep its population — see the #55 entry.)*
+As written at the time: `FeatureFlags.FirmExitMargin = false`. `fingerprint --check`
 reads **all 13 lanes matching with no accept**, and verify is **64/64** on seed 1
 — the off arm is byte-identical, which is the whole point of shipping it off.
 The flip needs three things it does not have yet: sector freedom on re-entry, the
