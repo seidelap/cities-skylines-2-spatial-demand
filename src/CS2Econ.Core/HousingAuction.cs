@@ -49,6 +49,15 @@ namespace CS2Econ.Core
     /// ran out. An auction just stops bidding.</summary>
     public sealed class HousingAuction
     {
+        /// <summary>Tick of the last SOLVE+APPLY, written by the engine at the
+        /// apply. Assignment is a snapshot of that moment: between applies,
+        /// shipping mechanisms (affordability displacement, departures,
+        /// mortality) legitimately move households without touching it, so a
+        /// reader comparing Assignment against HomeParcel must scope its claim
+        /// to households the apply itself last placed — TenureStart <= this
+        /// tick — or it asserts staleness, not integrity.</summary>
+        public long LastApplyTick = -1;
+
         public const int Levels = 5;
 
         public int C;

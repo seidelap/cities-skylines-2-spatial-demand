@@ -101,6 +101,18 @@ namespace CS2Econ.Core
         public int Segment;
         public double Money;
         public int HomeParcel = -1;      // -1 = unhoused (arriving or sheltered)
+        /// <summary>Whether the CURRENT tenure was created by the housing
+        /// auction's apply, as opposed to a direct Allocation move (the
+        /// affordability-displacement path, arrival placement). The door↔parcel
+        /// integrity check needs this positively: the invariant "a household
+        /// holding an owner door lives at that door's parcel" belongs to the
+        /// APPLY, and a household legitimately re-housed by another mechanism
+        /// holds a stale Assignment snapshot, not a violated invariant. Tick
+        /// arithmetic cannot make the distinction — the displacement path can
+        /// run in the SAME tick as the apply (measured: canary seed 6, hh668,
+        /// tenure@155 == lastApply@155) — so the mover marks the tenure
+        /// itself.</summary>
+        public bool PlacedByAuction;
         /// <summary>True iff at least one adult holds a job (Earners > 0).
         /// Kept for the many read sites that only ask "does anyone here work";
         /// income uses Earners and JobLevel.</summary>

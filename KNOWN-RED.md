@@ -1062,11 +1062,34 @@ desynchronizes the two. Store-level spending changes household MONEY, hence
 bids, hence which households move — so it reaches a state the pooled path never
 did. The bug is latent and older than the flip; the flip is what exposed it.
 
-NOT fixed here: the repair is in the auction's apply/vacate ordering, and
-guessing at it is how the reverted one-seller filter went wrong earlier in this
-same session. Owned as the immediate next item. The flip stands meanwhile —
-1 household on 1 of 39 seeds, against a structural contradiction removed — but
-this must close before the branch is called done.
+**RESOLVED — and the investigation refuted its own first hypothesis twice.**
+The instrumented check printed the offender: `hh668 home=291 door-parcel=524
+tenure@155 lastApply@155`. Tenure EQUAL to the apply tick refuted the
+"mid-window mover" story (a `TenureStart > LastApplyTick` exemption correctly
+did NOT fire), and `FirstVacantIn` is airtight — an owner door resolves to its
+parcel or −1, never elsewhere — so the apply could not have mis-placed the
+household either. The mover was a non-auction mechanism running MoveIn in the
+SAME tick as the apply (the affordability-displacement path is the only
+same-tick Vacate+MoveIn that leaves a housed household housed elsewhere).
+
+THE WORLD WAS NEVER WRONG. Occupancy lists, owner tags and asks are all
+maintained by Vacate/MoveIn on every path; only the check's premise was — it
+read `a.Assignment`, a SNAPSHOT of the last solve, as an invariant carrier
+across the whole tick. Tick arithmetic cannot repair that premise (equality is
+ambiguous), so the tenure now carries a positive marker of its maker:
+`Household.PlacedByAuction`, set true by the apply's MoveIn and false by the
+displacement and arrival MoveIns. The check asserts door↔parcel integrity on
+auction-placed tenures — the population the apply actually made promises
+about — and counts non-auction re-housings as exempt AND REPORTED, so the
+exemption cannot silently absorb everything. A genuinely broken apply still
+reds the leg (its MoveIn stamps the marker true at the wrong parcel).
+
+Measured: seed 6 reads `0 astray (1 re-housed by non-auction mechanisms
+since, exempt+reported)`, PASS. Note the leg proved its own non-vacuity in
+the best possible way — by firing on a real event before being scoped. The
+same event is also a measured demonstration that store-level money paths
+reach household states the pool never did, which is what an honest
+consumption path should do.
 
 ## FOUR CODE-LEVEL FINDINGS, ALL MEASURED
 

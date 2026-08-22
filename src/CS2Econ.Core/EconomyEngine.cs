@@ -586,6 +586,7 @@ namespace CS2Econ.Core
                 { pl.OwnerHousehold = -1; pl.OwnerAskPerUnit = 0; }
             }
             Auction.Solve(W, Access, P);
+            Auction.LastApplyTick = W.Tick;
 
             // Who has to leave the unit they are in: assigned somewhere else, or
             // assigned nowhere. Vacate first, all of them, so the units they free
@@ -679,6 +680,7 @@ namespace CS2Econ.Core
                     // counter (measured: a gap of 30 that never closed).
                     bool wasSheltered = h.Stage == InsolvencyStage.Sheltered;
                     Allocation.MoveIn(W, h, target, P);
+                    h.PlacedByAuction = true;
                     if (wasSheltered) ShelterOccupied = Math.Max(0, ShelterOccupied - 1);
                 }
                 else Auction.Assignment[hid] = -1;
@@ -2445,6 +2447,7 @@ namespace CS2Econ.Core
                 {
                     bool wasSheltered = h.Stage == InsolvencyStage.Sheltered;
                     Allocation.MoveIn(W, h, target, P);
+                    h.PlacedByAuction = false;
                     if (wasSheltered) ShelterOccupied = Math.Max(0, ShelterOccupied - 1);
                 }
                 else
@@ -2660,6 +2663,7 @@ namespace CS2Econ.Core
                     {
                         Allocation.Vacate(W, h);
                         Allocation.MoveIn(W, h, cheaper, P);
+                        h.PlacedByAuction = false;
                         DisplacementExits.Add((W.Tick, h.Id, 0));
                     }
                     else h.StressTicks++;

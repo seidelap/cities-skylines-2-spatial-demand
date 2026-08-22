@@ -3401,7 +3401,20 @@ namespace CS2Econ.Harness
             // — re-winning your own parcel-door produces no Vacate/MoveIn
             // pair — is structural: `have` is DoorOf(home) and want == have
             // short-circuits the move.)
-            int ownerMoveBad = 0, ownerHeld = 0;
+            // SCOPE: the invariant is the APPLY's, so it is asserted on the
+            // households the apply last placed. Assignment is a snapshot of
+            // the last solve; between applies the affordability-displacement
+            // path (and departures, mortality) legitimately Vacate+MoveIn
+            // without touching it, so a household with TenureStart AFTER
+            // LastApplyTick holds a stale snapshot entry, not a violated
+            // invariant. Found the hard way: canary seed 6 on the pool-free
+            // default read "1 astray" — the astray household had moved
+            // mid-window down the price gradient, exactly as §4.4 says it
+            // may. Mid-window movers are counted and REPORTED so the
+            // exemption stays visible; a genuinely astray APPLY writes
+            // TenureStart == LastApplyTick and is still caught.
+            int ownerMoveBad = 0, ownerHeld = 0, ownerMidWindow = 0;
+            string astrayDetail = "";
             foreach (var h in w.Households)
             {
                 if (h.ExitedTick >= 0 || (uint)h.Id >= (uint)a.Assignment.Length) continue;
@@ -3410,7 +3423,17 @@ namespace CS2Econ.Harness
                 int opl = a.OwnerParcelOf(mine);
                 if (opl < 0) continue;
                 ownerHeld++;
-                if (h.HomeParcel != opl) ownerMoveBad++;
+                if (h.HomeParcel == opl) continue;
+                // The tenure's own marker decides, not tick arithmetic: the
+                // displacement path can move a household in the SAME tick as
+                // the apply (measured, seed 6: tenure@155 == lastApply@155),
+                // so >-comparison cannot separate "the apply put them in the
+                // wrong place" from "another mechanism re-housed them after".
+                if (!h.PlacedByAuction) { ownerMidWindow++; continue; }
+                ownerMoveBad++;
+                if (astrayDetail.Length == 0)
+                    astrayDetail = $" [first astray: hh{h.Id} home={h.HomeParcel} door-parcel={opl} "
+                                 + $"tenure@{h.TenureStart} lastApply@{a.LastApplyTick} placedByAuction]";
             }
 
             // (O-ratchet) NO-RATCHET: every standing ask IS the owner's own
@@ -3613,7 +3636,8 @@ namespace CS2Econ.Harness
                   $"{ownerTagged} owner-tagged parcels, {liveDoors} live doors, {asksLive} standing asks, "
                   + $"{ownerHeld} owner-door tenants: partition {partitionBad} bad cells, "
                   + $"reserve {reserveBad} bad, fold {foldBad} incoherent, resting-price {floorBad} off floor, "
-                  + $"owner-IR {ownerIrBad} (worst {worstOwnerIr:F3}), door↔parcel {ownerMoveBad} astray, "
+                  + $"owner-IR {ownerIrBad} (worst {worstOwnerIr:F3}), door↔parcel {ownerMoveBad} astray "
+                  + $"({ownerMidWindow} re-housed by non-auction mechanisms since, exempt+reported){astrayDetail}, "
                   + $"ratchet {ratchetBad} asks off the write identity (worst {worstRatchet:E1}); "
                   + $"engineered arm: {engWhy}");
         }
