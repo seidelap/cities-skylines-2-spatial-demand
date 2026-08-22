@@ -1091,6 +1091,44 @@ the constant's meaning changed from queue length to the throughput at which
 crews cost double, which is the honest reading of "construction industry
 capacity" as a mobile citywide resource priced, not rationed.
 
+#### DECISION: hold, and the blocker is DRAW-ORDER PRICING — not the measurements
+
+"The right shape, not yet a compelling flip" left the flip waiting on
+nothing nameable, which is how a built mechanism rots. Naming it.
+
+The principle above is settled and stands: the building trades clear at
+roughly metro scale, so a citywide construction cost index is a
+LEGITIMATE global — a developer really does experience "building is dearer
+right now because everyone is building". What the flag removes, a hard
+quota of 6 starts per tick, is the illegitimate half: it decides WHICH
+projects happen with no price at all, and no developer anywhere
+experiences it as anything. Replacing an unpriced quota with a price the
+developer's own arithmetic can refuse is a charter win, and the numbers
+(abandons −14 % / −9 %, vacancy and sector health flat) argue for it.
+
+The blocker is HOW the price is assessed. `congestion` is a function of
+`k`, the index of the draw in this tick's softmax lottery, and each winner
+banks `pl.CommittedCost = cand.CommitCost * congestion` at the moment it
+is drawn. Two identical projects therefore pay DIFFERENT prices for the
+same tick's scarcity purely by lottery seat: drawn first pays 1.00, drawn
+seventh pays 1.17. A price that depends on the order in which the
+algorithm happened to visit agents is an artifact of the algorithm, not
+something any agent decided — the same defect class the auction's
+down-phase already resolved once, where the fix was to re-clear from the
+reserve so no order-dependent price could survive.
+
+The fix has that same shape: the tick's congestion price should be
+UNIFORM across the starts that clear, set by the MARGINAL start — the last
+one whose own return still clears the commit margin at that price — with
+every start that tick paying it. Then a developer's refusal is against a
+real price rather than against its seat in a lottery, and identical
+projects are treated identically.
+
+**Status: OFF, blocked on uniform (marginal-start) pricing, NOT on its
+measurements.** When that lands the flip case is already made — principle
+settled here, numbers favourable — so it should be re-measured and
+flipped, not re-argued.
+
 ## REGRESSION FROM THE POOL FLIP: canary seed 6, and it is NOT pre-existing
 
 `canary` on the pool-free default reads **38/39, failing seed 6**; `laborcanary`
@@ -2121,6 +2159,77 @@ open item is not the outside wage but why the city builds doors for only half
 its workers on the small fixtures. That is a construction/entry question, and
 the run that would start it is `laborprobe` at 20×20 (where the ration lifts)
 against the entry and firm-bid paths, not another sweep of this parameter.
+
+## #53 FIXED: a relocating firm priced its move by a business it will never run
+
+`RelocateFirm` scored every candidate site with
+`FirmBidPerSlot(..., out _, ...)` — the argmax over recipes (industrial)
+or over the raws the geology supports (extractor) — and then moved the
+firm without touching `f.Output`. The bid answered "what is the best
+business that could stand here"; the firm went on running the business it
+already had. A Timber firm could therefore be moved onto the city's best
+Plastics site on the strength of Plastics, and an Ore extractor onto an
+oil-rich cluster on the strength of oil.
+
+The extractor half is the sharper one, because production does NOT
+follow the bid: `EconomyEngine` line ~1663 reads
+`W.Clusters[c].ResourceSuitability[(int)f.Output]` — the firm's OWN
+output. So a relocation chosen for a raw the firm does not extract landed
+it on a cluster with no particular suitability for the raw it does.
+
+**The asymmetry that makes this a bug and not a modelling choice.** Firm
+ENTRY already threads the argmax through: `EnterAt(pl, chosen)` — an
+entrant really does adopt the recipe its bid was priced on, so for entry
+the unconstrained maximum is the right question and the answer is
+binding. Relocation used the identical helper and discarded its answer.
+The same function was authoritative on one path and advisory on the
+other, which is the whole defect.
+
+**Fix**: an optional `priceAs` on `FirmBidPerSlot` constrains the maximum
+to one business — a filter inside each argmax loop, so the maximum over a
+singleton is that item. `RelocateFirm` passes `f.Output`. Both sides of
+the comparison get it (`here` and every candidate), so the two sides read
+identical inputs — the same discipline the Weber check rewrite used.
+Constrained where `chosenOutput` genuinely varies: industrial recipes,
+extractor raws, and commercial basket lines under `CommercialLines`.
+Office reports `Res.OfficeOutput` whichever specialization wins, so an
+office firm's business is the same either way and there is nothing to
+constrain.
+
+A site that cannot host the firm's business now bids 0 and the firm
+stays, which is the honest default (the charter's staying-put default,
+reached through the firm's own arithmetic rather than a rule). That path
+also needed an arithmetic guard hoisted to cover every branch: an empty
+constrained maximum leaves `profitPerFilledSlot` at −inf, and −inf × 0
+is NaN — a NaN bid compares false against every threshold, so it would
+have been a silent no-op rather than a refusal.
+
+**Measured, seeds 1 and 9 at 400 ticks.** The path is rare and the fix is
+neutral-to-slightly-positive, which is the right profile for a
+correctness fix on a seldom-taken path — it rescues nothing, it only
+stops a wrong reason from driving a decision.
+
+| seed 1 | before | after |
+|---|---|---|
+| industrial firms | 17 | 17 |
+| output HHI | 0.419 | 0.419 |
+| sector revenueEma | 1966 | 1983 |
+| Metals price@site | 4.13 | 4.23 |
+
+margin relocations 7 (seed 1) and 5 (seed 9) over the run; seed 9 revenue
+2775 → 2770, HHI 0.431 both. NOT a no-op — lanes move, so the fingerprint
+is re-accepted rather than expected to match.
+
+**GATE IN FLIGHT AT THIS COMMIT — the verdicts below are NOT yet recorded.**
+canary 39, laborcanary 39 and verify on seeds 1/9 were launched against this
+tree and had not returned when it was committed; seeds 0/13 follow. Committed
+ahead of the result deliberately, because container restarts have discarded
+this clone three times in this session and unpushed work is the thing that
+gets lost — NOT because the change is believed safe. The follow-up commit
+records the tallies and re-accepts the fingerprint, or reverts this one.
+One watch item named in advance: the non-residential parity arrears leg
+bounds `alive >= 20`, and a constrained bid qualifies FEWER sites, so firms
+that used to sort down may exit instead.
 
 ## Measured dead ends — do not retry blind
 

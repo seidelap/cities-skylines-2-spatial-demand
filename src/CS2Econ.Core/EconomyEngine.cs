@@ -2364,8 +2364,17 @@ namespace CS2Econ.Core
         /// different incumbent, not a second mechanism.</summary>
         private bool RelocateFirm(Firm f, Parcel? from)
         {
+            // PRICED AS THIS FIRM'S BUSINESS, not as the best business the site
+            // could hold. A relocating firm keeps its output across the move —
+            // nothing here reassigns f.Output, and retooling is a separate,
+            // flag-gated decision — so the unconstrained argmax valued each
+            // candidate by a recipe the firm would never run, and could move a
+            // Timber firm onto the city's best Plastics site on the strength of
+            // Plastics. The firm's own forecast is the only one it is entitled
+            // to; a site that cannot carry its business now bids 0 and it stays.
             double BidAt(Parcel q) => LandAccounting.FirmBidPerSlot(
-                    Access, Trade, q.Cluster, q.Use, q.Level, P, out _, W.Clusters)
+                    Access, Trade, q.Cluster, q.Use, q.Level, P, out _, W.Clusters,
+                    priceAs: f.Output)
                 * P.CondFactor(q.Condition) * q.Units
                 - LandAccounting.UnitAssessment(q, P) * q.Units;
 

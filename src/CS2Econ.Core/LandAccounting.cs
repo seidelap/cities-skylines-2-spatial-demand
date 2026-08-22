@@ -419,9 +419,10 @@ namespace CS2Econ.Core
         public static double FirmBidPerSlot(
             AccessState acc, IPriceContext prices, int cluster, ZoneKind sector, int level, EconParams p,
             out Res chosenOutput, ClusterInfo[]? workCluster,
-            double entrantMass = 0, double entrantSlots = 0, double entrantCondition = 0)
+            double entrantMass = 0, double entrantSlots = 0, double entrantCondition = 0,
+            Res? priceAs = null)
             => FirmBidPerSlot(acc, prices, cluster, sector, level, p, out chosenOutput, workCluster,
-                              out _, entrantMass, entrantSlots, entrantCondition);
+                              out _, entrantMass, entrantSlots, entrantCondition, priceAs);
 
         /// <summary>Overload reporting whether the returned bid ALREADY prices
         /// the parcel's condition. It does exactly when the store-level
@@ -429,11 +430,33 @@ namespace CS2Econ.Core
         /// enters the catchment mass a shopper sees and the service ceiling a
         /// slot can deliver, which is the whole of what condition means to a
         /// shop, so the caller's generic CondFactor discount would charge the
-        /// same fact a second time.</summary>
+        /// same fact a second time.
+        ///
+        /// priceAs CONSTRAINS the maximum to one business — the difference
+        /// between "what is the best business that could stand here" and "what
+        /// is MY business worth here". Both questions are legitimate and they
+        /// have different askers. A DEVELOPER, and an entrant choosing what to
+        /// open, asks the unconstrained question and then commits to the argmax
+        /// it names (firm entry threads chosenOutput into EnterAt, so an
+        /// entrant really does adopt the recipe its bid was priced on). An
+        /// INCUMBENT relocating is not choosing a business — it already has
+        /// one, and it keeps it across the move — so pricing its move at the
+        /// argmax valued a site by an output it will never produce, and could
+        /// move a Timber firm onto the best Plastics site in the city on the
+        /// strength of Plastics. Passing its own output makes the forecast the
+        /// firm's own, which is the only forecast it is entitled to.
+        ///
+        /// Only the branches whose chosenOutput actually varies need the
+        /// constraint: industrial over recipes, extractor over the raws the
+        /// geology supports, and commercial over basket lines when
+        /// CommercialLines is on. Office reports Res.OfficeOutput whichever
+        /// specialization wins, so an office firm's business is the same
+        /// either way and there is nothing to constrain.</summary>
         public static double FirmBidPerSlot(
             AccessState acc, IPriceContext prices, int cluster, ZoneKind sector, int level, EconParams p,
             out Res chosenOutput, ClusterInfo[]? workCluster, out bool conditionPriced,
-            double entrantMass = 0, double entrantSlots = 0, double entrantCondition = 0)
+            double entrantMass = 0, double entrantSlots = 0, double entrantCondition = 0,
+            Res? priceAs = null)
         {
             chosenOutput = Res.Services;
             conditionPriced = false;
@@ -545,6 +568,7 @@ namespace CS2Econ.Core
                         for (int q = 0; q < ResourceCatalog.Basket.Length; q++)
                         {
                             var (lres, _) = ResourceCatalog.Basket[q];
+                            if (priceAs.HasValue && lres != priceAs.Value) continue;
                             double lineCapPerSlot = capturePerSlot <= 0 ? 0
                                 : capturePerSlot * SafeRatio(acc.CaptureLine(q, cluster),
                                                              acc.CaptureLine(-1, cluster));
@@ -565,6 +589,7 @@ namespace CS2Econ.Core
                     profitPerFilledSlot = double.NegativeInfinity;
                     foreach (var recipe in ResourceCatalog.Recipes)
                     {
+                        if (priceAs.HasValue && recipe.Output != priceAs.Value) continue;
                         // A hypothetical entrant prices its output at realized
                         // COMPARABLES at the place — sellers other than the one
                         // standing here — or the exit alternative. OriginStat
@@ -657,6 +682,7 @@ namespace CS2Econ.Core
                         double s2 = suit != null ? suit[rr] : 0.5;
                         if (s2 <= 0.05) continue;
                         var res = (Res)rr;
+                        if (priceAs.HasValue && res != priceAs.Value) continue;
                         // Comparables, not the cell's own record — see the
                         // industrial leg above.
                         double outNet = Math.Max(
@@ -682,6 +708,16 @@ namespace CS2Econ.Core
                 }
                 default: return 0;
             }
+            // NO CANDIDATE AT ALL — the site cannot host the business it was
+            // asked about. Only reachable under priceAs (an unconstrained
+            // industrial or commercial maximum always ranges over a non-empty
+            // catalogue, and the extractor's own no-geology case returns above),
+            // and it is the honest answer for a relocating firm: a cluster whose
+            // geology will not yield its raw is worth nothing TO IT, whatever
+            // the best possible occupant would pay. Also the arithmetic guard —
+            // -inf * 0 is NaN, and a NaN bid compares false against every
+            // threshold, which is a silent no-op rather than a refusal.
+            if (double.IsNegativeInfinity(profitPerFilledSlot)) return 0;
             // Firms bid most of operating profit for space; the retained sliver is
             // their normal return (the full h margin is already in S).
             return Math.Max(0, profitPerFilledSlot * fillEst * 0.85);
