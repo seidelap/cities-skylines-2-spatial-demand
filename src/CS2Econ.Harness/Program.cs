@@ -122,6 +122,7 @@ namespace CS2Econ.Harness
                 { Sim.ForceNoUniformProductivity = true; continue; }
                 if (args[i] == "--no-redevelop") { Sim.ForceNoRedevelop = true; continue; }
                 if (args[i] == "--firm-prospects") { Sim.ForceFirmProspects = true; continue; }
+                if (args[i] == "--no-firm-prospects") { Sim.ForceNoFirmProspects = true; continue; }
                 if (args[i] == "--firm-retooling") { Sim.ForceFirmRetooling = true; continue; }
                 if (args[i] == "--start-congestion") { Sim.ForceStartCongestion = true; continue; }
                 // MUTANT SWITCH (see EconomyEngine.MutantRetoolFree).

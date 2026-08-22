@@ -1239,7 +1239,7 @@ namespace CS2Econ.Core
         /// takes the argmax; lookers run serially, so a taken site is gone
         /// for the next — sites are contested, which the Bernoulli could
         /// never express.</summary>
-        public bool FirmProspects = false;
+        public bool FirmProspects = true;
         /// <summary>Industrial firms may RETOOL: switch recipe when the margin
         /// gain at their own site, at their own staffing, beats the annuitized
         /// cost of new machinery (--firm-retooling; OFF until measured). The

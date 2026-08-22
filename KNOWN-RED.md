@@ -1039,6 +1039,55 @@ its own redevelopment out of a land value it cannot have while it is derelict.**
 Any fix has to break that circularity — the redevelopment claim on a ruin cannot
 be financed by the ruin's own wedge.
 
+## THE FIRM-SIDE CONSTITUTION, ROUND TWO: prospects flipped, retooling and congestion built
+
+### `FirmProspects` false → true (fingerprint accepted, sig `85B61C518062E94D`)
+
+Entry is a choice: the per-parcel Bernoulli only paces arrivals; each arrival
+surveys every vacant site of its sector and takes the argmax, serially, so
+sites are contested. The measured case, HONESTLY MIXED across three seeds:
+
+| | seed 1 | seed 9 | seed 13 |
+|---|---|---|---|
+| industrial alive | 13 → **17** | 12 → 12 | 12 → **15** |
+| vacancy | 41.8 → **37.2 %** | 42.8 → 44.6 % | 45.8 → **43.7 %** |
+| re-let gap p50 | 41 → **15** | 10 → 14 | 4 → 13 |
+| successions | 27 → 21 | 19 → 19 | 1 → **8** |
+
+Seed 1 improves everywhere, seed 13 wakes up (a city with ONE succession in
+400 ticks gets eight), seed 9 is flat-to-slightly-negative (vacancy +1.8 pts,
+industrial p10 43 → 4). Two of three positive, nothing broken, no invariant
+touched — and the principled case is the project's own: the constant stops
+deciding entry and only paces it, exactly the household split. Old path:
+`--no-firm-prospects`; vanilla mode pins the flag false.
+
+### `FirmRetooling` — built, measured, and it STAYS OFF for a measured reason
+
+Seed 9 is the dream: drift tail p90 25.7 → **1.5 %**, max 27.2 → 2.9 %,
+within-10 % 82 → **100 %**, 18 retools, deaths unchanged. Seed 1 is the
+warning: industrial under water 23 → **54 %**, cash p50 +33 → **−2.7**, margin
+exits 31 → 77 — the drift narrows (p90 7 %) while the SECTOR sickens. Reading:
+retooling moves firms toward the same local argmax, and where the price
+structure is tight (seed 1), the argmax ERODES under the crowd that chases it —
+the monoculture failure leaking through the cost band as self-competition.
+The band is still load-bearing: `--mutant-retool-free` fires **199 switches**
+against the banded arm's 17 and lands with WORSE drift (p90 17.1 % vs 7.0 %) —
+free switching chases a moving target and loses to Dixit patience, measured.
+Flip blocked on understanding the seed-1 erosion; the mechanism and its
+falsifier ship dark until then.
+
+### `StartCongestionPricing` — built, measured, directionally right, off
+
+The k-th start each tick pays cost × (1 + k/MaxStartsPerTick); a candidate
+starts only while its own return at the congested price clears the commit
+margin. Nobody is lotteried out. Measured (seeds 1/9): starts 505/602 vs
+default 505→455/625→602, **abandons −14 % and −9 %** — the price screens
+exactly the marginal lottery-winners that used to start-and-abandon — with
+vacancy and sector health flat. The right shape, not yet a compelling flip;
+the constant's meaning changed from queue length to the throughput at which
+crews cost double, which is the honest reading of "construction industry
+capacity" as a mobile citywide resource priced, not rationed.
+
 ## REGRESSION FROM THE POOL FLIP: canary seed 6, and it is NOT pre-existing
 
 `canary` on the pool-free default reads **38/39, failing seed 6**; `laborcanary`

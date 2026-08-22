@@ -84,6 +84,10 @@ namespace CS2Econ.Harness
         /// <summary>Set by `--firm-retooling` / `--start-congestion`: the two
         /// remaining firm-side arms (EconParams comments carry each design).</summary>
         public static bool ForceFirmRetooling, ForceStartCongestion;
+        /// <summary>Set by `--no-firm-prospects`: the per-parcel entry hazard,
+        /// kept reachable now that prospects are the default (the same mirror
+        /// rule every flipped default follows).</summary>
+        public static bool ForceNoFirmProspects;
         /// <summary>Set by `--fill-evidence`: turns on
         /// EconParams.FillEvidenceWeighting so the arm can be measured without
         /// editing a default that ships off.</summary>
@@ -139,6 +143,7 @@ namespace CS2Econ.Harness
             if (ForceFirmProspects) flags.FirmProspects = true;
             if (ForceFirmRetooling) flags.FirmRetooling = true;
             if (ForceStartCongestion) p.StartCongestionPricing = true;
+            if (ForceNoFirmProspects) flags.FirmProspects = false;
             if (ForceRepairRounds >= 0) p.AuctionRepairRounds = ForceRepairRounds;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
@@ -170,6 +175,7 @@ namespace CS2Econ.Harness
                 // defect; this is the same pin for the labor side.
                 flags.LaborAuction = false;
                 flags.FirmExitMargin = false;
+                flags.FirmProspects = false;
                 sim.Vanilla = new VanillaSpawner();
             }
             return sim;
