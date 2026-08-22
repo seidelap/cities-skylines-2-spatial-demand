@@ -1085,7 +1085,9 @@ exemption cannot silently absorb everything. A genuinely broken apply still
 reds the leg (its MoveIn stamps the marker true at the wrong parcel).
 
 Measured: seed 6 reads `0 astray (1 re-housed by non-auction mechanisms
-since, exempt+reported)`, PASS. Note the leg proved its own non-vacuity in
+since, exempt+reported)`, PASS — and the full gate on the fix: **canary
+39/39, laborcanary 39/39** on the pool-free default. The pool retirement's
+gate is now fully green. Note the leg proved its own non-vacuity in
 the best possible way — by firing on a real event before being scoped. The
 same event is also a measured demonstration that store-level money paths
 reach household states the pool never did, which is what an honest
