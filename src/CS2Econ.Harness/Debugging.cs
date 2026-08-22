@@ -3378,10 +3378,11 @@ namespace CS2Econ.Harness
             // occupy (entrantMass/slots/condition), which is what
             // EconomyEngine's entry test at :1800-1826 asks; the LR = 0 leg
             // differs only in dropping the land term from the assessment side.
-            Console.WriteLine("-- F. vacant non-res parcels: entrant excess at AssessedLR and at LR=0 --");
+            Console.WriteLine("-- F. vacant non-res parcels: entrant excess at AssessedLR, at LR=0, and REFIT --");
             foreach (var s in sectors)
             {
-                var exNow = new List<double>(); var exZero = new List<double>(); int nvac = 0;
+                var exNow = new List<double>(); var exZero = new List<double>();
+                var exFit = new List<double>(); int nvac = 0;
                 foreach (var pl in w.Parcels)
                 {
                     if (pl.State != ParcelState.Built || pl.Use != s || Live(pl)) continue;
@@ -3397,15 +3398,37 @@ namespace CS2Econ.Harness
                     exNow.Add(bid - LandAccounting.UnitAssessment(pl, p));
                     exZero.Add(bid - (LandAccounting.SPerUnit(pl.Level, pl.Condition, p)
                                       + LandAccounting.StructureTaxPerUnit(pl, p)));
+                    // REFIT-AT-ENTRY counterfactual (#56 scoping): the same
+                    // entrant, but restoring the building to condition 1.0 —
+                    // bid and service ceiling at full condition, S charged on
+                    // the full V it would then hold, land at the walk's
+                    // endpoint (0), and the restoration lump ((1−cond)·RC)
+                    // annuitized at the hurdle. The MOST favourable refit case
+                    // by construction: a ruin negative HERE is demand-bound,
+                    // not condition-bound, and no refit mechanism — whatever
+                    // its financing — can activate it at current demand.
+                    double massFit = pl.Use == ZoneKind.Commercial
+                        ? pl.Units * p.Quality(pl.Level) : 0;
+                    double bidFit = LandAccounting.FirmBidPerSlot(acc, trade, pl.Cluster, pl.Use, pl.Level, p,
+                                                                  out _, w.Clusters, out _,
+                                                                  massFit, massFit > 0 ? pl.Units : 0,
+                                                                  massFit > 0 ? 1.0 : 0);
+                    double refitFlow = Annuity.FlowOf((1.0 - pl.Condition) * p.RC(pl.Level, pl.Units),
+                                                      p.HurdleRate, p.AnnuityHorizon)
+                                       / Math.Max(1, pl.Units);
+                    exFit.Add(bidFit - (LandAccounting.SPerUnit(pl.Level, 1.0, p) + refitFlow));
                 }
-                exNow.Sort(); exZero.Sort();
+                exNow.Sort(); exZero.Sort(); exFit.Sort();
                 Console.WriteLine($"  {s,-11} vacant={nvac,4} | now p10={Pct(exNow, 0.1),8:F2} " +
                                   $"p50={Pct(exNow, 0.5),7:F2} p90={Pct(exNow, 0.9),7:F2} " +
                                   $"positive={exNow.Count(x => x > 0),4} " +
                                   $"({(nvac > 0 ? 100.0 * exNow.Count(x => x > 0) / nvac : 0),3:F0}%) " +
                                   $"| atLR0 p10={Pct(exZero, 0.1),7:F2} p50={Pct(exZero, 0.5),7:F2} " +
                                   $"p90={Pct(exZero, 0.9),7:F2} positive={exZero.Count(x => x > 0),4} " +
-                                  $"({(nvac > 0 ? 100.0 * exZero.Count(x => x > 0) / nvac : 0),3:F0}%)");
+                                  $"({(nvac > 0 ? 100.0 * exZero.Count(x => x > 0) / nvac : 0),3:F0}%) " +
+                                  $"| refit p10={Pct(exFit, 0.1),7:F2} p50={Pct(exFit, 0.5),7:F2} " +
+                                  $"p90={Pct(exFit, 0.9),7:F2} positive={exFit.Count(x => x > 0),4} " +
+                                  $"({(nvac > 0 ? 100.0 * exFit.Count(x => x > 0) / nvac : 0),3:F0}%)");
             }
 
             // ---- G. the would-move census ------------------------------------
