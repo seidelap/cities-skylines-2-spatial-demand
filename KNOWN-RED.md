@@ -2046,6 +2046,50 @@ mechanism is rate-SCALED, not rate-brittle. 0.9 earns the default by being the
 rate that reaches the measured deep gap (~180 ticks); anything much slower
 quietly excludes office, which is the sector the whole item was opened for.
 
+## #56 RE-SCOPED BY MEASUREMENT: the ruins are demand-bound, and standing is the market's answer
+
+Three measurements at the flipped default (`10f7754`–`88e4e9c`, seeds 1/9,
+400 ticks) dissolve this item's premise in sequence.
+
+**1. The circle the title names is resolved — by #48, not by a redevelopment
+fix.** "The LVT deduction kills the return it justifies" was the assessor
+pricing a ruin's land at the value redevelopment would create and the
+developer's return netting that same number out. Under `VacantRepricing` a
+vacant ruin's deduction walks to what the market supports (≈0), so the
+circle cannot form on the parcels it used to bind.
+
+**2. Redevelopment then FELL, and that is coherent, not a defect.**
+Redevelopments 7 → 2 on seed 9 (0 → 0 on seed 1), starts −11 %/−5 %, abandons
+−19 %/−3 %: a cheap standing building out-competes the project that would
+scrape it. Re-use beating rebuild is less waste, and any future redevelopment
+mechanism must clear against this substitution pressure, not against the
+old baseline.
+
+**3. Refit-at-entry — the design this item was holding space for — has
+essentially no population, measured at its MOST favourable case.** firmprobe
+block F's refit column prices the same entrant restoring the building to
+condition 1.0: bid and ceiling at full condition, S on the full V, land at
+the walk's endpoint (0), the lump (1−cond)·RC annuitized at the hurdle.
+Cross-seed: commercial 2/19 and 3/24 positive; extractor **0/62 and 1/71** —
+refit is strictly WORSE than the bare walk there (restoring the shed does not
+change the geology, and full-condition S plus the annuitized 0.95·RC outweigh
+the output gain; extractor's 21 % at-LR0 on seed 9 belongs to the WALK, whose
+quotes simply had not finished descending at t=400); industrial and office
+100 % at LR=0 already — the walk's population, needing no refit. Five
+commercial parcels over two seeds is not a mechanism's population.
+
+**DISPOSITION.** The standing ruins are demand-bound: no financing of any
+refit can activate a building whose restored earnings sit below its restored
+costs, and a city whose demand does not support re-use SHOULD carry standing
+ruins — the staying-put default, applied to buildings. #56 as titled is
+closed: its circle is resolved and what remains standing is not a defect.
+
+**The reopening condition, stated so this is falsifiable:** if a future arm
+shows demand rising — walked quotes at 0, entrant bids strictly above the
+S-floor — and the parcels STILL not re-letting or redeveloping, that is a
+mechanism defect again and this item reopens. Watch the re-entry gate's
+positive count, not the idle share.
+
 **Restating the task.** #57 as written is closed — the sectors pay. What
 survives is the land: 39–48 % of non-residential stock idle behind an
 assessment nobody tested. That is #56 (the scrape/redevelopment path is
