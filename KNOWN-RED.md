@@ -1039,6 +1039,73 @@ its own redevelopment out of a land value it cannot have while it is derelict.**
 Any fix has to break that circularity — the redevelopment claim on a ruin cannot
 be financed by the ruin's own wedge.
 
+## THE POOL IS GONE (`StoreLevelSpending` on) — the last global on the demand side
+
+The pooled consumption path hands every live commercial firm
+`JobSlots x CaptureIncumbentPerMass / weightSum` of a citywide pot
+(`EconomyEngine`, the `!perStore` branch). That share is strictly positive for
+every standing shop and proportional to SLOTS, not to staff — so a shop nobody
+would walk into earns, and so does one with no employees at all.
+
+**What actually forced the decision: the pool contradicts a mechanism that now
+ships.** `FirmExitMargin` retires a firm whose revenue persistently fails to
+cover its avoidable costs. Under the pool no standing shop's revenue can go to
+zero, so that margin is structurally INERT for one of four sectors. Measured,
+seed 1, 400 ticks: commercial deaths under pooled are `margin=0 arrears=0
+capital=0` — **exactly zero, from any cause** — against `margin=1` on the honest
+path. Immortal shops are not a tuning artifact; they are the pool's structural
+property meeting the new exit rule.
+
+It is also the last GLOBAL on the demand side, and it is the illegitimate kind:
+a citywide pot divided by slots stands in for precisely what an individual
+experiences locally — which shop a household walks into. (Audited at this
+commit: the only other pooled read left in Core is `Access.cs`'s `FillEma`
+pooling, gated behind `MutantFillEmaSource == 1` — a falsifier, not a shipping
+path. Labor's citywide pro-rata pooling is already dead on the default, having
+been replaced by the labor auction.)
+
+### The recorded inventory said STAYS FALSE. Both of its clauses are superseded
+
+1. **Weber regression — CLOSED.** The 21/26-against-24/26 finding was an
+   artifact of a check that graded the STANDING STOCK. The legs now grade the
+   DECISION: both the oracle and the call under test read the same `Trade`
+   state at the same clusters, and neither iterates firms, so the verdict
+   *cannot* depend on which consumption path ran — it can fail only on a real
+   implementation disagreement. Measured, not merely argued: `webersweep`
+   POOLED **26/26** (up from the recorded 24/26), and
+   `verify --seed 0 --store-level` **64/64** with extraction 175/175, recipe
+   196/196.
+2. **Census clause — RETIRED as unsound.** It grades an honest mechanism
+   against an artifact of a dishonest one. Both its numbers are inflated by the
+   pool by construction: more shops survive (ALIVE up) and they fill more
+   buildings (VACANCY down). Measured post-flip seed 1: ALIVE 71 vs 86,
+   VACANCY 43.5 % vs 34.4 % — and the ~15-shop difference is ~the extra vacant
+   buildings, i.e. ONE fact reported twice, not two independent failures.
+
+### What the honest path costs, stated plainly
+
+Capture falls 99.4 % → 93.9 % (seed 1, 40 sampled ticks). **These are not the
+same kind of number.** The pooled figure is a FORMULA — `1 −
+wOutside/IncumbentShopWeight` — with no capacity constraint anywhere. The
+store-level figure is a realized outcome after `RationShopping` caps each shop
+at what its staff can serve. The 6.1 % leak is a household that found no shop
+with room — information the pooled path cannot produce at any parameter setting.
+
+Commercial cash flow also RISES on the honest path (p50 263 → 341, p90 297 →
+484): fewer shops, each actually visited, each better sited.
+
+### Refuted on the way
+
+The store-level path is **not** slower — 66 s against the pooled path's 70 s for
+300 ticks. An earlier 25-minute Weber run that suggested otherwise was CPU
+contention with a `webersweep` left running, not a property of the path. (The
+full `verify` suite does get slower, because every fixture that used to run
+pooled now runs store-level.)
+
+Also found: `verify --only` does not filter — it runs the whole suite. Every
+`--only` run in this registry is therefore a full-suite run. Harmless, but the
+timings it produced were misread once already.
+
 ## THE PACKAGE FLIP — six defaults on, and what it cost
 
 `FeatureFlags.LaborAuction`, `FeatureFlags.FirmExitMargin`,

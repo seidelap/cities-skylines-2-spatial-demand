@@ -437,3 +437,58 @@ delta: storelevel.price hash moved; sumLR 12141.046 -> 13171.438 (+8.49%); sumLR
 delta: storelevel.money hash moved; treasury 51008.264 -> 305489.11 (+498.90%); hhMoney 540676.74 -> 458859.17 (-15.13%); firmMoney 179993.72 -> 565140.73 (+213.98%); escrow 48343.023 -> 209096.55 (+332.53%); phantoms -744137.47 -> -1462701.3 (-96.56%); drift 5.9691956E-07 -> -5.797483E-08 (-109.71%)
 delta: storelevel.labor (new lane)
 sig: 3E6BB16087D3FF31
+
+=== stanza 14
+recorded: 2026-08-22T04:51:14Z
+reason: THE COMMERCIAL POOL IS RETIRED: FeatureFlags.StoreLevelSpending false -> true. Household spending now lands at the shop each household actually chose, capped by what that shop's staff can serve, instead of being pooled citywide and handed back pro-rata by JobSlots. WHY NOW, and it is a contradiction inside the shipping model rather than a preference: the pooled distribution gives every live commercial firm JobSlots x CaptureIncumbentPerMass / weightSum of a citywide pot -- strictly positive for every standing shop, and proportional to SLOTS rather than staff, so a shop nobody would walk into earns and so does one with no employees. FirmExitMargin, which shipped as a default in the previous flip, retires a firm whose revenue persistently fails to cover its avoidable costs; under the pool no standing shop's revenue can reach zero, so that margin was structurally INERT for one of the four sectors. Measured, seed 1 at 400 ticks: commercial deaths under pooled are margin=0 arrears=0 capital=0 -- exactly zero from any cause -- against margin=1 on this path. It is also the last GLOBAL on the demand side and the illegitimate kind: a citywide pot divided by slots stands in for what an individual experiences locally, namely which shop a household walks into. THE RECORDED FLIP INVENTORY SAID STAYS FALSE AND BOTH ITS CLAUSES ARE SUPERSEDED. (1) The Weber regression (21/26 ON against 24/26 OFF) was an artifact of a check grading the STANDING STOCK; the legs now grade the DECISION, where oracle and tested call read the same Trade state at the same clusters and neither iterates firms, so the verdict cannot depend on the consumption path. Measured: webersweep POOLED 26/26 (up from the recorded 24/26), verify --seed 0 --store-level 64/64 with extraction 175/175 and recipe 196/196. (2) The census clause graded an honest mechanism against an artifact of a dishonest one -- both ALIVE and VACANCY are inflated by the pool by construction, and the measured ~15-shop difference IS the extra vacant buildings, one fact reported twice. WHAT IT COSTS, plainly: capture 99.4 % -> 93.9 %, but those are not the same kind of number -- the pooled figure is a formula with no capacity constraint anywhere, the store-level figure a realized outcome after RationShopping, and the 6.1 % leak is a household that found no shop with room, which the pooled path cannot represent at any setting. Commercial cash flow RISES (p50 263 -> 341, p90 297 -> 484): fewer shops, each actually visited. Also refuted on the way: store-level is NOT slower (66 s against 70 s for 300 ticks); an earlier contrary reading was CPU contention. GATE: verify --seed 0 63/64 with the fingerprint as its only red, canary and laborcanary recorded in the commit. --pooled keeps the old path exercisable and vanillaMode pins it false.
+lane default.demography hash=5F79171CD801546D pop=1531 housed=1252 sheltered=0
+lane default.built hash=6440B1193EED31F6 built=414 meanLevel=2.033816425 units=2316
+lane default.price hash=A74F689BDBECF1B7 sumLR=13171.43817 sumLR.high=1262.070398 sumLR.low=1373.380746 meanRent=2.917465598
+lane default.money hash=6B710C0FFA7335E9 treasury=305489.1136 hhMoney=458859.1711 firmMoney=565140.7251 escrow=209096.5472 phantoms=-1462701.283 drift=-5.797483027E-08
+lane default.labor hash=CA180796D4BF17C4 empRate=1 outsideShare=0.6337336245 unempShare=0 meanT.basic=6.533306253 meanT.skilled=10.5975134 meanT.educated=17.7175423 meanToverCap=0.3125334054 divCompRatio=0.4770490913 slotsPerWorker=0.3706331878
+lane posted.demography hash=54D03BB739005D5B pop=1026 housed=802 sheltered=15
+lane posted.built hash=929B8632BEFCCAED built=316 meanLevel=1.601265823 units=1858
+lane posted.price hash=503727DD2FAD5A8D sumLR=13999.26832 sumLR.high=3637.53497 sumLR.low=3250.938947 meanRent=7.984995341
+lane posted.money hash=B30FD629FA6BEB0E treasury=371645.1257 hhMoney=193353.091 firmMoney=292348.6889 escrow=234164.1405 phantoms=-1015626.772 drift=1.973239705E-08
+lane posted.labor hash=BB0F8CE449F13D03 empRate=1 outsideShare=0.4135338346 unempShare=0 meanT.basic=6.646651229 meanT.skilled=10.45125867 meanT.educated=17.67130247 meanToverCap=0.4799908045 divCompRatio=0.3639345879 slotsPerWorker=0.6287593985
+lane labor.demography hash=5F79171CD801546D pop=1531 housed=1252 sheltered=0
+lane labor.built hash=6440B1193EED31F6 built=414 meanLevel=2.033816425 units=2316
+lane labor.price hash=A74F689BDBECF1B7 sumLR=13171.43817 sumLR.high=1262.070398 sumLR.low=1373.380746 meanRent=2.917465598
+lane labor.money hash=6B710C0FFA7335E9 treasury=305489.1136 hhMoney=458859.1711 firmMoney=565140.7251 escrow=209096.5472 phantoms=-1462701.283 drift=-5.797483027E-08
+lane labor.labor hash=CA180796D4BF17C4 empRate=1 outsideShare=0.6337336245 unempShare=0 meanT.basic=6.533306253 meanT.skilled=10.5975134 meanT.educated=17.7175423 meanToverCap=0.3125334054 divCompRatio=0.4770490913 slotsPerWorker=0.3706331878
+lane pooled.demography hash=1A01FE44582C5BBB pop=1569 housed=1246 sheltered=0
+lane pooled.built hash=B550F47D0EA5FCC3 built=410 meanLevel=2.014634146 units=2296
+lane pooled.price hash=DFB05CDA6FD91370 sumLR=17336.74608 sumLR.high=1184.901776 sumLR.low=1282.090303 meanRent=2.811255295
+lane pooled.money hash=537F6D58E48D7C24 treasury=331865.2833 hhMoney=428722.5067 firmMoney=513385.1586 escrow=261526.0737 phantoms=-1459614.748 drift=-2.549495548E-08
+lane pooled.labor hash=083D38883915F147 empRate=1 outsideShare=0.6027322404 unempShare=0 meanT.basic=6.469195394 meanT.skilled=10.58339871 meanT.educated=17.69219844 meanToverCap=0.3393881371 divCompRatio=0.4680412462 slotsPerWorker=0.4092896175
+lane storelevel.demography hash=5F79171CD801546D pop=1531 housed=1252 sheltered=0
+lane storelevel.built hash=6440B1193EED31F6 built=414 meanLevel=2.033816425 units=2316
+lane storelevel.price hash=A74F689BDBECF1B7 sumLR=13171.43817 sumLR.high=1262.070398 sumLR.low=1373.380746 meanRent=2.917465598
+lane storelevel.money hash=6B710C0FFA7335E9 treasury=305489.1136 hhMoney=458859.1711 firmMoney=565140.7251 escrow=209096.5472 phantoms=-1462701.283 drift=-5.797483027E-08
+lane storelevel.labor hash=CA180796D4BF17C4 empRate=1 outsideShare=0.6337336245 unempShare=0 meanT.basic=6.533306253 meanT.skilled=10.5975134 meanT.educated=17.7175423 meanToverCap=0.3125334054 divCompRatio=0.4770490913 slotsPerWorker=0.3706331878
+delta: default.demography hash moved; pop 1569 -> 1531 (-2.42%); housed 1246 -> 1252 (+0.48%); sheltered =
+delta: default.built hash moved; built 410 -> 414 (+0.98%); meanLevel 2.0146341 -> 2.0338164 (+0.95%); units 2296 -> 2316 (+0.87%)
+delta: default.price hash moved; sumLR 17336.746 -> 13171.438 (-24.03%); sumLR.high 1184.9018 -> 1262.0704 (+6.51%); sumLR.low 1282.0903 -> 1373.3807 (+7.12%); meanRent 2.8112553 -> 2.9174656 (+3.78%)
+delta: default.money hash moved; treasury 331865.28 -> 305489.11 (-7.95%); hhMoney 428722.51 -> 458859.17 (+7.03%); firmMoney 513385.16 -> 565140.73 (+10.08%); escrow 261526.07 -> 209096.55 (-20.05%); phantoms -1459614.7 -> -1462701.3 (-0.21%); drift -2.5494955E-08 -> -5.797483E-08 (-127.40%)
+delta: default.labor hash moved; empRate =; outsideShare 0.60273224 -> 0.63373362 (+5.14%); unempShare =; meanT.basic 6.4691954 -> 6.5333063 (+0.99%); meanT.skilled 10.583399 -> 10.597513 (+0.13%); meanT.educated 17.692198 -> 17.717542 (+0.14%); meanToverCap 0.33938814 -> 0.31253341 (-7.91%); divCompRatio 0.46804125 -> 0.47704909 (+1.92%); slotsPerWorker 0.40928962 -> 0.37063319 (-9.44%)
+delta: posted.demography hash moved; pop 1103 -> 1026 (-6.98%); housed 820 -> 802 (-2.20%); sheltered 12 -> 15 (+25.00%)
+delta: posted.built hash moved; built 329 -> 316 (-3.95%); meanLevel 1.6534954 -> 1.6012658 (-3.16%); units 1884 -> 1858 (-1.38%)
+delta: posted.price hash moved; sumLR 15743.867 -> 13999.268 (-11.08%); sumLR.high 3721.7984 -> 3637.535 (-2.26%); sumLR.low 3465.7262 -> 3250.9389 (-6.20%); meanRent 8.006162 -> 7.9849953 (-0.26%)
+delta: posted.money hash moved; treasury 402973.12 -> 371645.13 (-7.77%); hhMoney 191631.54 -> 193353.09 (+0.90%); firmMoney 296951.79 -> 292348.69 (-1.55%); escrow 277567.61 -> 234164.14 (-15.64%); phantoms -1093239.8 -> -1015626.8 (+7.10%); drift -3.2363459E-08 -> 1.9732397E-08 (+160.97%)
+delta: posted.labor hash moved; empRate =; outsideShare 0.38846881 -> 0.41353383 (+6.45%); unempShare =; meanT.basic 6.6888271 -> 6.6466512 (-0.63%); meanT.skilled 10.514612 -> 10.451259 (-0.60%); meanT.educated 17.661747 -> 17.671302 (+0.05%); meanToverCap 0.49233353 -> 0.4799908 (-2.51%); divCompRatio 0.41696778 -> 0.36393459 (-12.72%); slotsPerWorker 0.66824197 -> 0.6287594 (-5.91%)
+delta: labor.demography hash moved; pop 1569 -> 1531 (-2.42%); housed 1246 -> 1252 (+0.48%); sheltered =
+delta: labor.built hash moved; built 410 -> 414 (+0.98%); meanLevel 2.0146341 -> 2.0338164 (+0.95%); units 2296 -> 2316 (+0.87%)
+delta: labor.price hash moved; sumLR 17336.746 -> 13171.438 (-24.03%); sumLR.high 1184.9018 -> 1262.0704 (+6.51%); sumLR.low 1282.0903 -> 1373.3807 (+7.12%); meanRent 2.8112553 -> 2.9174656 (+3.78%)
+delta: labor.money hash moved; treasury 331865.28 -> 305489.11 (-7.95%); hhMoney 428722.51 -> 458859.17 (+7.03%); firmMoney 513385.16 -> 565140.73 (+10.08%); escrow 261526.07 -> 209096.55 (-20.05%); phantoms -1459614.7 -> -1462701.3 (-0.21%); drift -2.5494955E-08 -> -5.797483E-08 (-127.40%)
+delta: labor.labor hash moved; empRate =; outsideShare 0.60273224 -> 0.63373362 (+5.14%); unempShare =; meanT.basic 6.4691954 -> 6.5333063 (+0.99%); meanT.skilled 10.583399 -> 10.597513 (+0.13%); meanT.educated 17.692198 -> 17.717542 (+0.14%); meanToverCap 0.33938814 -> 0.31253341 (-7.91%); divCompRatio 0.46804125 -> 0.47704909 (+1.92%); slotsPerWorker 0.40928962 -> 0.37063319 (-9.44%)
+delta: pooled.demography =
+delta: pooled.built =
+delta: pooled.price =
+delta: pooled.money =
+delta: pooled.labor =
+delta: storelevel.demography =
+delta: storelevel.built =
+delta: storelevel.price =
+delta: storelevel.money =
+delta: storelevel.labor =
+sig: 1ACDA2023504894E

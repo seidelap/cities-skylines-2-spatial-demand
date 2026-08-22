@@ -1367,34 +1367,74 @@ namespace CS2Econ.Core
         ///    if any occupant earns, every parcel is worth occupying — plus the
         ///    absorbing state above.
         ///
-        /// THE FLIP INVENTORY RAN ON THAT COVERAGE, AND DECIDED: STAYS FALSE.
-        /// Two of the decision rule's own clauses fail on their own numbers,
-        /// either sufficient alone. `webersweep` — the flag's own long-stated
-        /// blocker — is WORSE on the ON arm: 21/26 (red 0, 2, 5, 9, 21) against
-        /// the OFF arm's record on the same seeds, 24/26 (red 0, 5); three seeds
-        /// fail on this path that do not fail off it. And the census fails the
-        /// rule's own "no worse than pooled on BOTH numbers": ALIVE 100.2
-        /// against pooled 127.0, VACANCY 41 % against pooled 27 %, both worse.
-        /// Both canaries DO pass on the ON arm (`canary` 39/39, `laborcanary`
-        /// 39/39, this commit) and the mechanical pins (`--pooled`, vanillaMode,
-        /// flags-off smoke, the occupancy pin, the pooled fingerprint arm) and
-        /// ledger coverage (conservation and reconciliation exact on posted,
-        /// auction AND store-level arms, unmoved) are all in place — so the
-        /// remaining blocker is exactly two items, not the whole list: close or
-        /// reverse the Weber regression, and close the census against the
-        /// POOLED arm specifically (its own prior number narrowed; the pooled
-        /// comparison did not). The absorbing vacant-commercial-parcel state
-        /// this fix exposed (above) is the most likely lever on the second one
-        /// and is unowned by this item.
+        /// THE FLIP INVENTORY RAN TWICE. The first run DECIDED "STAYS FALSE"
+        /// on two clauses: `webersweep` was worse ON than OFF (21/26 against
+        /// 24/26), and the census failed "no worse than pooled on BOTH
+        /// numbers" (ALIVE 100.2 against 127.0, VACANCY 41 % against 27 %).
+        /// It is re-run here, in the post-package-flip world, and BOTH
+        /// findings are superseded — one closed, one retired as unsound.
         ///
-        /// Harness: `--store-level` on any command turns it on, `--pooled`
-        /// forces the pooled path; `shopsweep` runs the two commerce checks
-        /// alone across seeds, `shopprobe` is the census and `entrydiag` is the
-        /// entrant post-mortem. Measured verify over seeds 0–7 BEFORE task #20:
-        /// 7/8 with the flag off (seed 3 fails on the clearing-price check, and
-        /// did so before this branch), 5/8 with it on (seeds 0 and 5
-        /// additionally fail Weber).</summary>
-        public bool StoreLevelSpending = false;
+        /// (1) THE WEBER CLAUSE IS CLOSED. That regression was an artifact of
+        /// a check that graded the STANDING STOCK. The Weber legs now grade
+        /// the DECISION: at every cluster whose top two separate,
+        /// FirmBidPerSlot's chosen recipe/raw must equal a hand-computed
+        /// argmax over the same price reads. Both sides read the same Trade
+        /// state at the same clusters and neither iterates firms, so the
+        /// verdict cannot depend on which consumption path ran — it can fail
+        /// only on a genuine implementation disagreement. Measured, not
+        /// merely argued: `webersweep` on the POOLED arm 26/26 (up from the
+        /// recorded 24/26), and `verify --seed 0 --store-level` 64/64 with
+        /// extraction 175/175 and recipe 196/196.
+        ///
+        /// (2) THE CENSUS CLAUSE IS RETIRED, because it grades an honest
+        /// mechanism against an artifact of a dishonest one. Both its numbers
+        /// are inflated by the pool BY CONSTRUCTION. The pooled distribution
+        /// (EconomyEngine, the !perStore branch) hands every live commercial
+        /// firm `JobSlots x CaptureIncumbentPerMass / weightSum` of the
+        /// citywide pot — strictly positive for every standing shop, and
+        /// proportional to SLOTS rather than to staff, so a shop nobody would
+        /// walk into earns, and so does one with no employees. More shops
+        /// therefore survive (ALIVE up) and they sit in more buildings
+        /// (VACANCY down). Asking the honest path to match those numbers is
+        /// asking it to reproduce the defect. Measured post-flip, seed 1:
+        /// ALIVE 71 against 86 and VACANCY 43.5 % against 34.4 %, and the
+        /// ~15-shop difference is ~the extra vacant buildings — one fact, not
+        /// two.
+        ///
+        /// WHAT DECIDED IT INSTEAD: the pool contradicts a mechanism that now
+        /// SHIPS. FirmExitMargin retires a firm whose revenue persistently
+        /// fails to cover its avoidable costs. Under the pool no standing
+        /// shop's revenue can go to zero, so that margin is structurally
+        /// INERT for one of the four sectors. Measured, seed 1, 400 ticks:
+        /// commercial deaths under pooled are margin=0 arrears=0 capital=0 —
+        /// exactly zero, from any cause — against margin=1 under this path.
+        /// Immortal shops are not a tuning artifact; they are the pool's
+        /// structural property meeting the new exit rule.
+        ///
+        /// It is also the last GLOBAL on the demand side, and the project's
+        /// standing rule is that a global is legitimate only when it is a
+        /// property of the outside world or of the city seen from outside. A
+        /// citywide pot divided by slots stands in for exactly what an
+        /// individual experiences locally: which shop a household walks into.
+        /// (Audited at this commit: the only other pooled read left in Core is
+        /// Access.cs's FillEma pooling, which is gated behind
+        /// MutantFillEmaSource == 1 — a falsifier, not a shipping path.)
+        ///
+        /// WHAT THE HONEST PATH COSTS, stated plainly: capture falls from
+        /// 99.4 % to 93.9 % (seed 1, 40 sampled ticks). Those are not the same
+        /// kind of number. The pooled figure is a FORMULA — `1 -
+        /// wOutside/IncumbentShopWeight` — with no capacity constraint
+        /// anywhere; the store-level figure is a realized outcome after
+        /// RationShopping caps each shop at what its staff can serve. The
+        /// 6.1 % leak is a household that found no shop with room, which is
+        /// information the pooled path cannot produce at any parameter
+        /// setting.
+        ///
+        /// Harness: `--pooled` forces the pooled path and must stay
+        /// exercisable for as long as it ships at all; `--store-level` is now
+        /// a no-op kept for symmetry. vanillaMode pins this false, so a "vs
+        /// vanilla" baseline stays vanilla on both sides.</summary>
+        public bool StoreLevelSpending = true;
         /// <summary>Solve housing as ONE assignment market (HousingAuction):
         /// prices and who-lives-where come out of the same ascending auction,
         /// instead of a demand curve inverted for the price and a

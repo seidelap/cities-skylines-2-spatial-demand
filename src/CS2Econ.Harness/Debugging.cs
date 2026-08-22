@@ -2549,6 +2549,24 @@ namespace CS2Econ.Harness
                 }
             });
             {
+                // CAPTURE RATE: the share of household spending that reaches a
+                // city shop rather than leaking out of town. This is the honest
+                // measure of whether commercial demand is SERVED, and it is the
+                // one the pooled-vs-store-level decision rule never had. ALIVE
+                // and VACANCY both flatter the pooled path by construction --
+                // it pays every standing shop a slots-share whether or not a
+                // household would walk in, so more shops exist and they fill
+                // more buildings. Neither says whether anyone was served.
+                double capSum = 0, leakSum = 0;
+                for (int t = 0; t < 40; t++)
+                {
+                    sim.Step();
+                    capSum += sim.Engine.ConsumptionCapturedThisTick;
+                    leakSum += sim.Engine.ConsumptionLeakedThisTick;
+                }
+                Console.WriteLine($"  consumption over 40 further ticks: captured {capSum:F0}, "
+                    + $"leaked {leakSum:F0} => capture rate "
+                    + $"{(capSum + leakSum > 0 ? 100.0 * capSum / (capSum + leakSum) : 0):F1} %");
                 int totS = 0, totC = 0;
                 var parts = new List<string>();
                 foreach (var kv in succN)
