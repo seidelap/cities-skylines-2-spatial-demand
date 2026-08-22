@@ -349,6 +349,14 @@ namespace CS2Econ.Core
         /// filling empty land (DerelictRedevelopment path). A subset of
         /// StartedTotal.</summary>
         public int RedevelopmentsTotal;
+        /// <summary>Ticks on which the citywide MaxStartsPerTick cap BOUND:
+        /// every start was spent and positive-weight candidates remained.
+        /// Instrumentation for the question "is the one global start budget
+        /// actually rationing anywhere" — if this reads ~0 the cap is inert
+        /// and the localization question is moot; if it reads large, a boom
+        /// in one district is rationing starts in another for no local
+        /// reason.</summary>
+        public int StartsCapBoundTicks;
         public readonly List<(long tick, int parcel)> AbandonEvents = new List<(long, int)>();
 
         /// <summary>CS2ECON_MILESTONE_DEBUG=1 traces every milestone
@@ -532,6 +540,11 @@ namespace CS2Econ.Core
                 w.Claims.Add(pl.Cluster, pl.Use, units);
                 StartedTotal++;
                 _cands[chosen] = new Candidate { ParcelId = -1 };
+            }
+            if (_cands.Count > p.MaxStartsPerTick)
+            {
+                foreach (var c in _cands)
+                    if (c.ParcelId >= 0) { StartsCapBoundTicks++; break; }
             }
         }
 

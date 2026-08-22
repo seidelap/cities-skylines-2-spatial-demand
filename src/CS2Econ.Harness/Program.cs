@@ -121,6 +121,10 @@ namespace CS2Econ.Harness
                 if (args[i] == "--no-uniform-productivity")
                 { Sim.ForceNoUniformProductivity = true; continue; }
                 if (args[i] == "--no-redevelop") { Sim.ForceNoRedevelop = true; continue; }
+                if (args[i] == "--firm-prospects") { Sim.ForceFirmProspects = true; continue; }
+                // PROBE-SCOPED (EconomyEngine.ShopReviewStagger carries why).
+                if (args[i] == "--shop-stagger" && i + 1 < args.Length)
+                { EconomyEngine.ShopReviewStagger = int.Parse(args[++i]); continue; }
                 if (args[i] == "--fill-evidence") { Sim.ForceFillEvidence = true; continue; }
                 if (args[i] == "--fill-office-prior") { Sim.ForceFillOfficeExempt = true; continue; }
                 if (args[i] == "--assess-deliverable") { Sim.ForceAssessDeliverable = true; continue; }

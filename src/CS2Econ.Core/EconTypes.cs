@@ -1214,6 +1214,19 @@ namespace CS2Econ.Core
         /// difference between a hazard that emerges and a hazard that is
         /// declared.</summary>
         public bool FirmExitMargin = true;
+        /// <summary>Firm entry as a CHOICE instead of a per-parcel hazard
+        /// (--firm-prospects; OFF until measured). With it off, entry is
+        /// prob = FirmEntryElasticity x excess x units rolled parcel by parcel
+        /// — a rate reading a margin, the shape the old migration elasticity
+        /// had before prospects replaced it, and the last place on the firm
+        /// side where nobody decides. With it on, the same roll at the same
+        /// parcel spawns a LOOKER (arrival intensity unchanged; the constant
+        /// stops deciding entry and only paces arrivals) which surveys every
+        /// vacant site of its sector with the same forecast arithmetic and
+        /// takes the argmax; lookers run serially, so a taken site is gone
+        /// for the next — sites are contested, which the Bernoulli could
+        /// never express.</summary>
+        public bool FirmProspects = false;
         /// <summary>Offices carry a SPECIALIZATION, and each draws its
         /// agglomeration from its own kind's jobs rather than from office jobs
         /// pooled. Turns "the best office that could stand here" from a maximum

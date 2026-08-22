@@ -825,13 +825,31 @@ namespace CS2Econ.Core
         /// <summary>Rounds of rationing, clamped to the shortlist depth.</summary>
         private int ShopRounds => Math.Max(1, Math.Min(P.ShopRationingRounds, Math.Max(1, P.ShopShortlist)));
 
+        /// <summary>PROBE-SCOPED (`--shop-stagger N`): households review their
+        /// shop choice every N ticks on a household-staggered schedule instead
+        /// of all re-choosing every tick. 0 ships. Exists to RE-RUN a stale
+        /// measurement: staggering was tried and rejected when it read deaths
+        /// 217 -> 680 ("new shops starve before they fill"), but that verdict
+        /// predates the honest entry forecast that later solved entrant deaths
+        /// by another route, and the anti-synchronization principle and the
+        /// measured exception have been in unexamined tension since. Note the
+        /// synchronization is already DAMPED by ShopLoyalty (an incumbent
+        /// hysteresis band); this arm measures what stagger adds on top.
+        /// Stale shortlist rows are safe: ShortlistShop guards dead,
+        /// non-commercial and siteless ids, and ConsumptionFlows re-picks a
+        /// household whose chosen shop closed.</summary>
+        public static int ShopReviewStagger;
+
         private void ChooseShops()
         {
             int K = Math.Max(1, P.ShopShortlist);
             _shopK = K;
             int need = W.Households.Count * K;
             if (_shopChoices.Length < need) { _shopChoices = new int[need]; }
-            Array.Fill(_shopChoices, -1);
+            // Under stagger the rows of non-reviewing households must SURVIVE
+            // the tick — the global clear would erase the very persistence the
+            // experiment measures. Recomputed rows are fully overwritten below.
+            if (ShopReviewStagger <= 1) Array.Fill(_shopChoices, -1);
             if (_shopBestU.Length < W.Households.Count) _shopBestU = new double[W.Households.Count];
             if (_shopOrigin.Length < W.Households.Count) _shopOrigin = new int[W.Households.Count];
             if (_shopTopU.Length != K) { _shopTopU = new double[K]; _shopTopF = new int[K]; }
@@ -856,6 +874,23 @@ namespace CS2Econ.Core
             foreach (var h in W.Households)
             {
                 if (h.ExitedTick >= 0) { h.ShopFirm = -1; _shopOrigin[h.Id] = -1; continue; }
+                // A household whose shop is GONE re-picks immediately whatever
+                // its review slot says. Without this the arm does not measure
+                // staggering at all, it measures ORPHANING: a shop dies,
+                // ConsumptionFlows clears ShopFirm, and the household leaks its
+                // whole basket out of town for up to Stagger ticks until its
+                // slot comes round — which feeds back as less revenue, more
+                // shop deaths, more orphans. Measured with that confound in:
+                // capture 93.9 % -> 20.8 %, commercial 71 -> 19 alive, 72
+                // deaths. Any verdict on synchronization has to be taken with
+                // this closed, or it is a verdict on the confound.
+                bool orphaned = (uint)h.ShopFirm >= (uint)W.Firms.Count
+                                || W.Firms[h.ShopFirm].Dead
+                                || W.Firms[h.ShopFirm].Sector != ZoneKind.Commercial
+                                || W.Firms[h.ShopFirm].Parcel < 0;
+                if (ShopReviewStagger > 1 && !orphaned
+                    && (int)(((ulong)h.Id + (ulong)W.Tick) % (ulong)ShopReviewStagger) != 0)
+                    continue;   // keeps last tick's choice, shortlist and bestU
                 // Shopping origin: home, or the workplace for a household that
                 // has not found housing yet. An unhoused household still eats,
                 // and it is in the city — sending it home-less straight to the
@@ -2136,7 +2171,51 @@ namespace CS2Econ.Core
                 }
             }
 
-            // Entry into existing vacant firm parcels (aggregate residual profit).
+            // Entry into existing vacant firm parcels.
+            //
+            // TWO REGIMES. Flag off (the shipping default until measured): a
+            // per-parcel Bernoulli — prob = elasticity x excess x units — which
+            // is a RATE reading a margin, the same shape the old migration
+            // elasticity had before prospects replaced it. Nobody decides:
+            // the loop asks "would a firm take THIS parcel", never "which
+            // parcel would THIS firm prefer", so no entrant ever compares two
+            // sites and two entrants can never contest one good site.
+            //
+            // Flag on (FirmProspects): the SAME roll at the SAME parcel spawns
+            // a LOOKER instead of entering in place. Arrival intensity is
+            // therefore unchanged — the elasticity stops deciding entry and
+            // only paces arrivals, exactly the household split (prominence
+            // paces prospects; the market decides). Each looker then surveys
+            // every still-vacant site of its sector with the same forecast
+            // arithmetic and takes the ARGMAX if any is positive. Lookers run
+            // serially, so a taken site is gone for the next one — the contest
+            // households have had since the auction, extended to firms.
+            var lookers = Flags.FirmProspects ? new List<ZoneKind>() : null;
+            void EnterAt(Parcel epl, Res echosen)
+            {
+                // The entrant fixes its output here: extractors mine what the
+                // geology supports, industry commits to the recipe whose
+                // input sourcing is cheapest from THIS location (Weber).
+                var firm = new Firm
+                {
+                    Id = W.Firms.Count, Sector = epl.Use, Parcel = epl.Id,
+                    Output = epl.Use == ZoneKind.Commercial ? Res.Services : echosen,
+                    // A commercial entrant commits to the line its own
+                    // catchment is least well served in, exactly as an
+                    // industrial entrant commits to a recipe.
+                    Retail = epl.Use == ZoneKind.Commercial && Flags.CommercialLines
+                        ? echosen : Res.Services,
+                    Money = P.FirmSeedCapital, JobSlots = epl.Units, EnteredTick = W.Tick,
+                    // An office entrant commits to the specialization THIS
+                    // site's neighbourhood carries best — what makes a re-let
+                    // building a different business and not the same one again.
+                    Office = epl.Use == ZoneKind.Office
+                        ? LandAccounting.BestOfficeKind(Access, epl.Cluster, P, epl.Id) : default,
+                };
+                W.Firms.Add(firm);
+                epl.OccupantFirm = firm.Id;
+                W.Ledger.Transfer(Account.PhantomBank, Account.Firms, P.FirmSeedCapital);
+            }
             foreach (var pl in W.Parcels)
             {
                 if (pl.State != ParcelState.Built || pl.IsResidential || pl.OccupantFirm >= 0) continue;
@@ -2169,34 +2248,30 @@ namespace CS2Econ.Core
                 double prob = MathUtil.Clamp(P.FirmEntryElasticity * excess * pl.Units * 10, 0, 0.5);
                 if (W.Rng.NextDouble() < prob)
                 {
-                    // The entrant fixes its output here: extractors mine what the
-                    // geology supports, industry commits to the recipe whose
-                    // input sourcing is cheapest from THIS location (Weber).
-                    var firm = new Firm
-                    {
-                        Id = W.Firms.Count, Sector = pl.Use, Parcel = pl.Id,
-                        Output = pl.Use == ZoneKind.Commercial ? Res.Services : chosen,
-                        // A commercial entrant commits to the line its own
-                        // catchment is least well served in, exactly as an
-                        // industrial entrant commits to a recipe. `chosen` is
-                        // that argmax when lines are on; Res.Services (sell
-                        // everything) when they are off.
-                        Retail = pl.Use == ZoneKind.Commercial && Flags.CommercialLines
-                            ? chosen : Res.Services,
-                        Money = P.FirmSeedCapital, JobSlots = pl.Units, EnteredTick = W.Tick,
-                        // An office entrant commits to a specialization the way
-                        // an industrial entrant commits to a recipe: the one
-                        // THIS site's neighbourhood carries best. That is what
-                        // makes a re-let building a different business and not
-                        // the same one again — the point of the whole exercise.
-                        Office = pl.Use == ZoneKind.Office
-                            ? LandAccounting.BestOfficeKind(Access, pl.Cluster, P, pl.Id) : default,
-                    };
-                    W.Firms.Add(firm);
-                    pl.OccupantFirm = firm.Id;
-                    W.Ledger.Transfer(Account.PhantomBank, Account.Firms, P.FirmSeedCapital);
+                    if (lookers != null) { lookers.Add(pl.Use); continue; }
+                    EnterAt(pl, chosen);
                 }
             }
+            if (lookers != null)
+                foreach (var sector in lookers)
+                {
+                    Parcel? bestPl = null; Res bestChosen = Res.Services; double bestExcess = 0;
+                    foreach (var pl in W.Parcels)
+                    {
+                        if (pl.State != ParcelState.Built || pl.IsResidential || pl.OccupantFirm >= 0) continue;
+                        if (pl.Use != sector || pl.Warehousing) continue;
+                        double em = pl.Use == ZoneKind.Commercial
+                            ? pl.Units * Math.Max(0.2, pl.Condition) * P.Quality(pl.Level) : 0;
+                        double b = LandAccounting.FirmBidPerSlot(Access, Trade, pl.Cluster, pl.Use, pl.Level, P,
+                                                                 out Res ch, W.Clusters, out bool cp,
+                                                                 em, em > 0 ? pl.Units : 0,
+                                                                 em > 0 ? pl.Condition : 0);
+                        if (!cp) b *= P.CondFactor(pl.Condition);
+                        double ex = b - LandAccounting.UnitAssessment(pl, P);
+                        if (ex > bestExcess) { bestExcess = ex; bestPl = pl; bestChosen = ch; }
+                    }
+                    if (bestPl != null) EnterAt(bestPl, bestChosen);
+                }
         }
 
         /// <summary>The firm side of "re-sort down the price gradient" (§4.2):

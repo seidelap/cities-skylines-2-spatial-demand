@@ -1039,6 +1039,118 @@ its own redevelopment out of a land value it cannot have while it is derelict.**
 Any fix has to break that circularity — the redevelopment claim on a ruin cannot
 be financed by the ruin's own wedge.
 
+## REGRESSION FROM THE POOL FLIP: canary seed 6, and it is NOT pre-existing
+
+`canary` on the pool-free default reads **38/39, failing seed 6**; `laborcanary`
+is 39/39. Isolated — the same seed **PASSES with `--pooled`**, so the flip caused
+it, and seed 6 being in the registry's known clearing-price red set {4, 6, 96,
+…} is a coincidence, not the explanation:
+
+    canary --from 6 --seeds 7            -> 0/1  [FAIL] owner doors: door<->parcel 1 astray
+    canary --from 6 --seeds 7 --pooled   -> 1/1  PASS
+
+The failing leg is (O-move) DOOR<->PARCEL INTEGRITY: a household holding an
+owner door must live at THAT parcel. One household of 62 owner-door tenants
+does not. It is an INVARIANT violation, not a threshold, so it cannot be
+dismissed as a bar.
+
+**Why the consumption path can reach it.** The owner tag is not the auction's:
+`Allocation.MoveIn` CLAIMS it (an OwnerMinded household settling an unowned
+res-low parcel becomes its owner) and `Allocation.Vacate` clears it, while the
+check reads `a.Assignment` as the last solve left it. Any post-solve move
+desynchronizes the two. Store-level spending changes household MONEY, hence
+bids, hence which households move — so it reaches a state the pooled path never
+did. The bug is latent and older than the flip; the flip is what exposed it.
+
+NOT fixed here: the repair is in the auction's apply/vacate ordering, and
+guessing at it is how the reverted one-seller filter went wrong earlier in this
+same session. Owned as the immediate next item. The flip stands meanwhile —
+1 household on 1 of 39 seeds, against a structural contradiction removed — but
+this must close before the branch is called done.
+
+## FOUR CODE-LEVEL FINDINGS, ALL MEASURED
+
+### F1: firm entry was a hazard, not an agent — and choice STRICTLY dominates
+
+Entry rolled `prob = FirmEntryElasticity x excess x units` parcel by parcel: a
+RATE reading a margin, the exact shape the migration elasticity had before
+prospects replaced it. Nobody decided — the loop asked "would a firm take THIS
+parcel", never "which parcel would THIS firm prefer", so no entrant compared two
+sites and two entrants could never contest one.
+
+`FeatureFlags.FirmProspects` (`--firm-prospects`, OFF pending the seed-6 fix):
+the same roll at the same parcel spawns a LOOKER instead of entering in place —
+arrival intensity is unchanged, so the constant stops deciding entry and only
+paces arrivals, exactly the household split. Each looker surveys every vacant
+site of its sector with the same forecast arithmetic and takes the argmax;
+lookers run serially, so a taken site is gone for the next.
+
+Measured, seed 1, 400 ticks — **every metric improves, none regresses**:
+
+| | hazard (ships) | prospects |
+|---|---|---|
+| industrial alive | 13 | **17** |
+| industrial under water | 23.1 % | **11.8 %** |
+| industrial margin deaths | 31 | **21** |
+| office alive | 5 | **8** |
+| extractor alive | 10 | 11 |
+| vacancy | 41.8 % | **37.2 %** |
+| effectively idle | 44.7 % | **39.0 %** |
+| re-let gap (ticks, p50) | 41 | **15** |
+| succession changed business | 30 % | **43 %** |
+| capture | 93.9 % | 94.4 % |
+
+The re-let gap collapsing 41 -> 15 ticks is the mechanism visible directly: a
+looker that surveys finds the good vacant site immediately, where the Bernoulli
+had to wait for that parcel's own coin to come up.
+
+### F2: the citywide start budget binds, but rarely — MEASURED, not assumed
+
+`MaxStartsPerTick = 6` is one global cap over a citywide softmax, so a boom in
+district A can ration starts in district B for no local reason.
+`Construction.StartsCapBoundTicks` now counts the ticks where every start was
+spent AND positive-weight candidates remained. Seed 1, 400 ticks: **18 ticks
+(4.5 %)** on the default, 17 with prospects. So the coupling is real but not
+dominant — worth localizing (the per-(use, cluster) calibration indexing already
+exists), and now with a number attached rather than an argument.
+
+### F3: the goods clearing — reviewed, no change, deliberately
+
+Within a per-cluster lot the trades are composed by an auctioneer-style
+algorithm; firms do not bid or pick counterparties. Reviewed and left alone:
+commodity exchanges are a real institution, the settle telemetry already
+verifies per-lot participant margins (individual rationality holds), and the
+localization win that mattered — per-cluster lots — is already in. Recorded as a
+deliberate institutional choice rather than an inherited default.
+
+### F4: the shop-stagger exception RE-RUN — verdict stands, magnitude was a confound
+
+The recorded rejection (deaths 217 -> 680) predated the honest-forecast fix, so
+it was re-run under the current mechanism (`--shop-stagger N`, probe-scoped).
+
+**The first re-run reproduced catastrophe — and it was MY confound, not
+stagger's.** A household whose shop dies has `ShopFirm` cleared, and under a
+naive stagger it then leaks its entire basket for up to N ticks until its review
+slot comes round, which feeds back as more deaths and more orphans: capture
+93.9 % -> **20.8 %**, commercial 71 -> 19 alive, 72 deaths. Closing it (an
+orphaned household re-picks immediately whatever its slot says) gives the honest
+comparison:
+
+| seed 1 | capture | commercial alive | deaths |
+|---|---|---|---|
+| synchronized (ships) | **93.9 %** | 71 | margin 1, capital 0 |
+| stagger 10 | 92.0 % | 77 | margin 8, capital 21 |
+| stagger 30 | 89.4 % | 71 | margin 4, capital 29 |
+| stagger 30, confound OPEN | 20.8 % | 19 | 72 |
+
+**The old verdict's DIRECTION stands and its magnitude was inflated ~4x by the
+confound.** Synchronization keeps more spending in town and kills far fewer
+shops. Note the synchronization is already damped by `ShopLoyalty`, an incumbent
+hysteresis band — so the shipping path is not raw synchronization, and the
+principle is less violated than the tension suggested. The exception is now
+justified by a CURRENT measurement instead of a stale one, which is what the
+finding actually asked for.
+
 ## THE POOL IS GONE (`StoreLevelSpending` on) — the last global on the demand side
 
 The pooled consumption path hands every live commercial firm

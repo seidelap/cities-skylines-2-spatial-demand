@@ -2854,7 +2854,8 @@ namespace CS2Econ.Harness
             }
             Console.WriteLine($"  construction: starts={sim.Engine.Construction.StartedTotal} "
                 + $"redevelopments={sim.Engine.Construction.RedevelopmentsTotal} "
-                + $"abandoned={sim.Engine.Construction.AbandonedTotal} scrapes(Leveling)={w.ScrapesTotal}");
+                + $"abandoned={sim.Engine.Construction.AbandonedTotal} scrapes(Leveling)={w.ScrapesTotal} "
+                + $"startsCapBound={sim.Engine.Construction.StartsCapBoundTicks} ticks");
             if (derelict > 0)
                 Console.WriteLine($"  scrape gates on {derelict} derelict (cond<=0.25) vacant parcels: "
                     + $"TargetIsScrape={wantScrape} pressure={hasPressure} funded={funded} "

@@ -78,6 +78,9 @@ namespace CS2Econ.Harness
         /// Applied AFTER the corresponding force-on so an explicit off wins.</summary>
         public static bool ForceNoLaborAuction, ForceNoFirmExitMargin, ForceNoFillEvidence,
                            ForceNoUniformProductivity, ForceNoRedevelop;
+        /// <summary>Set by `--firm-prospects`: entry as a surveyed choice
+        /// (FeatureFlags.FirmProspects carries the design).</summary>
+        public static bool ForceFirmProspects;
         /// <summary>Set by `--fill-evidence`: turns on
         /// EconParams.FillEvidenceWeighting so the arm can be measured without
         /// editing a default that ships off.</summary>
@@ -130,6 +133,7 @@ namespace CS2Econ.Harness
             if (ForceNoFillEvidence) p.FillEvidenceWeighting = false;
             if (ForceNoUniformProductivity) p.UniformSiteProductivity = false;
             if (ForceNoRedevelop) p.DerelictRedevelopment = false;
+            if (ForceFirmProspects) flags.FirmProspects = true;
             if (ForceRepairRounds >= 0) p.AuctionRepairRounds = ForceRepairRounds;
             var sim = new Sim { P = p, Flags = flags };
             (sim.W, sim.Access) = SyntheticCity.Build(cfg, p);
