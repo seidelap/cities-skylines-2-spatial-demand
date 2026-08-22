@@ -5453,16 +5453,38 @@ namespace CS2Econ.Harness
                 var ex = exList.OrderByDescending(x => w.Clusters[x.Cluster].ResourceSuitability.Max()).First();
                 var ci = w.Clusters[ex.Cluster];
                 var saved = (double[])ci.ResourceSuitability.Clone();
+                // The probe asks the LADDER a hypothetical — what would this
+                // land assess at under forced geology — so its reads run with
+                // VacantRepricing off. The walk is a different mechanism
+                // (min(ladder, refused-spell quote)) sitting ON TOP of the
+                // observable this leg exists to isolate: 62 of 71 extractor
+                // parcels stand vacant here, a long-refused parcel's quote has
+                // walked to ~0, and through the stored AssessedLR both geology
+                // arms read 0.000 == 0.000 — the leg goes red (or the floor
+                // leg passes degenerately) with the geology plumbing entirely
+                // healthy, on a verdict decided by which parcel the OrderBy
+                // happens to pick. Same conditioning precedent as the package
+                // flip's two mechanism-isolation checks. The walk's own
+                // behaviour is measured where it is the subject (#48 P1 entry),
+                // not smuggled into a plumbing probe's observable.
+                var pOffLadder = new EconParams { VacantRepricing = false };
+                var pOnLadder = new EconParams { NonResLandParity = true, VacantRepricing = false };
+                // Exact restore: write back what was found rather than
+                // re-assessing. A re-assess with the walk on would advance the
+                // spell's quote a step and re-seed a spell the off-arm probes
+                // reset — "as it was found" done by recomputation is only
+                // approximate once assessment carries per-parcel probe state.
+                double foundLR = ex.AssessedLR, foundMark = ex.VacantMarkLR;
                 double At(double suit, EconParams p)
                 {
                     for (int i = 0; i < ci.ResourceSuitability.Length; i++) ci.ResourceSuitability[i] = suit;
                     LandAccounting.Assess(w, acc, trade, ex, presence, p);
                     return ex.AssessedLR;
                 }
-                offHi = At(1.0, pOff); offLo = At(0.01, pOff);
-                onHi = At(1.0, pOn); onLo = At(0.01, pOn);
+                offHi = At(1.0, pOffLadder); offLo = At(0.01, pOffLadder);
+                onHi = At(1.0, pOnLadder); onLo = At(0.01, pOnLadder);
                 Array.Copy(saved, ci.ResourceSuitability, saved.Length);
-                LandAccounting.Assess(w, acc, trade, ex, presence, pOff);   // as it was found
+                ex.AssessedLR = foundLR; ex.VacantMarkLR = foundMark;   // as it was found, exactly
             }
             Check("nonres parity floor: extractor parcels exist and the shipped default prices them blind to geology",
                   exList.Count >= 5 && offHi == offLo,
