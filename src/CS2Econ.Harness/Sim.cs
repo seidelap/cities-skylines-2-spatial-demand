@@ -122,6 +122,10 @@ namespace CS2Econ.Harness
         /// EconParams.VacantRepricing (task #48 P1) on or off for every sim
         /// this process builds, so the arm can be measured without editing a
         /// default that ships off. Off-switch wins, matching the others.</summary>
+        /// <summary>Set by `--relocate-improve`: turns on
+        /// EconParams.RelocateOnImprovement (task #58) so the arm can be
+        /// measured without editing a default that ships off.</summary>
+        public static bool ForceRelocateOnImprovement;
         public static bool ForceVacantRepricing;
         public static bool ForceNoVacantRepricing;
         /// <summary>Set by `--vacant-decay N`: overrides EconParams.VacantLRDecay
@@ -154,6 +158,7 @@ namespace CS2Econ.Harness
             if (ForceStartCongestion) p.StartCongestionPricing = true;
             if (ForceNoFirmProspects) flags.FirmProspects = false;
             if (ForceRepairRounds >= 0) p.AuctionRepairRounds = ForceRepairRounds;
+            if (ForceRelocateOnImprovement) p.RelocateOnImprovement = true;
             if (ForceVacantRepricing) p.VacantRepricing = true;
             if (ForceNoVacantRepricing) p.VacantRepricing = false;
             if (ForceVacantDecay >= 0) p.VacantLRDecay = ForceVacantDecay;

@@ -50,6 +50,20 @@ namespace CS2Econ.Core
         /// <summary>Firms that moved to land they could carry rather than
         /// exiting — the firm side of the household pipeline's SortDown stage.</summary>
         public int FirmRelocationsTotal;
+        /// <summary>RelocateFirm's refusal split (task #58), sited firms only.
+        /// The call refuses for two independent reasons and the counters
+        /// separate them: NoBetter is "no candidate strictly beats the firm's
+        /// own site", which is the defaults rule doing its job; Negative is
+        /// "a strictly better site exists and was refused anyway because its
+        /// value is still below zero in absolute terms". Only the second is
+        /// the behaviour under question. Engine counters are not hashed by
+        /// Fingerprint, so these are measurement-only and move no lane.</summary>
+        public int FirmRelocateRefusedNoBetter;
+        public int FirmRelocateRefusedNegative;
+        /// <summary>Moves that happened ONLY because RelocateOnImprovement is
+        /// on — a strictly better site whose absolute value is still ≤ 0.
+        /// The flag's own population: if this is zero the flag is inert.</summary>
+        public int FirmRelocateRescued;
         /// <summary>Live firms observed holding no site, and how each of them
         /// resolved. Counted where the outcome is decided, so
         /// Displaced == Resited + Exits holds by construction every tick and a
@@ -2388,7 +2402,43 @@ namespace CS2Econ.Core
                 double v = BidAt(q);
                 if (v > bestV) { bestV = v; best = q; }
             }
-            if (best == null || bestV <= 0) return false;
+            // THE REFUSAL, AND THE ONE CLAUSE OF IT THAT IS UNDER QUESTION.
+            // `best != null` already means some site strictly beat this firm's
+            // own arithmetic at its own site — the defaults rule, and the only
+            // condition this method's doc comment claims. The `bestV <= 0`
+            // clause is a second, independent test, and it means something
+            // different at each call site:
+            //
+            //   from == null (a displaced firm, ResolveDisplacedFirms): `here`
+            //   is 0.0 BY CONSTRUCTION, so the clause is exactly the defaults
+            //   rule — a firm holding no premises whose best option is still
+            //   worth less than nothing should leave, which is the charter's
+            //   stated default for the displaced. CORRECT, and left alone.
+            //
+            //   from != null (a failing firm looking for a site it can carry):
+            //   relocation only fires once the firm is ALREADY underwater, so
+            //   `here` is typically negative and a candidate that strictly
+            //   improves on it — say −100 here to −10 there — is refused for
+            //   not being positive in absolute terms, and the firm dies where
+            //   it stands. That reads against the defaults rule: the mechanism
+            //   only has to improve on the default, and dying in place is the
+            //   default it is being measured against.
+            //
+            // RelocateOnImprovement (off until measured) drops the absolute
+            // test for the sited case only. Counters split the refusal either
+            // way so the flag's own population is visible.
+            if (best == null)
+            {
+                if (from != null) FirmRelocateRefusedNoBetter++;
+                return false;
+            }
+            if (bestV <= 0)
+            {
+                if (from == null) return false;              // displaced: leaving IS the default
+                FirmRelocateRefusedNegative++;
+                if (!P.RelocateOnImprovement) return false;
+                FirmRelocateRescued++;
+            }
             if (from != null) from.OccupantFirm = -1;
             best.OccupantFirm = f.Id;
             f.Parcel = best.Id;

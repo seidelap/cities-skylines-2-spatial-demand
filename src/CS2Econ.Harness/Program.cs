@@ -23,6 +23,7 @@ namespace CS2Econ.Harness
                 if (args[i] == "--posted") { Sim.ForcePosted = true; continue; }
                 if (args[i] == "--nonres-parity") { Sim.ForceNonResLandParity = true; continue; }
                 if (args[i] == "--pooled") { Sim.ForcePooled = true; continue; }
+                if (args[i] == "--relocate-improve") { Sim.ForceRelocateOnImprovement = true; continue; }
                 if (args[i] == "--vacant-reprice") { Sim.ForceVacantRepricing = true; continue; }
                 if (args[i] == "--no-vacant-reprice") { Sim.ForceNoVacantRepricing = true; continue; }
                 if (args[i] == "--vacant-decay" && i + 1 < args.Length)

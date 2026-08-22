@@ -501,20 +501,56 @@ namespace CS2Econ.Core
 
             // ---- softmax start selection (logit spread: near-equivalent sites
             // split rather than herd), capacity-capped -------------------------
-            // Flag off: min(cap, candidates), the citywide ration. Flag on
-            // (StartCongestionPricing): no count cap — the k-th start this
-            // tick pays cost x (1 + k/MaxStartsPerTick), and a candidate only
-            // draws weight while its own return AT THE CONGESTED PRICE clears
-            // the commit margin, so a boom self-limits through each
-            // developer's own arithmetic instead of a lottery.
-            int starts = p.StartCongestionPricing ? _cands.Count
-                                                  : Math.Min(p.MaxStartsPerTick, _cands.Count);
-            var weights = new double[_cands.Count];
+            // Flag off: min(cap, candidates), the citywide ration — an unpriced
+            // quota that decides WHICH projects happen and that no developer
+            // anywhere experiences as anything. Flag on (StartCongestionPricing):
+            // no count cap, a PRICE instead, and a candidate only draws weight
+            // while its own return at that price clears the commit margin, so a
+            // boom self-limits through each developer's own arithmetic. The
+            // building trades clear at roughly metro scale, so a citywide
+            // construction cost index is a legitimate global — what was not
+            // legitimate is the quota it replaces.
+            //
+            // THE PRICE IS UNIFORM ACROSS THE TICK AND SET BY THE MARGINAL
+            // START. The first cut of this flag charged the k-th DRAW
+            // cost x (1 + k/MaxStartsPerTick), so two identical projects paid
+            // different prices for the same tick's scarcity purely by where
+            // the softmax lottery happened to place them — 1.00 drawn first
+            // against 1.17 drawn seventh. A price that depends on the order in
+            // which the algorithm visited agents is an artifact of the
+            // algorithm, not something any developer decided, and it is the
+            // same defect the auction's down-phase resolved once by re-clearing
+            // from the reserve so no order-dependent price could survive.
+            //
+            // The clearing: returns sorted descending, and n starts are
+            // feasible exactly when the n-th best candidate still clears the
+            // commit margin at the price n starts would generate. r[n]/c(n) is
+            // strictly decreasing in n (r falls, c rises), so feasibility is
+            // monotone and the scan stops at the first refusal — the last
+            // admitted start IS the marginal one, and its price is what every
+            // start that tick pays. Same shape as the housing market's
+            // marginal-bidder price, for the same reason.
+            int starts;
             double congestion = 1.0;
+            if (p.StartCongestionPricing)
+            {
+                var rr = new List<double>(_cands.Count);
+                foreach (var c0 in _cands) if (c0.ParcelId >= 0) rr.Add(c0.ReturnRate);
+                rr.Sort((a, b) => b.CompareTo(a));
+                int n = 0;
+                while (n < rr.Count)
+                {
+                    double cTry = 1.0 + (double)n / Math.Max(1, p.MaxStartsPerTick);
+                    if (rr[n] / cTry <= p.HurdleRate * 1.5) break;
+                    congestion = cTry;   // the marginal start's price so far
+                    n++;
+                }
+                starts = n;
+            }
+            else starts = Math.Min(p.MaxStartsPerTick, _cands.Count);
+            var weights = new double[_cands.Count];
             for (int k = 0; k < starts; k++)
             {
-                congestion = p.StartCongestionPricing
-                    ? 1.0 + (double)k / Math.Max(1, p.MaxStartsPerTick) : 1.0;
                 double sum = 0;
                 for (int i = 0; i < _cands.Count; i++)
                 {

@@ -3006,6 +3006,16 @@ namespace CS2Econ.Harness
             Console.WriteLine($"  engine: margin exits={e.FirmMarginExitsTotal} retools={e.FirmRetoolsTotal} "
                 + $"margin relocations={e.FirmMarginRelocationsTotal} "
                 + $"arrears exits={e.FirmArrearsExitsTotal} all relocations={e.FirmRelocationsTotal}");
+            // TASK #58's refusal split, sited firms only. "noBetter" is the
+            // defaults rule working (nothing beat the firm's own site);
+            // "negative" is the clause under question (a strictly better site
+            // refused for being worth less than zero in absolute terms).
+            // "rescued" counts moves that happened ONLY because
+            // RelocateOnImprovement is on — zero there means the flag is inert
+            // and no A/B on it can show anything.
+            Console.WriteLine($"  relocation refusals (sited firms): noBetter={e.FirmRelocateRefusedNoBetter} "
+                + $"negative={e.FirmRelocateRefusedNegative} rescued={e.FirmRelocateRescued} "
+                + $"| relocateOnImprovement={sim.P.RelocateOnImprovement}");
             return 0;
         }
 

@@ -585,6 +585,28 @@ namespace CS2Econ.Core
         /// reprices vacancy there every refresh.</summary>
         public bool VacantRepricing = true;
 
+        /// <summary>A FAILING FIRM MAY TAKE A STRICTLY BETTER SITE EVEN WHERE
+        /// THAT SITE IS STILL UNDERWATER (task #58, `--relocate-improve`; OFF
+        /// until measured). RelocateFirm refuses unless the best candidate is
+        /// worth more than zero in absolute terms, but it is only ever called
+        /// once a firm is already underwater, so the comparison that matters
+        /// is against DYING IN PLACE, not against zero. The charter's defaults
+        /// rule is that a mechanism need only improve on the default, and the
+        /// default here is the firm's own failing site. With this on, the
+        /// sited case keeps only the strict-improvement test the method's own
+        /// doc comment claims; the DISPLACED case (from == null) is untouched,
+        /// because there `here` is 0.0 by construction and the absolute test
+        /// IS the defaults rule — a firm with no premises and nothing worth
+        /// taking should leave.
+        ///
+        /// What this must be measured on, and what it must NOT be: a
+        /// successful relocation sets CashFlowShortTicks = patience/2, so ANY
+        /// move buys the firm patience/2 ticks of life whether or not the
+        /// destination is better — "relocated firms survive longer" is a check
+        /// that cannot fail. The bar is run-level: total margin exits, firms
+        /// alive, idle-land share and the re-entry gate.</summary>
+        public bool RelocateOnImprovement = false;
+
         /// <summary>Markdown per assessment refresh of the vacancy-spell quote
         /// (a parcel is reassessed every AssessSlices ticks, so 0.9 here is
         /// roughly a 1 %/tick concession; the measured office gap — excess
