@@ -122,6 +122,11 @@ namespace CS2Econ.Harness
                 { Sim.ForceNoUniformProductivity = true; continue; }
                 if (args[i] == "--no-redevelop") { Sim.ForceNoRedevelop = true; continue; }
                 if (args[i] == "--firm-prospects") { Sim.ForceFirmProspects = true; continue; }
+                if (args[i] == "--firm-retooling") { Sim.ForceFirmRetooling = true; continue; }
+                if (args[i] == "--start-congestion") { Sim.ForceStartCongestion = true; continue; }
+                // MUTANT SWITCH (see EconomyEngine.MutantRetoolFree).
+                if (args[i] == "--mutant-retool-free")
+                { EconomyEngine.MutantRetoolFree = true; Sim.ForceFirmRetooling = true; continue; }
                 // PROBE-SCOPED (EconomyEngine.ShopReviewStagger carries why).
                 if (args[i] == "--shop-stagger" && i + 1 < args.Length)
                 { EconomyEngine.ShopReviewStagger = int.Parse(args[++i]); continue; }

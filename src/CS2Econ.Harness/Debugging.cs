@@ -2948,7 +2948,7 @@ namespace CS2Econ.Harness
                 Console.WriteLine($"  labor doors: {la.DoorsUnlisted}/{la.DoorsTotal} on NO worker's "
                     + $"shortlist ({100.0 * la.DoorsUnlisted / la.DoorsTotal:F1} %) — a door worth less "
                     + $"than every worker's own outside option");
-            Console.WriteLine($"  engine: margin exits={e.FirmMarginExitsTotal} "
+            Console.WriteLine($"  engine: margin exits={e.FirmMarginExitsTotal} retools={e.FirmRetoolsTotal} "
                 + $"margin relocations={e.FirmMarginRelocationsTotal} "
                 + $"arrears exits={e.FirmArrearsExitsTotal} all relocations={e.FirmRelocationsTotal}");
             return 0;

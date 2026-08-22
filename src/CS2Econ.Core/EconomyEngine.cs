@@ -79,6 +79,8 @@ namespace CS2Econ.Core
         /// makes a non-zero reading proof the mechanism reached the population
         /// rather than only the handful of mid-run entrants.</summary>
         public int FirmRetailChoicesTotal;
+        /// <summary>Industrial recipe switches executed by FirmRetooling.</summary>
+        public int FirmRetoolsTotal;
 
         /// <summary>MUTANT SWITCH: restores office and extractor production
         /// WITHOUT the level and condition terms their assessment prices them
@@ -131,6 +133,14 @@ namespace CS2Econ.Core
         /// a mutant rather than a flag because no city should ship it. Never a
         /// shipping mode.</summary>
         public static bool MutantFirmNoInactionBand;
+        /// <summary>MUTANT SWITCH (`--mutant-retool-free`): retooling costs
+        /// nothing and needs no margin gain — a firm switches to the argmax
+        /// recipe whenever it differs. The monoculture world the registry
+        /// recorded (free continuous re-choice converged every firm on one
+        /// recipe, 20 of 26 seeds red) restored on purpose, so the distinct-
+        /// outputs census can prove the cost band is what prevents it. Never
+        /// a shipping mode.</summary>
+        public static bool MutantRetoolFree;
         /// <summary>(tick, household, reason): reason 0 = voluntary cost-driven
         /// relocation within the city, 1 = insolvency-pipeline emigration.</summary>
         public readonly List<(long tick, int household, int reason)> DisplacementExits
@@ -2043,6 +2053,63 @@ namespace CS2Econ.Core
                         pl.Units * Math.Max(0.2, pl.Condition) * P.Quality(pl.Level),
                         pl.Units, pl.Condition);
                     if (pick != Res.Services) { f.Retail = pick; FirmRetailChoicesTotal++; }
+                }
+
+                // RETOOLING (Flags.FirmRetooling — the flag's comment carries
+                // the design). The firm re-asks the SAME question it answered
+                // at entry — which recipe pays best from THIS site — with its
+                // own current staffing and its own site's productivity, and
+                // acts only when the gain beats the annuitized machinery bill.
+                // The wage drops out of the DIFFERENCE (same labor mix across
+                // recipes), so the comparison is over gross per-slot margins.
+                if (Flags.FirmRetooling && f.Sector == ZoneKind.Industrial
+                    && f.Parcel >= 0 && f.WorkersFilled > 0
+                    && W.Rng.NextDouble() < 1.0 / Math.Max(1, P.MoveSearchPeriod))
+                {
+                    int rc2 = pl.Cluster;
+                    double ownM = double.NaN, bestM = double.NegativeInfinity;
+                    Res bestOut = f.Output;
+                    foreach (var recipe in ResourceCatalog.Recipes)
+                    {
+                        double outNet = Math.Max(
+                            P.NonResLandParity ? Trade.OriginComparable(recipe.Output, rc2)
+                                               : Trade.OriginStat(recipe.Output, rc2),
+                            Trade.BestExportNet(recipe.Output, rc2));
+                        double ic = 0;
+                        foreach (var (res, qty) in recipe.Inputs)
+                            ic += qty * Trade.DeliveredCost(res, rc2);
+                        double m = recipe.OutputPerSlot * P.RecipeOutputScale * (outNet - ic);
+                        if (recipe.Output == f.Output) ownM = m;
+                        if (m > bestM) { bestM = m; bestOut = recipe.Output; }
+                    }
+                    if (bestOut != f.Output && !double.IsNaN(ownM))
+                    {
+                        // Gain at the firm's own staffing and its own site's
+                        // realized productivity (industrial production is
+                        // cond x Quality(l)/Quality(1), unconditionally).
+                        double siteF = Math.Max(0.2, pl.Condition)
+                                       * P.Quality(pl.Level) / P.Quality(1);
+                        double gainPerTick = (bestM - ownM) * f.WorkersFilled * siteF;
+                        double retoolFlow = Annuity.FlowOf(P.FirmSeedCapital, P.HurdleRate, P.AnnuityHorizon);
+                        double wagesNow = 0;
+                        for (int cl = 0; cl < 3; cl++)
+                            wagesNow += f.FilledByClass[cl] * P.Wage((LaborClass)cl);
+                        double reserve2 = Math.Max(P.FirmSeedCapital, wagesNow * P.FirmWorkingCapitalTicks);
+                        bool afford = f.Money >= reserve2 + P.FirmSeedCapital;
+                        if (MutantRetoolFree || (gainPerTick > retoolFlow && afford))
+                        {
+                            if (!MutantRetoolFree)
+                            {
+                                f.Money -= P.FirmSeedCapital;
+                                // Machinery is bought from outside the region,
+                                // like every capital good here.
+                                W.Ledger.Transfer(Account.Firms, Account.OutsideWorld, P.FirmSeedCapital);
+                            }
+                            f.Output = bestOut;
+                            Array.Clear(f.InputNeedByRes, 0, f.InputNeedByRes.Length);
+                            FirmRetoolsTotal++;
+                        }
+                    }
                 }
 
                 bool marginOn = Levying && Flags.FirmExitMargin && !MutantFirmExitNoMargin;

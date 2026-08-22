@@ -501,15 +501,27 @@ namespace CS2Econ.Core
 
             // ---- softmax start selection (logit spread: near-equivalent sites
             // split rather than herd), capacity-capped -------------------------
-            int starts = Math.Min(p.MaxStartsPerTick, _cands.Count);
+            // Flag off: min(cap, candidates), the citywide ration. Flag on
+            // (StartCongestionPricing): no count cap — the k-th start this
+            // tick pays cost x (1 + k/MaxStartsPerTick), and a candidate only
+            // draws weight while its own return AT THE CONGESTED PRICE clears
+            // the commit margin, so a boom self-limits through each
+            // developer's own arithmetic instead of a lottery.
+            int starts = p.StartCongestionPricing ? _cands.Count
+                                                  : Math.Min(p.MaxStartsPerTick, _cands.Count);
             var weights = new double[_cands.Count];
+            double congestion = 1.0;
             for (int k = 0; k < starts; k++)
             {
+                congestion = p.StartCongestionPricing
+                    ? 1.0 + (double)k / Math.Max(1, p.MaxStartsPerTick) : 1.0;
                 double sum = 0;
                 for (int i = 0; i < _cands.Count; i++)
                 {
+                    double effRet = _cands[i].ReturnRate / congestion;
                     weights[i] = _cands[i].ParcelId < 0 ? 0
-                        : Math.Exp((_cands[i].ReturnRate - p.HurdleRate) / p.SoftmaxSpread);
+                        : p.StartCongestionPricing && effRet <= p.HurdleRate * 1.5 ? 0
+                        : Math.Exp((effRet - p.HurdleRate) / p.SoftmaxSpread);
                     sum += weights[i];
                 }
                 if (sum <= 0) break;
@@ -532,7 +544,7 @@ namespace CS2Econ.Core
                 pl.Units = units;
                 pl.BuildProgress = 0;
                 pl.BuildTotal = p.ConstructionLag;
-                pl.CommittedCost = cand.CommitCost;
+                pl.CommittedCost = cand.CommitCost * congestion;
                 pl.PredictedRentAtDecision = cand.PredictedRent;
                 pl.PredictedAbsorptionAtDecision = cand.PredictedAbsorption;
                 // Claims ledger at COMMITMENT: later deciders see the pipeline,

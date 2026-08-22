@@ -444,6 +444,19 @@ namespace CS2Econ.Core
         public int ConstructionLag = 45;          // ticks to complete
         public double SoftmaxSpread = 0.0005;     // logit spread over developer returns
         public int MaxStartsPerTick = 6;          // construction industry capacity
+        /// <summary>Construction starts priced by CONGESTION instead of
+        /// rationed by a citywide count (--start-congestion; OFF until
+        /// measured). MaxStartsPerTick is one global cap over one citywide
+        /// softmax, so a boom in district A rations district B by lottery —
+        /// measured binding on 4.5 % of ticks. Construction capacity IS a
+        /// citywide mobile resource (crews travel), so the legitimate form is
+        /// a PRICE, not a queue: the k-th start this tick pays cost x
+        /// (1 + k / MaxStartsPerTick), and a candidate starts only while its
+        /// own return at the congested price clears the commit margin. The
+        /// constant keeps its value and changes meaning: the throughput at
+        /// which crews cost double. Each developer decides on its own margin
+        /// at the posted congestion; nobody is lotteried out.</summary>
+        public bool StartCongestionPricing = false;
         public double AbandonMarginFactor = 0.25; // abandon if E[flow] < factor·h·remainingCost
         public double CalibShrinkN0 = 12.0;       // shrinkage prior weight for correction factors
         /// <summary>n0 in CalibrationState.Factor(use, cluster): the prior
@@ -1227,6 +1240,26 @@ namespace CS2Econ.Core
         /// for the next — sites are contested, which the Bernoulli could
         /// never express.</summary>
         public bool FirmProspects = false;
+        /// <summary>Industrial firms may RETOOL: switch recipe when the margin
+        /// gain at their own site, at their own staffing, beats the annuitized
+        /// cost of new machinery (--firm-retooling; OFF until measured). The
+        /// missing piece the drift census named: a firm commits its recipe at
+        /// entry and NOTHING changed it, so the ~15 % of live industrials
+        /// sitting 10-33 % behind their site's best recipe stayed there
+        /// forever — profitable enough never to die, wrong enough never to be
+        /// corrected by succession. Dixit again, and unlike the exit margin
+        /// (nothing to liquidate, band built from the clock's asymmetry)
+        /// retooling has a REAL cost to build the inaction band from: the
+        /// machinery. The firm pays FirmSeedCapital — the same capital that
+        /// tooled it at entry — and switches only when its own read of
+        /// (best − own) margin x its own staff x its own site's productivity
+        /// beats that lump's annuity flow. Staggered on the same memoryless
+        /// hazard every re-decision here uses. The registry's monoculture
+        /// warning is why the band is load-bearing: free continuous re-choice
+        /// converged every firm on one recipe on 20 of 26 seeds; the
+        /// --mutant-retool-free switch re-runs exactly that world so the
+        /// distinct-outputs census can prove the band prevents it.</summary>
+        public bool FirmRetooling = false;
         /// <summary>Offices carry a SPECIALIZATION, and each draws its
         /// agglomeration from its own kind's jobs rather than from office jobs
         /// pooled. Turns "the best office that could stand here" from a maximum
