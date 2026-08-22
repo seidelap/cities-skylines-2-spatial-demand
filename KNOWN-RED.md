@@ -2235,6 +2235,89 @@ not retry re-evaluation until local prices are per-cluster (task #30):
 with a citywide price there is one argmax, and any re-evaluation
 mechanism, whatever its damping, walks firms toward it.
 
+#### RETRIED at the per-cluster-price commit — the stated precondition was met, and it STILL concentrates (different mechanism)
+
+The entry above ends "do not retry re-evaluation until local prices are
+per-cluster (task #30): with a citywide price there is one argmax, and any
+re-evaluation mechanism, whatever its damping, walks firms toward it."
+Task #30 shipped. Retooling was rebuilt against per-cluster prices and
+measured. The precondition was necessary but NOT sufficient: the sector
+still collapses to a monoculture, and the reason recorded above is no
+longer the reason.
+
+The rebuild is behind `FirmRetooling` (ships **OFF**). It is charter-clean
+and unchanged in spirit: an industrial firm on a `1/MoveSearchPeriod`
+hazard recomputes `ownM` and `bestM` over recipes AT ITS OWN SITE and
+switches only when the gain clears a real cost — the annuitized flow of
+`FirmSeedCapital` at the hurdle rate, scaled by the site it would be
+retooling (`max(0.2, condition) × Quality(level)/Quality(1)`), with an
+affordability gate. That is an inaction band with a price on it, not a
+free flip: the mutant `--mutant-retool-free` takes 199 switches on seed 1
+where the priced rule takes **6**.
+
+**Six switches is enough to end the sector.** Seed 1, 400 ticks, the new
+industrial sector census (`marginprobe`):
+
+| | default | `--firm-retooling` |
+|---|---|---|
+| industrial firms alive | 17 | **13** |
+| distinct outputs | 3 (Plastics 9, Timber 6, Metals 2) | **1 (Plastics 13)** |
+| output HHI | 0.419 | **1.000** |
+| Plastics price@site | 5.57 | **4.71** |
+| sector revenueEma | 1966 | **1298 (−34 %)** |
+
+Firms left Timber at 5.01 for Plastics at 5.57; having all arrived,
+Plastics fell to 4.71 — *below where Timber was when they left it*. The
+switch was individually correct at decision time and collectively
+self-defeating, which is the honest shape of the thing; what is NOT
+acceptable is that the city ends with one good instead of three and a
+third less revenue.
+
+Not universal: seed 9 is milder and **beneficial** (HHI 0.431 → 0.625,
+revenue 2775 → 2827), seed 13 reads HHI 0.889 / 17 alive / revenue 3806.
+Seed 1 is the blocking case, not the typical one.
+
+**Two crowd-aware hurdles were built to fix it. BOTH are measured
+no-ops — do not rebuild either.**
+
+1. **Per-cluster crowd hurdle** — scale the switch hurdle by
+   `Trade.SellersAt(bestOut, destinationCluster)`, so joining a crowded
+   local line costs more. No-op: ~15 industrials spread over 196 clusters
+   leave ≈1 seller per cluster, so the ratio is ≈1 everywhere and the
+   hurdle never moves.
+2. **Citywide crowd hurdle** — same idea against `Trade.SellersCity`,
+   which does have real variation. Also a no-op, and **bit-identical** to
+   the unguarded arm. Honest caveat: a bit-identical result against a
+   term that genuinely varies is also what a MIS-WIRED hurdle looks like,
+   and the flag has since been removed, so this was not independently
+   confirmed to be reaching the comparison. The reading below does not
+   rest on it — attempt 1's no-op is fully explained on its own — but a
+   future attempt should assert the term is live before concluding
+   anything from a null.
+
+**Why no crowd hurdle can work here, stated so nobody retries a third
+variant.** The 6 switches on seed 1 all happen EARLY, while the target
+line is still small — at decision time Plastics is not crowded, so a
+crowd term evaluated at the moment of switching is reading a world that
+has not happened yet. The concentration is not completed by more
+switching. It is completed by **differential survival** afterward, and
+the counts force that reading: 8 firms leave the abandoned lines (Timber
+6 → 0, Metals 2 → 0) while only **6** switches are recorded, and the
+sector ends with 13 alive against 17. Six switches cannot empty two
+lines. The remainder is the exit rule plus the price statistic doing the
+work, with retooling supplying only the initial tilt — so tuning the
+switching rule cannot reach it. (Not decomposed per firm: the fates
+behind the 17 → 13 are inferred from line counts, not tracked
+individually. A future attempt should tag firms and measure it directly
+rather than inherit this inference.)
+
+**Status: `FirmRetooling` stays OFF, and the flip is blocked on the
+differential-survival mechanism, not on the switching rule.** Any future
+attempt should target why a thinned line's survivors do not recover a
+price advantage as their rivals exit — i.e. the interaction of the exit
+margin with the per-cluster price statistic — rather than adding another
+term to the retooling decision.
+
 ## scenarios (default scenario seed)
 
 **RE-MEASURED AT `88fc88c`, the full battery, and the previous 7/10 was stale.**

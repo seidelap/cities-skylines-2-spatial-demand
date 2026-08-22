@@ -2937,6 +2937,61 @@ namespace CS2Econ.Harness
                         + $"| within 2 %: {within2} ({100.0 * within2 / gaps.Count:F0} %), "
                         + $"within 10 %: {within10} ({100.0 * within10 / gaps.Count:F0} %)");
                 }
+
+                // IS THE SECTOR SICK, OR MERELY COMPETITIVE? Per-firm margin
+                // cannot tell those apart: firms competing a rent away toward
+                // zero profit is what a market DOES, and it reads identically
+                // to a sector failing. What separates them is what the city
+                // GETS — how much is produced, of how many distinct goods, at
+                // what price — so this census reports the sector's realized
+                // output, revenue, and concentration rather than only the
+                // distribution of individual cash flows. Deliberately outside
+                // the recipe-drift block above: a sector collapsed to one firm
+                // has no drift to report and is exactly when the census matters.
+                {
+                    // No output/tick column: Firm.OutputThisTick is cleared
+                    // before the probe runs, so it read 0.0 on every arm — a
+                    // number that cannot come out any other way is not
+                    // evidence, and revenueEma already carries what was sold.
+                    var countByOut = new Dictionary<Res, int>();
+                    var revByOut = new Dictionary<Res, double>();
+                    var priceSumByOut = new Dictionary<Res, double>();
+                    double sectorRevenue = 0;
+                    foreach (var f3 in w.Firms)
+                    {
+                        if (f3.Dead || f3.Parcel < 0 || f3.Sector != ZoneKind.Industrial) continue;
+                        countByOut.TryGetValue(f3.Output, out int n0);
+                        countByOut[f3.Output] = n0 + 1;
+                        revByOut.TryGetValue(f3.Output, out double r0);
+                        revByOut[f3.Output] = r0 + f3.ProfitEma;
+                        // The price this firm actually faces is the one at ITS
+                        // OWN site, so the line's price is the mean over its
+                        // members' sites — not a reading from some fixed cell.
+                        priceSumByOut.TryGetValue(f3.Output, out double p0);
+                        priceSumByOut[f3.Output] =
+                            p0 + sim.Engine.Trade.OriginStat(f3.Output, w.Parcels[f3.Parcel].Cluster);
+                        sectorRevenue += f3.ProfitEma;
+                    }
+                    int firmsTotal = 0;
+                    foreach (var kv in countByOut) firmsTotal += kv.Value;
+                    if (firmsTotal > 0)
+                    {
+                        // Herfindahl over the output mix: 1.000 is a monoculture.
+                        double hhi = 0;
+                        foreach (var kv in countByOut)
+                            hhi += Math.Pow((double)kv.Value / firmsTotal, 2);
+                        var lines = new List<string>();
+                        foreach (var kv in countByOut)
+                            lines.Add($"{kv.Key} n={kv.Value} "
+                                + $"price@site={priceSumByOut[kv.Key] / kv.Value:F2} "
+                                + $"revEma={revByOut[kv.Key]:F0}");
+                        Console.WriteLine($"  industrial sector: {firmsTotal} firms, "
+                            + $"revenueEma total={sectorRevenue:F0}, "
+                            + $"output HHI={hhi:F3} ({countByOut.Count} distinct) "
+                            + $"| {string.Join(", ", lines)}");
+                    }
+                }
+
                 Console.WriteLine($"  weber cohorts (single-input industrial, alive): "
                     + $"seeded {sOn}/{sN} on-cheapest-raw, {sM}/{sN} on-margin-argmax-now | "
                     + $"entrants {eOn}/{eN} on-cheapest-raw, {eM}/{eN} on-margin-argmax-now "
