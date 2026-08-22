@@ -1941,6 +1941,88 @@ So #48 must NOT be justified as rescuing sitting firms; they are not in
 trouble. Its bar is the re-entry gate and idle-land share on industrial and
 office specifically, per the #57 correction's instruction.
 
+## #48 P1 BUILT AND MEASURED: vacancy reprices (`VacantRepricing`, ships OFF)
+
+The mechanism: while a Built non-residential parcel stands unoccupied, each
+assessment refresh marks the vacancy spell's quote (`Parcel.VacantMarkLR`,
+seeded at the computed ladder value when the spell starts) down by
+`VacantLRDecay` (0.9/refresh ≈ 1 %/tick), and `AssessedLR` takes
+min(ladder, quote). A Dutch walk: the computed ladder becomes a CEILING, the
+price falls until one firm's own arithmetic clears it, the taker ends the
+walk, and occupancy resets the spell — a new building has been refused by
+nobody and inherits no dead spell's markdown. The refusals are real events
+(every prospects looker surveys every vacant same-sector parcel and declines
+at the quoted price), nothing reads the parcel's own realized rents, so the
+§3 circularity guard is untouched. Scope: Built + non-res + unoccupied +
+non-warehousing; residential vacancy already reprices through the auction.
+Force switches `--vacant-reprice` / `--no-vacant-reprice` / `--vacant-decay N`.
+Flag off is inert by construction and `fingerprint --check` reads all lanes
+matching at the implementation commit.
+
+**MEASURED, 400 ticks, against same-tree flag-off baselines (deterministic
+replication of the baseline confirmed first — successions 20, idle 39.0 %,
+gate median −0.087 reproduced exactly):**
+
+What the walk fixed (seed 1 / seed 9, marginprobe fixture):
+
+| | baseline | `--vacant-reprice` |
+|---|---|---|
+| successions | 20 / 15 | **36 / 29** (office successions 0/0 → 2 of 5 / 5 of 10) |
+| worst vacancy gap (ticks) | 348 / 261 | 246 / 274 |
+| industrial alive, revenueEma | 17, 1983 / 12, 2770 | **21, 2050** / **13, 2916** |
+| office alive | 8 / 9 | 9 / **10** |
+| output HHI (distinct) | 0.419 (3) / 0.431 (3) | 0.420 (3) / 0.456 (3) — no monoculture |
+| re-entry gate median | −0.087 / −0.053 | **−0.035** / −0.053 (the S floor) |
+| construction starts / abandons | 532 / 323 · 588 / 360 | **473 / 262 · 560 / 350** |
+
+And the STOCK census on the OTHER fixture (firmprobe, 9000 households — the
+two fixtures are different worlds and agree): industrial vacants 29 → **18**
+(occupied 25 → 36), office 24 → **14** (occupied 14 → 25), commercial 20 → 19,
+extractor 62 → 62. Industrial+office standing vacancy fell 53 → 32 in one
+400-tick run whose spells mostly began mid-run.
+
+**No churn engine.** The #46 risk — enter at the marked-down quote, get billed
+the computed occupied assessment, die, re-vacate — did not materialize as a
+spiral: margin deaths rose (industrial 19→24 s1) but alive rose MORE (+4),
+cash flow p50 stays positive in all four sectors on both seeds, and the
+dilution of the medians (industrial +27.7 → +18.1) is the mechanism working —
+marginal sites activating at lower rents. Watch it at flip time, not now.
+
+**The remaining vacants are mid-walk or out of scope, and block F proves
+which.** At tick 400 the surviving industrial/office vacants read excess p50
+−0.25 / −6.22 (office baseline: −11.52 — about half conceded), with 3 sites
+already positive and waiting for a looker: walks in progress, so the t=400
+idle share (39.0 → 37.5 % s1, 47.6 → 46.2 % s9) UNDERSTATES the steady state.
+Commercial and extractor vacants are byte-unmoved (−0.05/−0.04 at LR = 0
+too) — the S-on-a-ruin population, #56's, exactly as the pre-build split
+predicted.
+
+**Refuted, and the sign is the interesting part: the #56 coupling is mildly
+NEGATIVE.** The hope was that a marked-down ruin would stop eating the
+developer's return and redevelopment would start — "one mechanism, both
+diseases". Measured: seed 1 redevelopments 0 → 0; seed 9 redevelopments
+**7 → 2**. Repricing REDUCES redevelopment where it existed, and the reason
+is the same substitution that cuts starts and abandons: a cheap standing
+building competes with the project that would scrape it. Coherent economics —
+re-use is cheaper than rebuild, and the city genuinely wastes less — but it
+means #56's ruins get *less* likely to redevelop under this flag, not more.
+#56 stays open, is NOT served by this mechanism, and its fix must now also be
+measured AGAINST this substitution pressure.
+
+**Flip status: NOT FLIPPED.** The case is favourable — re-entry works, both
+fixtures and both seeds agree, construction waste falls, no degeneracy — but
+the flip needs the full gate (canary, laborcanary, verify seeds 0/1/9/13,
+fingerprint accept) and it should land as its own commit with its own entry.
+The rate question is MEASURED, not open: `--vacant-decay 0.95` (half the
+concession rate) on seed 1 gives the same shape slower — successions 33 vs 36,
+industrial alive 19 vs 21, and office UNREACHED (alive 8, cash flow
+byte-identical to baseline: a 0.95 walk cannot concede office's ~85 % land-leg
+gap inside a 400-tick run whose spells start mid-run). No instability at
+either rate — the walk is monotone within a spell by construction, so the
+mechanism is rate-SCALED, not rate-brittle. 0.9 earns the default by being the
+rate that reaches the measured deep gap (~180 ticks); anything much slower
+quietly excludes office, which is the sector the whole item was opened for.
+
 **Restating the task.** #57 as written is closed — the sectors pay. What
 survives is the land: 39–48 % of non-residential stock idle behind an
 assessment nobody tested. That is #56 (the scrape/redevelopment path is
