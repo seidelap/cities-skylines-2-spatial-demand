@@ -2220,16 +2220,25 @@ margin relocations 7 (seed 1) and 5 (seed 9) over the run; seed 9 revenue
 2775 → 2770, HHI 0.431 both. NOT a no-op — lanes move, so the fingerprint
 is re-accepted rather than expected to match.
 
-**GATE IN FLIGHT AT THIS COMMIT — the verdicts below are NOT yet recorded.**
-canary 39, laborcanary 39 and verify on seeds 1/9 were launched against this
-tree and had not returned when it was committed; seeds 0/13 follow. Committed
-ahead of the result deliberately, because container restarts have discarded
-this clone three times in this session and unpushed work is the thing that
-gets lost — NOT because the change is believed safe. The follow-up commit
-records the tallies and re-accepts the fingerprint, or reverts this one.
-One watch item named in advance: the non-residential parity arrears leg
-bounds `alive >= 20`, and a constrained bid qualifies FEWER sites, so firms
-that used to sort down may exit instead.
+**GATE: GREEN.** canary **46/46**, laborcanary **46/46**, verify **63/64
+on every one of seeds 0/1/9/13** — where the single red on each seed was the
+FINGERPRINT check itself, and all 63 economic checks passed. Fingerprint
+re-accepted at signature `C170A8A6F1803F99`; lane deltas are sub-1 % on most
+lanes and a few percent on the money aggregates, which is the expected size
+for a path taken 5–7 times in a 400-tick run.
+
+Two things worth keeping from how this was read at the time. First, 63/64
+IS the passing result for an unflagged behaviour change: the fingerprint
+check is one of the 64, and it is red BY DESIGN until the change is
+recorded. Four seeds returning an identical 63/64 was briefly misread here
+as a systematic economic regression before the check named itself — the
+tally alone could not distinguish "one economic check broke everywhere"
+from "the bookkeeping check is doing its job", and only the attribution
+could. Capture full output, not `tail`, when a verdict may need attributing.
+Second, the risk named in advance — that a constrained bid qualifies FEWER
+sites, so firms that used to sort down would exit instead and trip the
+non-residential parity arrears leg's `alive >= 20` floor — did NOT
+materialise: all 9 nonres-parity checks pass, as does the weber leg.
 
 ## Measured dead ends — do not retry blind
 
