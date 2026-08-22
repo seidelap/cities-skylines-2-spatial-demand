@@ -2090,6 +2090,107 @@ S-floor — and the parcels STILL not re-letting or redeveloping, that is a
 mechanism defect again and this item reopens. Watch the re-entry gate's
 positive count, not the idle share.
 
+## #58 CLOSED BY MEASUREMENT: the absolute test is load-bearing, and the DOC was what was wrong
+
+`RelocateFirm` refuses unless the best candidate beats zero in absolute terms,
+which contradicts the method's own doc comment (that claims only the
+strict-improvement test) and looked like it contradicted the charter's
+defaults rule: relocation fires only when a firm is ALREADY underwater, so a
+candidate improving −100 → −10 was refused and the firm died in place.
+
+Built as `EconParams.RelocateOnImprovement` (`--relocate-improve`), scoped to
+the SITED case only — the displaced case (`from == null`) has `here == 0.0` by
+construction, so there the absolute test IS the defaults rule and was left
+alone. Refusal counters were added on both arms so the flag's own population
+is visible rather than assumed.
+
+**The flag is NOT inert — and that is what makes the result informative.**
+Rescues: 39 (seed 1), 49 (seed 9), against a refused-negative population of
+23 and 51. So the clause really does bind on strictly-improving moves, dozens
+of times a run.
+
+**Run-level, the bar this item set in advance, it is FLAT:**
+
+| | seed 1 base → arm | seed 9 base → arm |
+|---|---|---|
+| firms alive | 116 → 118 | 101 → 102 |
+| margin exits | 73 → 70 | 87 → 85 |
+| idle-land share | 37.5 → 36.9 % | 46.2 → 46.2 % |
+| starts / abandoned | 473/262 → **556/357** | 560/350 → **617/397** |
+
+**And the sector split says where the flatness comes from: the rescued firms
+are kept alive WHILE FAILING.** Whichever sector absorbs the rescues sees its
+underwater share roughly triple — industrial 14.3 → 42.1 % on seed 1 (cash
+flow p50 18.07 → 10.97, margin deaths 24 → 34), office 10.0 → 33.3 % on seed 9
+(cash flow p10 **+444 → −150**). Different sector each seed, identical shape.
+Construction abandonment rises 36 % and 13 % as those firms churn sites.
+
+This is exactly the failure the pre-build scouting warned the obvious metric
+would hide: a successful relocation sets `CashFlowShortTicks = patience/2`, so
+every move buys ~9–27 ticks of life regardless of whether the destination is
+survivable. Graded on per-firm survival this arm looks like a rescue. Graded
+run-level it is a wash, and graded per-sector it is a population of firms
+occupying sites they cannot carry.
+
+**THE ECONOMICS, which is why the code was right and the comment wrong.** A
+site with `bid < assessment` is one the firm cannot carry. Moving there
+converts "die now" into "die later, having consumed a site another firm could
+have used and having triggered a construction start that gets abandoned". The
+firm's real alternative is NOT "stay at the worse negative site" — it is
+EXIT, which frees the site for an occupant who can carry it. The charter's
+staying-put default has an exit branch, and for a firm that can carry nothing
+anywhere, exit IS the improvement. The absolute test enforces that, and the
+doc comment (now corrected in place) simply failed to say so.
+
+**Disposition: the gate stands. `RelocateOnImprovement` ships OFF and is
+retained only as the falsifier** — it is the cheap way for a future reader to
+re-run the arm rather than re-argue it. The refusal counters stay on both
+arms permanently; they are fingerprint-neutral and they are what turned an
+apparently-flat aggregate into a legible finding.
+
+## `StartCongestionPricing`: the named blocker is FIXED, and the flag is now measured NEUTRAL
+
+The registry's blocker was that `congestion` keyed off the softmax DRAW INDEX,
+so identical projects paid different prices for the same tick's scarcity by
+lottery seat (1.00 drawn first, 1.17 drawn seventh) — an order-dependent price
+that is an artifact of the algorithm, not a decision any developer made.
+
+**Fixed.** The price is now uniform across the tick and set by the MARGINAL
+START: returns sorted descending, n starts feasible exactly when the n-th best
+candidate still clears the commit margin at the price n starts would generate.
+`r[n]/c(n)` is strictly decreasing in n, so feasibility is monotone, the scan
+halts at the first refusal, and the last admitted start is the marginal one
+whose price every start pays. Same shape as the housing market's
+marginal-bidder price. The softmax still spreads near-equivalent sites; it no
+longer sets anybody's price.
+
+**Measured against a current same-tree baseline, seeds 1 and 9 — neutral, and
+seed-INCONSISTENT on the one number that used to argue for it:**
+
+| | seed 1 base → arm | seed 9 base → arm |
+|---|---|---|
+| firms alive | 116 → 117 | 101 → 101 |
+| margin exits | 73 → 77 | 87 → 89 |
+| idle-land share | 37.5 → 36.8 % | 46.2 → **46.7 %** |
+| starts / abandoned | 473/262 → **493/287** | 560/350 → **503/302** |
+
+Abandonment moves +10 % on seed 1 and −14 % on seed 9. The pre-fix entry
+recorded "abandons −14 % and −9 %" as the flag's case; that no longer
+reproduces, and the two candidate explanations — the pricing fix itself, and
+the newer baseline (VacantRepricing now ON, which already cut abandons 19 %
+and left less waste to remove) — CANNOT be separated without re-running
+draw-order pricing against the current default, which the code no longer
+supports. Recorded as a confound rather than attributed.
+
+**Disposition: ships OFF, and the reason has changed.** It is no longer
+blocked on a defect — the mechanism is now charter-clean, its global is the
+legitimate kind (the building trades really do clear at metro scale), and it
+replaces an unpriced quota that no developer experiences. It is blocked on
+having no measured benefit: flat on alive, slightly worse on margin exits,
+and directionally inconsistent on construction waste. A flip needs a reason
+beyond neutrality, and "the mechanism is more principled" is not by itself
+one — the quota it replaces is measured no worse.
+
 **Restating the task.** #57 as written is closed — the sectors pay. What
 survives is the land: 39–48 % of non-residential stock idle behind an
 assessment nobody tested. That is #56 (the scrape/redevelopment path is

@@ -2415,18 +2415,31 @@ namespace CS2Econ.Core
             //   worth less than nothing should leave, which is the charter's
             //   stated default for the displaced. CORRECT, and left alone.
             //
-            //   from != null (a failing firm looking for a site it can carry):
-            //   relocation only fires once the firm is ALREADY underwater, so
-            //   `here` is typically negative and a candidate that strictly
-            //   improves on it — say −100 here to −10 there — is refused for
-            //   not being positive in absolute terms, and the firm dies where
-            //   it stands. That reads against the defaults rule: the mechanism
-            //   only has to improve on the default, and dying in place is the
-            //   default it is being measured against.
+            //   from != null (a failing firm): the clause refuses a strictly
+            //   improving move — say −100 here to −10 there — and the firm
+            //   dies where it stands. That LOOKS like it contradicts the
+            //   defaults rule. MEASURED (task #58, both arms, seeds 1 and 9):
+            //   it does not, and this method's own doc comment above was what
+            //   was wrong. A site with bid < assessment is one the firm CANNOT
+            //   CARRY, so moving there converts "die now" into "die later,
+            //   having consumed a site another firm could have used and having
+            //   triggered a construction start that gets abandoned". The
+            //   firm's real alternative is not the worse negative site — it is
+            //   EXIT, which frees this site for an occupant who can carry it.
+            //   The staying-put default has an exit branch, and for a firm
+            //   that can carry nothing anywhere, exit IS the improvement.
             //
-            // RelocateOnImprovement (off until measured) drops the absolute
-            // test for the sited case only. Counters split the refusal either
-            // way so the flag's own population is visible.
+            //   Dropping the clause (RelocateOnImprovement) rescues 39 and 49
+            //   moves per run and is FLAT run-level (alive 116→118 / 101→102,
+            //   margin exits 73→70 / 87→85, idle-land share unmoved) while
+            //   tripling the absorbing sector's underwater share — industrial
+            //   14.3→42.1 % on seed 1, office 10.0→33.3 % on seed 9, office
+            //   cash flow p10 +444→−150 — and raising construction abandonment
+            //   36 % and 13 %. Firms kept alive WHILE FAILING. The flag is
+            //   retained, off, as the falsifier; see KNOWN-RED.
+            //
+            // Counters split the refusal on both arms so the population is
+            // visible rather than assumed.
             if (best == null)
             {
                 if (from != null) FirmRelocateRefusedNoBetter++;
