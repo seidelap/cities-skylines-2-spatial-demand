@@ -559,7 +559,9 @@ namespace CS2Econ.Core
         /// exists this ships built, checked on both arms, and off.</summary>
         public bool NonResLandParity = false;
 
-        /// <summary>VACANCY REPRICES (task #48 P1, `--vacant-reprice`; OFF until
+        /// <summary>VACANCY REPRICES (task #48 P1, `--vacant-reprice`; ON by
+        /// default since the flip commit — the P1 registry entry carries the
+        /// measurements, the flip commit carries the gate. History: was OFF until
         /// gated). While a Built non-residential parcel stands unoccupied, each
         /// assessment refresh marks its land flow down by VacantLRDecay from the
         /// running quote of THIS vacancy spell (Parcel.VacantMarkLR, seeded at
@@ -581,7 +583,7 @@ namespace CS2Econ.Core
         /// unenterable — their blocker is S on a ruin, i.e. #56's redevelopment,
         /// not this. Residential is out of scope: the housing auction already
         /// reprices vacancy there every refresh.</summary>
-        public bool VacantRepricing = false;
+        public bool VacantRepricing = true;
 
         /// <summary>Markdown per assessment refresh of the vacancy-spell quote
         /// (a parcel is reassessed every AssessSlices ticks, so 0.9 here is
