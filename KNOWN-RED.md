@@ -1797,6 +1797,87 @@ production does not, off parity). Extractor at −1 to −17 with 131–374 deat
 looks like a third mode and is **unattributed** — nothing in this file explains
 it yet.
 
+
+## #57 IS STALE — all four sectors pay for themselves on the shipping default
+
+**The headline above ("three of four sectors do not pay for themselves") was
+measured PRE-FLIP and its "shipping default" label is now wrong.** Re-measured
+at `1bbff2f` with the package-flip defaults actually in force
+(`LaborAuction`, `FirmExitMargin`, `StoreLevelSpending`, `FirmProspects`,
+`FillEvidenceWeighting`, `UniformSiteProductivity`, `DerelictRedevelopment`
+all ON):
+
+`marginprobe` cash flow p50 — the SAME statistic and fixture as the stale table:
+
+| sector | pre-flip (stale) | seed 1 | seed 9 | seed 13 |
+|---|---|---|---|---|
+| Commercial | +59.5 / +68.9 / +47.9 | **+300.79** | **+309.72** | **+276.17** |
+| Industrial | −10.3 / −34.1 / −93.8 | **+27.71** | **+102.26** | **+117.24** |
+| Office | −426.7 / −420.4 / −408.8 | **+537.59** | **+552.77** | **+569.53** |
+| Extractor | −15.1 / −16.6 / −1.4 | **+64.55** | **+49.58** | **+49.36** |
+
+Confirmed independently on the OTHER fixture (`parityprobe`, 9000 households
+against marginprobe's 10x10/3000 — they are not the same world, which is why
+both are quoted). Seed 1, revEma − bill − wages: Commercial +272.5,
+Industrial +46.5, Office +275.5, Extractor −7.9.
+
+**Why office recovered, mechanically.** The pre-flip office pathology was that
+`AssessedLR` is a max over levels and the candidate is priced at
+`SPerUnit(lvl, 1.0, p)` — a PRISTINE building — so an office was billed for a
+hypothetical L5 tower while standing at L3.06. Post-flip
+`parityprobe` reads office `meanLevel=5.00 meanTargetLevel=5.00 meanLR=268.73
+meanCurrentResidual=268.73`: the wedge is **exactly zero** and the building IS
+the configuration it is billed for. `UniformSiteProductivity` makes production
+deliver the level premium unconditionally, so the L5 the assessor prices is an
+L5 that genuinely earns L5 money. The flag did what its comment said it would.
+
+**Two registry predictions are refuted by this.** The diagnosis section's
+dependency order said "Office needs (c) alone — its operating margin is already
++8/slot; extractor and industrial need all three", where (c) is task #48's
+realized comparable. Office is now +537 to +569 **without #48 having been built
+at all**, and industrial and extractor are positive without (b) either. (a) —
+the labor auction — was evidently doing far more of the work than the ordering
+implied, which is consistent with its own diagnosis text: the default path
+"hires with no price at the door" and the auction refuses hires above the
+firm's own marginal-revenue forecast.
+
+**DO NOT read this as "the assessment defect is fixed."** It is not; it changed
+symptom, and the new symptom is worse-looking than the old one.
+
+### The defect moved from unprofitable firms to IDLE LAND
+
+| | seed 1 | seed 9 | seed 13 |
+|---|---|---|---|
+| built non-res parcels EFFECTIVELY IDLE | 67/172 (**39.0 %**) | 88/185 (**47.6 %**) | 95/215 (**44.2 %**) |
+| vacant parcels clearing the re-entry gate | 5/63 (7.9 %) | 2/84 (**2.4 %**) | 2/94 (**2.1 %**) |
+| (bid − assess) median | −0.087 | −0.053 | −0.053 |
+| (bid − assess) p90 | −0.035 | −0.035 | −0.035 |
+| vacant condition p50 | 0.05 | 0.05 | 0.05 |
+
+Two to eight percent of vacant non-residential parcels can attract a firm at
+all. On the other 92–98 % the computed assessment sits ABOVE what any firm
+would bid, so the land can neither be re-let nor — `scrape gates ... funded=0,
+mean escrow 0.0 vs mean scrape cost 11724.9` — redeveloped. The exit margin
+converted "firms bleeding on land priced above its worth" into "firms never
+enter and the land sits derelict at condition 0.05". Same cause (an assessment
+computed rather than cleared), different presentation, and the sector cash-flow
+statistic can no longer see it because the firms it would have hurt do not
+exist.
+
+**The miss is small and that is the actionable part.** Median −0.053 and p90
+−0.035 — the registry already predicted exactly this band at the #56/#48 note
+("median miss (−0.035…−0.053) remains and is #56/#48's residual"). Most
+derelict land misses the re-entry bar by a hair, not a mile, so this is a
+near-threshold problem rather than a structural one.
+
+**Restating the task.** #57 as written is closed — the sectors pay. What
+survives is the land: 39–48 % of non-residential stock idle behind an
+assessment nobody tested. That is #56 (the scrape/redevelopment path is
+unfunded) and #48 (the bill should read what comparable sites actually pay).
+Measure any future claim about it on IDLE-LAND SHARE and the re-entry gate,
+not on sector cash flow, which now reads healthy precisely because the
+casualties are gone.
+
 ## The geology collapse: NOT fixed, but the attribution is now wrong in the registry
 
 **WHAT THIS ENTRY USED TO SAY:** "the collapse is the GEOLOGY correction alone
