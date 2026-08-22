@@ -2009,10 +2009,33 @@ means #56's ruins get *less* likely to redevelop under this flag, not more.
 #56 stays open, is NOT served by this mechanism, and its fix must now also be
 measured AGAINST this substitution pressure.
 
-**Flip status: NOT FLIPPED.** The case is favourable — re-entry works, both
-fixtures and both seeds agree, construction waste falls, no degeneracy — but
-the flip needs the full gate (canary, laborcanary, verify seeds 0/1/9/13,
-fingerprint accept) and it should land as its own commit with its own entry.
+**FLIPPED, AND THE GATE IS GREEN.** canary **46/46**, laborcanary **46/46**,
+verify **63/64 on seeds 0/1/9 (fingerprint-only) and 64/64 on seed 13
+post-accept**. Fingerprint accepted at `46A352F7B6D9A22F`; the deltas carry
+the flip's economics with every sign where the mechanism predicts it —
+sumLR −5.62 %, meanRent −2.07 %, treasury −0.11 to −3.79 %, and the labor
+lanes moving TOWARD the thesis: outsideShare −8.29 % (pooled) / −2.34 %
+(store-level) with slotsPerWorker +15.35 % / +5.11 % — re-let firms post
+local slots and workers who commuted out of the region stop.
+
+ONE CHECK NEEDED CONDITIONING, the package flip's class exactly, and it is
+the round's second lesson. The nonres-parity geology leg forces a built
+extractor parcel's cluster suitability to 1.0/0.01 and reads stored
+`AssessedLR` — which under the walk is min(ladder, refused-spell quote).
+Three of four seeds (0/1/13) read 0.000 == 0.000 and went red with the
+geology plumbing entirely healthy; seed 9 passed because `OrderByDescending`
+happened to pick a parcel whose quote had not walked — a verdict decided by
+parcel choice, not mechanism. The probe now asks the LADDER (probe-local
+params with `VacantRepricing = false`) and restores found state by EXACT
+WRITE-BACK of `AssessedLR` and `VacantMarkLR` rather than re-assessing —
+"restore by recomputation" stopped being exact the moment assessment
+carries per-parcel spell state, and any future probe that re-assesses to
+restore will silently perturb the walk. Conditioned, the leg discriminates
+strongly: 3.463 / 40.968 / 19.780 vs 0.000 on seeds 1/0/13. The other four
+direct-`Assess` probes were audited: two residential (walk excludes
+residential), two reading the shipping world rather than forcing
+hypotheticals, and the one-seller leg selects occupied parcels only — leg 1
+was the entire exposed surface.
 The rate question is MEASURED, not open: `--vacant-decay 0.95` (half the
 concession rate) on seed 1 gives the same shape slower — successions 33 vs 36,
 industrial alive 19 vs 21, and office UNREACHED (alive 8, cash flow
