@@ -2191,6 +2191,46 @@ and directionally inconsistent on construction waste. A flip needs a reason
 beyond neutrality, and "the mechanism is more principled" is not by itself
 one — the quota it replaces is measured no worse.
 
+## #48 CLOSED: P1 shipped and flipped; P2's queue MEASURED as having no population, with the reopening condition instrumented
+
+The staged item ends here, and each stage ends differently.
+
+**P0/P1 — shipped, flipped, gated.** `VacantRepricing`: the vacancy spell's
+quote walks down under refusal, the computed ladder is a ceiling, the first
+taker sets the price. The full gate and the accepted fingerprint
+(`46A352F7B6D9A22F`) are recorded in the P1 entry above.
+
+**P2 — the shadow queue over looker bids — has NO POPULATION, measured.**
+The looker-flow census (now a permanent marginprobe line), seeds 1/9, 400
+ticks: spawned 56/43, entered **56/43 (100 %)**, evaporated **0/0**,
+sameTickPairs 7/2. Every looker's bid is satisfied within its own tick —
+it spawned from a parcel whose excess already cleared, so it can never find
+nothing — and a same-sector pair exists in ~1–2 % of ticks, which is only
+the NECESSARY condition for a contest before asking whether the pair wanted
+the same door. A queue would hold zero standing bids at every instant.
+
+**Why, structurally.** A queue prices SCARCITY, and there is none: 37–46 %
+of non-residential stock is idle on every measured seed, supply exceeds
+site demand at every moment, and entry is never rationed. This is the
+residential two-regime split, recognized on the firm side: the
+marginal-bidder queue read is the CLEARED regime's mechanism, the walk is
+the EXCESS-SUPPLY regime's, and the firm side inhabits only the second.
+Housing needs both because housing actually clears; firm land does not.
+Building the queue now would be machinery for a regime the city is not in —
+and its bids would be charter-suspect besides, because a looker that found
+nothing would have to persist as a phantom intent, and none ever finds
+nothing.
+
+**The reopening condition is CHECKED BY THE SHIPPING INSTRUMENT, not filed
+away.** marginprobe now prints the census on every run. The queue becomes
+the right mechanism when firm site demand actually queues:
+`evaporated > 0` sustained (lookers failing to place — real excess demand
+for sites) or sameTickPairs becoming a regular occurrence. At that point
+lookers likely also need to become PERSISTENT prospective-firm agents (the
+migration-prospect pattern housing already uses), which is what makes their
+standing bids the intents of real agents rather than remembered phantoms —
+the design is named here so it does not have to be re-derived.
+
 **Restating the task.** #57 as written is closed — the sectors pay. What
 survives is the land: 39–48 % of non-residential stock idle behind an
 assessment nobody tested. That is #56 (the scrape/redevelopment path is
