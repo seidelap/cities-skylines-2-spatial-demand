@@ -3016,6 +3016,13 @@ namespace CS2Econ.Harness
             Console.WriteLine($"  relocation refusals (sited firms): noBetter={e.FirmRelocateRefusedNoBetter} "
                 + $"negative={e.FirmRelocateRefusedNegative} rescued={e.FirmRelocateRescued} "
                 + $"| relocateOnImprovement={sim.P.RelocateOnImprovement}");
+            // #48 P2 scoping: would a firm-side shadow queue ever hold two
+            // standing bids? sameTickPairs is the necessary condition; a run
+            // reading ~0 there means the queue's population does not exist at
+            // this city scale (lookers that find nothing evaporate — there are
+            // no persistent unsatisfied firm-seekers to queue).
+            Console.WriteLine($"  looker flow: spawned={e.FirmLookersTotal} entered={e.FirmLookerEntries} "
+                + $"evaporated={e.FirmLookerEvaporated} sameTickPairs={e.FirmLookerSameTickPairs}");
             return 0;
         }
 

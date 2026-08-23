@@ -64,6 +64,16 @@ namespace CS2Econ.Core
         /// on — a strictly better site whose absolute value is still ≤ 0.
         /// The flag's own population: if this is zero the flag is inert.</summary>
         public int FirmRelocateRescued;
+        /// <summary>#48 P2 scoping census — the looker loop's own flow. Lookers
+        /// spawned, entries made, lookers that found no site and EVAPORATED
+        /// (there are no persistent unsatisfied firm-seekers, which is the
+        /// structural difference from housing's shadow-queue population), and
+        /// same-tick same-sector looker pairs — the necessary condition for a
+        /// transient queue to ever hold two standing bids at once.</summary>
+        public int FirmLookersTotal;
+        public int FirmLookerEntries;
+        public int FirmLookerEvaporated;
+        public int FirmLookerSameTickPairs;
         /// <summary>Live firms observed holding no site, and how each of them
         /// resolved. Counted where the outcome is decided, so
         /// Displaced == Resited + Exits holds by construction every tick and a
@@ -2337,6 +2347,27 @@ namespace CS2Econ.Core
                 }
             }
             if (lookers != null)
+            {
+                // LOOKER-FLOW CENSUS (#48 P2 scoping — the counters are the
+                // measurement that decides whether a firm-side shadow queue has
+                // a population). A queue's bids must belong to agents that
+                // still exist: housing's shadow queue is legitimate because
+                // unhoused households PERSIST and keep wanting; a looker that
+                // finds no site EVAPORATES at the end of this loop, so a queue
+                // over looker bids would hold the intents of phantoms — unless
+                // either same-tick same-sector lookers actually contest doors
+                // (transient bids overlapping in real time), or lookers are
+                // redesigned as persistent prospective-firm agents. SameTickPairs
+                // counts the necessary condition for the first; if it reads ~0
+                // over a run, a queue would hold two standing bids essentially
+                // never, and the marginal-bidder read has no population at this
+                // city scale. Engine counters are not hashed by Fingerprint.
+                FirmLookersTotal += lookers.Count;
+                var perSector = new Dictionary<ZoneKind, int>();
+                foreach (var s0 in lookers)
+                { perSector.TryGetValue(s0, out int c0); perSector[s0] = c0 + 1; }
+                foreach (var kv in perSector)
+                    if (kv.Value > 1) FirmLookerSameTickPairs += kv.Value - 1;
                 foreach (var sector in lookers)
                 {
                     Parcel? bestPl = null; Res bestChosen = Res.Services; double bestExcess = 0;
@@ -2354,8 +2385,10 @@ namespace CS2Econ.Core
                         double ex = b - LandAccounting.UnitAssessment(pl, P);
                         if (ex > bestExcess) { bestExcess = ex; bestPl = pl; bestChosen = ch; }
                     }
-                    if (bestPl != null) EnterAt(bestPl, bestChosen);
+                    if (bestPl != null) { FirmLookerEntries++; EnterAt(bestPl, bestChosen); }
+                    else FirmLookerEvaporated++;
                 }
+            }
         }
 
         /// <summary>The firm side of "re-sort down the price gradient" (§4.2):
