@@ -50,8 +50,9 @@ revertible to vanilla behavior, plus the τ_S/τ_L sliders and per-district poli
 | Design | File | Contents |
 |---|---|---|
 | §4.2 Tier B | `Access.cs` | w(p,q)=e^(−θc) weights; per-segment consumer access (jobs by tier, goods, schools, amenities, −pollution/noise); firm-side terms (commercial phantom-entrant capture, industrial exit-parity pricing + Weber input haul, office agglomeration A(p)^γ) |
-| §4.2 | `Balancing.cs` | Sinkhorn/IPF doubly-constrained balancing on cluster access matrices; **residual demand** per (cluster, type) net of incumbents *and pipeline ledger* |
-| §4.2 | `Insolvency.cs` | bottom-of-market pipeline: cut consumption → re-sort down price gradient → funded emigration → sheltered homeless with capacity; re-housing via the same allocation machinery |
+| §4.2 | `HousingAuction.cs`, `LaborAuction.cs` | the assignment markets that settle who gets which door and which job — ascending auctions clearing at the marginal bidder, with the shadow queue of standing bids read as **residual demand** per (cluster, type) net of incumbents *and pipeline ledger* |
+| §4.2 | `Balancing.cs` | cold-start and flag-off fallback only: a doubly-constrained match over the cluster access matrix, used before any market has cleared and on arms where the auctions are off |
+| §4.2 | `Allocation.cs` | bottom-of-market pipeline: cut consumption → re-sort down price gradient → funded emigration → sheltered homeless with capacity; re-housing via the same allocation machinery |
 | §4.3 Tier C | `LandAccounting.cs` | S=(h+δ+m)·V with V=condition×RC; LR(p)=max over permitted configs of [Bid−S−a(h,L)·(transition cost−escrow)]; P_L=LR/(r+τ_L); split-rate taxes; wedge→escrow earmark (per-district toggle); the single annuity operator a(h,L); instant co-op re-rate (every occupant pays the parcel's live market unit assessment; see the deviation note below) |
 | §4.4 Tier C′ | `Leveling.cs` | ℓ*=argmax_ℓ[Bid_ℓ−S_ℓ] with RC_ℓ=RC₁·γ^(ℓ−1); renovation escrow clock (fire at ΔRC, re-anchor, re-arm); downgrade = same mechanism sign-flipped (underfunded S → condition decay); scrape-and-rebuild warehousing; owner-tag consent gates, within-segment moving-cost distributions |
 | §4.1 Tier A | `Migration.cs` | per-segment Rosen–Roback attractiveness (wages, rents, amenities); asymmetric lagged elasticity; outside-world scalars: reservation threshold (drawdown + replenish), prominence, network memory; firm entry on residual profit |
@@ -65,7 +66,7 @@ revertible to vanilla behavior, plus the τ_S/τ_L sliders and per-district poli
 **Tick structure** (`EconomyEngine`): a *fast tick* (trade transient decay, construction
 progress, escrow accrual, the 1/N slice of PARCELS whose assessment slice falls
 now, per-household re-rate against it, insolvency steps); a *refresh tick* driven by access dirty flags plus a slow staggered
-sweep (access matrices → IPF → residuals → ℓ* → LR for dirty clusters only); a *slow tick*
+sweep (access matrices → market clear → residuals → ℓ* → LR for dirty clusters only); a *slow tick*
 (migration scalars, sustained-Q EMAs, calibration factors). No citywide synchronized event
 exists anywhere — the anti-synchronization constraint (design §3) is structural: per-entity
 phases come from hashed ids, staggering from real heterogeneity draws.
@@ -91,7 +92,7 @@ are harness work (this repo, any machine); stage 7 is the in-game phase.
 | Stage | Work | Proven by |
 |---|---|---|
 | 0 | Scaffold, params, `SyntheticCity`, `Ledger`, ports | builds + ledger conservation smoke test |
-| 1 | Tier B read-only: access matrices, IPF, residuals, overlays | IPF marginals match (jobs claimed = jobs available, workers = workers); residuals predict fill in engineered scenarios; overlay values finite and stable |
+| 1 | Tier B read-only: access matrices, market clear, residuals, overlays | the clear is an equilibrium (capacity, individual rationality, no envy beyond the price band) and jobs filled equal jobs taken by construction; residuals predict fill in engineered scenarios; overlay values finite and stable |
 | 2 | Tier D trade scalars + parity bands | §6: monoculture bend ≥30%; truck→rail→backstop progression; concurrent-exit marginal-price equalization; parity band responds to congestion cost |
 | 3 | Tier C shadow accounting (τ_L logged, not levied) | circularity-guard unit test; incidence chain (tax → bids → LR) moves in shadow; escrow ramp convexity |
 | 4 | Construction rewiring on live residuals | §6: vacancy localization ≥10:1 vs vanilla baseline (A/B); cobweb damping with ledger on/off; stalled projects in engineered bust; calibration convergence |
@@ -112,7 +113,7 @@ read "vs vanilla" run both modes on identical scenarios and seeds.
 
 Unit-level invariants, all deterministic:
 
-1. **IPF consistency** — after balancing, row/col sums match supplies/demands within 1e-4.
+1. **Market consistency** — the clear is checked as an equilibrium rather than as a balanced matrix: capacity respected, every participant individually rational against its own outside option, and no participant envying an allocation it could have afforded beyond the price band.
 2. **Circularity guard** — perturbing realized rent leaves assessment bit-identical.
 3. **Ledger conservation** — Σ(balances) + treasury + net phantom flow constant per tick;
    escheat routes to national counterparty; escrow drain-to-condition conserves.
@@ -271,6 +272,6 @@ adapters, re-run out-of-game suite, unpin.
 | Save persistence of mod-native state unproven | Spike is gate #1 of stage 7; sidecar fallback designed |
 | Demand-bar binding contract unknown | Fallback: own bar cluster via `registry.extend` (InfoLoom precedent) |
 | Prefab-swap renovation with tenants in place unverified | Isolated in one adapter method; fallback: evict-rehouse through the allocation machinery (design degrades gracefully) |
-| IPF cost at city scale | Cluster-level matrices only (~10³ clusters), θ-decay truncation makes them sparse; refresh rides dirty flags — performance test asserts scaling shape |
+| Market-clear cost at city scale | Cluster-level matrices only (~10³ clusters), θ-decay truncation makes them sparse; refresh rides dirty flags — performance test asserts scaling shape |
 | Cross-repo coupling to CS2Path internals | Coupling is one interface (`IAccessProvider`); harness never links CS2Path |
 | Economy tuning drift vs game patches | All parameters named in `Params.cs` with design-doc references; calibration loop measures drift rather than assuming zero |

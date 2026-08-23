@@ -9,7 +9,7 @@ shipped as a code mod sharing infrastructure with the routing rebuild
 Vanilla CS2 drives construction from a single global demand scalar, destroys location rents on
 payment, trades at flat infinite-depth prices, and grinds every building toward max level. This
 rebuild replaces that with three spatial tiers — migration against a weakly endogenous outside
-world, allocation by market access with doubly-constrained balancing, and local absorption where
+world, allocation by markets that clear between individuals, and local absorption where
 construction and leveling respond to *residual* submarket demand — on a land-accounting core
 that closes the fiscal loop: the treasury is the residual claimant on location value.
 

@@ -2231,6 +2231,53 @@ migration-prospect pattern housing already uses), which is what makes their
 standing bids the intents of real agents rather than remembered phantoms —
 the design is named here so it does not have to be re-derived.
 
+## THE BAND MEASUREMENT, and what it says the drift tail actually is
+
+`FirmRetooling` was held off pending one question: does the machinery-bill band
+close the recipe-drift tail without the monoculture collapse the free-retooling
+mutant produced (20/26 seeds)? Measured at the current default, seeds 1/9/13,
+400 ticks, against same-tree baselines:
+
+| | s1 base → band | s9 base → band | s13 base → band |
+|---|---|---|---|
+| drift p90 | 1.4 → **0.0 %** | 19.9 → **3.3 %** | 11.1 → **3.1 %** |
+| drift max | 37.2 → 0.0 % | 24.2 → 5.7 % | 18.8 → 9.0 % |
+| within 10 % | 90 → **100 %** | 85 → **100 %** | 89 → **100 %** |
+| output HHI (distinct) | 0.420 (3) → **1.000 (1)** | 0.456 (3) → **0.625 (2)** | 0.438 (4) → **0.900 (2)** |
+| sector revenueEma | 2050 → **1302** | 2916 → 2860 | 4076 → 4137 |
+| retools | 0 → 4 | 0 → 28 | 0 → 7 |
+
+**Both halves of the question are answered, and they answer in opposite
+directions.** The band closes the tail completely — every live industrial ends
+within 10 % of its own site's argmax on all three seeds, which is what the
+mechanism was for. And concentration rises on all three seeds regardless:
+outputs 3→1, 3→2, 4→2, with seed 1 going to outright monoculture and losing
+37 % of sector revenue. Pricing the switch slows the stampede (4/28/7 retools
+against the mutant's 199) without preventing where it ends.
+
+**The reading that makes both results one fact: the drift tail IS the output
+diversity.** A firm sitting off its own site's argmax is a firm making
+something other than what the argmax says, and the argmax is largely COMMON
+across firms — same prices, similar sites. Drift is therefore not slack to be
+tightened; it is the dispersion that keeps the city making three or four goods
+instead of one. Closing it and losing diversity are not a tradeoff between two
+mechanisms, they are the same measurement read from either end, which is why
+no damping constant fixes it: the concentration completes through differential
+survival after the switches, not through the switching itself.
+
+**Disposition: `FirmRetooling` ships OFF, and the ~10–20 % drift tail on
+defaults is a PRICE DELIBERATELY PAID, not an open defect.** It buys three to
+four distinct industrial outputs. Do not open a task to "close the drift tail"
+without first stating what will preserve diversity — the tail and the
+diversity are the same number.
+
+**Reopening condition.** Retooling becomes worth revisiting if a mechanism
+appears that lets a THINNED line's survivors recover a price advantage as
+rivals leave — the differential-survival channel this measurement isolates.
+The observable is the industrial sector census: distinct outputs holding at 3+
+while drift p90 falls. Anything that closes drift while HHI rises has
+reproduced this result and should be closed against it, not re-measured.
+
 **Restating the task.** #57 as written is closed — the sectors pay. What
 survives is the land: 39–48 % of non-residential stock idle behind an
 assessment nobody tested. That is #56 (the scrape/redevelopment path is
