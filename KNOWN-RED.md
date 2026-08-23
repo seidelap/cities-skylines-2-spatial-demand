@@ -2278,6 +2278,63 @@ The observable is the industrial sector census: distinct outputs holding at 3+
 while drift p90 falls. Anything that closes drift while HHI rises has
 reproduced this result and should be closed against it, not re-measured.
 
+## §6 RE-MEASURED AT HEAD, and the suite's runtime is now the thing that needs a budget
+
+The acceptance scenarios had not been run since the flips. Re-run at
+`5228f4d`, one scenario at a time (`scenarios --only <key>` genuinely
+filters, unlike `verify --only`):
+
+| scenario | verdict | seconds |
+|---|---|---|
+| vacancy | PASS | — |
+| modes | PASS | 5 |
+| perf | PASS | 94 |
+| stalled | PASS | 274 |
+| fiscal | PASS | 426 |
+| tradebend | PASS | 696 |
+| overlay | PASS | 1210 |
+| boombust | PASS | 1435 |
+| nosync | PASS | 1509 |
+| levels | (running past 1500) | — |
+
+Nine of ten pass and none fails. The claims that most needed re-checking
+after this session's flips all hold: exits still form a distribution rather
+than a cliff (`nosync`, 4673 exits), the fiscal loop still closes (corridor
++23.6 %), stalled construction still appears in engineered busts (163
+abandoned mid-build), and Tier B refresh still scales with clusters rather
+than parcel count (`perf`, 45.1 ms at 8 parcels/cluster).
+
+**THE SUITE CANNOT BE RUN AS A UNIT ANY MORE, and that is a budget fact, not
+a defect.** The seven timed passes total ~69 minutes; `nosync` adds 25 and
+`levels` exceeds 25 on its own, so `scenarios` and `all` need roughly three
+hours. `levels` runs 2600 ticks at 8000 households and dominates. Nothing
+here says the model got slower per tick — `perf` passes on exactly that
+question — the suite simply accumulated simulated ticks as fixtures were
+added and flags were flipped. Budget it at 3 h, or run it per-key, and note
+that `all` (which writes RESULTS.md) inherits the same requirement.
+
+### The wrapper defect that made a killed run report success
+
+Worth its own heading because it corrupts verdicts silently and it nearly
+landed a false green here. The suite was first invoked as:
+
+    timeout 5400 harness scenarios > out.txt 2>&1; echo "EXIT=$?"
+
+`timeout` killed it at 90 minutes having finished ONE scenario. But `$?` is
+read after the redirect completes, and the trailing `echo` is what the task
+runner sees, so the run reported **exit code 0**. Grepping the truncated
+output for `[FAIL]` found none — because the suite never reached the other
+nine checks. Two independent signals both said "pass", and both were
+artifacts of the invocation.
+
+This is the same family as the earlier `| tail -8` that discarded a verify
+run's attribution: the harness answering a question that was not asked. The
+rule both incidents point at: **an absence of failures is only evidence when
+the run is known to have COMPLETED.** Capture the real exit status
+(`rc=$?` immediately after the command, before any other command runs), and
+treat a tally line — `scenarios: N/M` — as the only proof of completion. A
+verdict grep without a completion check is a check that cannot fail.
+
 **Restating the task.** #57 as written is closed — the sectors pay. What
 survives is the land: 39–48 % of non-residential stock idle behind an
 assessment nobody tested. That is #56 (the scrape/redevelopment path is
