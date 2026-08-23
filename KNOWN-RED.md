@@ -2295,7 +2295,7 @@ filters, unlike `verify --only`):
 | overlay | PASS | 1210 |
 | boombust | PASS | 1435 |
 | nosync | PASS | 1509 |
-| levels | (running past 1500) | — |
+| levels | **UNVERIFIED — exceeds 5400** | >5400 |
 
 Nine of ten pass and none fails. The claims that most needed re-checking
 after this session's flips all hold: exits still form a distribution rather
@@ -2304,14 +2304,32 @@ than a cliff (`nosync`, 4673 exits), the fiscal loop still closes (corridor
 abandoned mid-build), and Tier B refresh still scales with clusters rather
 than parcel count (`perf`, 45.1 ms at 8 parcels/cluster).
 
-**THE SUITE CANNOT BE RUN AS A UNIT ANY MORE, and that is a budget fact, not
-a defect.** The seven timed passes total ~69 minutes; `nosync` adds 25 and
-`levels` exceeds 25 on its own, so `scenarios` and `all` need roughly three
-hours. `levels` runs 2600 ticks at 8000 households and dominates. Nothing
-here says the model got slower per tick — `perf` passes on exactly that
-question — the suite simply accumulated simulated ticks as fixtures were
-added and flags were flipped. Budget it at 3 h, or run it per-key, and note
-that `all` (which writes RESULTS.md) inherits the same requirement.
+**NINE OF TEN PASS; THE TENTH IS UNVERIFIED, WHICH IS NOT THE SAME AS
+PASSING.** `levels` was given a 90-minute budget of its own and produced no
+verdict line at all — it exceeds 5400 s by itself. Its cost is arithmetic
+rather than mysterious: 2600 ticks at 8000 households against ~400 ticks at
+3000 for a probe that takes ~10 minutes is roughly a 17x scaling, and the
+scenario runs a paired vanilla arm on top. Two to three hours for this one
+scenario, and four to five for the suite.
+
+**The consequence, stated plainly: the level-geography target of §6 is
+currently unverifiable in practice, and has not been confirmed at HEAD.**
+That is an instrument gap, not a model result — nothing here says the level
+map is wrong, only that the check which would say so cannot be run at a cost
+anyone will pay. `perf` passing on the per-tick question rules out a
+performance regression as the cause; the suite simply accumulated simulated
+ticks as fixtures and flags were added.
+
+Options when this is next picked up, in the order they should be tried: run
+`levels` alone against a wall-clock of 3 h+ and record the verdict (cheapest,
+answers the question once); or measure whether its 2600-tick horizon is still
+load-bearing — the horizon was chosen when the level ladder settled more
+slowly, and if it converges by 1200 the target is verifiable at half the
+cost. Do NOT shrink the fixture's population to make it fit: the level map is
+the thing under test and it is a function of city size.
+
+Everything else in the suite is fine per-key; `all` (which writes RESULTS.md)
+inherits the whole requirement and cannot currently complete.
 
 ### The wrapper defect that made a killed run report success
 
