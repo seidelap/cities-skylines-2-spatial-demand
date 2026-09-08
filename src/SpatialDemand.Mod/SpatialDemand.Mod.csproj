@@ -17,7 +17,8 @@
     <Reference Include="Colossal.Logging" Private="false" />
     <Reference Include="Colossal.IO.AssetDatabase" Private="false" />
     <Reference Include="Colossal.Localization" Private="false" />
-    <Reference Include="Colossal.Serialization.Entities" Private="false" />
+    <Reference Include="Colossal.Mathematics" Private="false" />
+    <Reference Include="Colossal.Collections" Private="false" />
     <Reference Include="Unity.Entities" Private="false" />
     <Reference Include="Unity.Collections" Private="false" />
     <Reference Include="Unity.Mathematics" Private="false" />
