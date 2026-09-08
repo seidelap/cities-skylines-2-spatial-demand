@@ -16,9 +16,18 @@ shared reservations and deterministic ordering. New diagnostics report housing
 settlements independently of new choices and explain delegated attempts. Business
 reports include sampled buyers/sites, compatibility, reasons, costs and receipts.
 
-Business startup, live selection, entry and settlement still need separate game
-evidence. See [business model and acceptance checks](business-model.md). Earlier
-housing results below do not establish that the new business integration works.
+Version 0.2 loaded in the saved city at 20:08:19 UTC. Its new housing status line
+reported `faulted=False` and no pending receipts. Business observe mode ran at
+20:08:53 UTC and thereafter: six stocked companies, one vacant sampled premises,
+one compatible activity and no proposals because the required input stock was
+unavailable. An active buyer request was observed in a later snapshot. After the
+first 31.63 ms update, observed batch times were 0.21–2.69 ms in this small city.
+This is startup and live evaluation evidence, not successful business entry or a
+large-city performance result.
+
+Business entry and settlement still need separate game evidence for each sector.
+See [business model and acceptance checks](business-model.md). Earlier housing
+results below do not establish those new business behaviors.
 
 ## Build evidence — September 8, 2026
 
