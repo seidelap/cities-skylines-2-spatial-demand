@@ -9,8 +9,9 @@ Construction 0.3 additionally uses the pinned snapshot's
 `ObjectDefinition`, `OwnerDefinition`, `BuildingConstructionSystem`, `Worker`,
 `PlaceableObjectData` and `ConsumptionData`. These establish the demand bypass flag,
 16-frame/offset-13 cadence, temporary definition ownership, Modification1 ordering,
-construction completion component and observable cost/workplace fields. This new
-integration still needs compilation and runtime verification on the installed game.
+construction completion component and observable cost/workplace fields. Version 0.3
+compiled against the installed 1.6.0f1 assemblies after resolving the `MovingAway`
+namespace to `Game.Agents`; runtime phase-order and behavioral checks remain pending.
 
 Business integration also consulted the same pinned game snapshot's
 `CommercialSpawnSystem`, `IndustrialSpawnSystem`, `Game.Citizens.CompanyInitializeSystem`,

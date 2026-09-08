@@ -1,10 +1,12 @@
 # Tenant-backed construction prototype (0.3)
 
-**Implementation status:** the portable model passes its tests. The new game
-adapter has not yet been compiled against the installed game or tested in-game.
-The previously deployed and smoke-tested build is 0.2. Both construction options
-default off. No claim of validated construction behavior follows from housing's
-earlier live tests.
+**Implementation status:** all 59 portable tests pass on Mac and Windows. The new
+game adapter compiled and passed official postprocessing against installed game
+1.6.0f1 with zero warnings/errors and was deployed on September 8, 2026 at 20:52 UTC.
+Construction runtime acceptance is still pending; the prior live smoke-tested
+version was 0.2. Both construction options default off. For the test session,
+construction Observe was explicitly enabled while Apply remained off. No claim of
+validated construction behavior follows from housing's earlier live tests.
 
 ## Decision
 
@@ -116,9 +118,9 @@ capital cost and source, upkeep, payback, surplus and business rejection reasons
 pipeline blocking, proposal/permit/rejection counts and elapsed time. Settlement
 reports actual building identity and renter count separately from the forecast.
 
-Required Windows/game checks (all outstanding for 0.3):
+Required Windows/game checks (compilation passed; runtime checks outstanding):
 
-1. Compile/postprocess against the installed game; inspect phase order and confirm
+1. Compilation/postprocessing passed. Inspect runtime phase order and confirm
    the temporary flag is restored to its previous value, including unload.
 2. Observe: proposals are logged and every vanilla definition remains intact.
 3. Apply with no acceptable bids: newly zoned land stays empty, including attached

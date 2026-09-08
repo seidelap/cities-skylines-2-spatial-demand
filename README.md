@@ -10,8 +10,9 @@ city-reload smoke checks on game 1.6.0f1. Individual preference persistence, dif
 settlement cases and large-city performance are still unvalidated. Version 0.2 adds
 business entry and richer diagnostics; its business gameplay acceptance is separate
 from the earlier housing results. Version 0.3 adds construction selection for
-residential and business buildings. Its 59 portable model tests pass, but the new
-construction adapter has not yet been compiled against the game or validated live.
+residential and business buildings. Its 59 portable model tests pass on Mac and
+Windows; the real game build and official postprocessor pass with zero warnings
+or errors. Construction behavior has not yet been validated live.
 Both construction switches start off. There is no multiplayer implementation.
 
 The previous economy prototype is preserved at commit
@@ -117,8 +118,8 @@ dotnet build src/SpatialDemand.Mod -c Release -p:CSIIToolPath='C:\path\to\toolch
 The current adapter was checked against the source references listed in
 [API references](docs/api-references.md), including a November 2025 game source
 snapshot. Compilation and official postprocessing against game 1.6.0f1 have now
-passed **for version 0.2**. The new 0.3 construction hooks have not passed that build
-or runtime acceptance yet. Earlier results do not establish their compatibility.
+passed for versions 0.2 and 0.3. The new 0.3 construction hooks have not passed
+runtime acceptance yet. Compilation does not establish gameplay behavior.
 
 ## Where to read the code
 

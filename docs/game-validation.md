@@ -2,13 +2,24 @@
 
 ## Version 0.3 — tenant-backed construction
 
-On September 8, 2026, all 59 portable tests passed locally, including 16 development
-checks. The new construction adapter is implemented but **not yet compiled or
-tested against the installed game**. Both construction switches default off.
+On September 8, 2026, all 59 portable tests passed on Mac and Windows, including 16
+development checks. The real game build and official postprocessor succeeded with
+zero warnings/errors and deployed at 20:52:08 UTC. Source revision:
+`d5e4245cc7c0b1580e23aebc791479634d338ef9` (clean checkout). Binary SHA256:
+`A7D3543B86F755B88525C27C0E68F7348F9151494B3A4021464C4559B33ADB8C`.
+The Game.dll hash remains the version 0.2 test's recorded installed assembly.
+**Construction behavior is not yet tested in-game.** Both construction switches
+default off. For the pending live check, the saved mod configuration explicitly
+sets ConstructionEnabled=true and ApplyConstruction=false; existing housing Apply
+remains true. Its prior configuration was backed up on the VM.
 The VM stopped at its authorized 20:19:19 UTC deadline before this work. The user
 authorized another 90-minute session, with a new STOP deadline of 22:14:36 UTC;
-its first start attempt failed because the zone had no GPU capacity. Version 0.2
-remains the last deployed build. Follow the separate
+its first start attempt failed because the zone had no GPU capacity. The retry
+succeeded and the cloud STOP setting was verified. Version 0.3 is now deployed,
+but the game was still closed at the last check. Windows App automation timed out
+on both reading and acting on its disconnection notice; the secure RDP tunnel was
+confirmed listening, and the user was asked to reconnect and load the saved city.
+Follow the separate
 [construction acceptance procedure](construction-model.md#diagnostics-and-acceptance);
 earlier household and business evidence below does not validate these new hooks.
 
