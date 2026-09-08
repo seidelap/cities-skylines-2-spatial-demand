@@ -16,6 +16,7 @@ internal static class Program
     private static int Main()
     {
         BusinessTests();
+        DevelopmentTests();
         Test("cheaper otherwise-identical home wins", () => Equal(2L, Choose(Home(1, 30), Home(2, 20)).HomeId));
         Test("actual route duration affects choice", () => Equal(2L, Choose(Home(1, seconds: 7200), Home(2)).HomeId));
         Test("affordability is a hard constraint", () => Equal(Rejection.Unaffordable, Housing.Evaluate(Person(), Home(1, 51)).Rejection));
@@ -205,6 +206,60 @@ internal static class Program
         { var buyer = Buyer(); buyer.Retail = false; Equal(null, Book(new[] { buyer }).Choose(new[] { Shop() })); });
         Test("business rejects invalid prices", () => Equal("invalid-activity", Book().Evaluate(Shop(price: double.NaN)).Reason));
         Test("business tie-break is independent of option ordering", () => Equal(1L, Book().Choose(new[] { Shop(2), Shop(1) })!.Activity.Id));
+    }
+    private static void DevelopmentTests()
+    {
+        DevelopmentProject Project(long id = 1, double cost = 100, double upkeep = 1, int units = 2) =>
+            new DevelopmentProject { Id = id, Site = id, Units = units, ConstructionCost = cost,
+                UpkeepPerDay = upkeep, PaybackDays = 10,
+                Bids = new[] { new TenantBid { Tenant = 1, Rent = 20 }, new TenantBid { Tenant = 2, Rent = 15 } } };
+        Test("development chooses occupancy and rent from tenant bids", () =>
+        { var c = new DevelopmentMarket().Choose(new[] { Project() })!; Equal(2, c.Tenants.Count); Equal(15d, c.RentPerUnit); Equal(190d, c.Surplus); });
+        Test("development waiting beats a project that cannot repay its cost", () =>
+            Equal(null, new DevelopmentMarket().Choose(new[] { Project(cost: 1000) })));
+        Test("development requires tenants even with free construction", () =>
+        { var p = Project(cost: 0, upkeep: 0); p.Bids = Array.Empty<TenantBid>(); Equal("no-tenants", new DevelopmentMarket().Evaluate(p).Reason); });
+        Test("development takes the greatest positive project surplus", () =>
+            Equal(2L, new DevelopmentMarket().Choose(new[] { Project(), Project(2, cost: 50) })!.Project.Id));
+        Test("development includes ongoing building upkeep", () =>
+            Equal(null, new DevelopmentMarket().Choose(new[] { Project(upkeep: 30) })));
+        Test("development cannot pledge the same households twice", () =>
+        { var book = new DevelopmentMarket(); book.Commit(book.Choose(new[] { Project() })!); Equal(null, book.Choose(new[] { Project(2) })); });
+        Test("development cannot fund two designs for one site", () =>
+        { var p = Project(); var book = new DevelopmentMarket(sites: new[] { p.Site }); Equal("site-committed", book.Evaluate(p).Reason); });
+        Test("development rejects stale commitments", () =>
+        { var book = new DevelopmentMarket(); var c = book.Choose(new[] { Project() })!; book.Commit(c);
+            try { book.Commit(c); } catch (InvalidOperationException) { return; } throw new Exception("Stale commitment accepted"); });
+        Test("development duplicate quotes do not create extra tenants", () =>
+        { var p = Project(); p.Bids = new[] { new TenantBid { Tenant = 1, Rent = 20 }, new TenantBid { Tenant = 1, Rent = 30 } };
+            var c = new DevelopmentMarket().Evaluate(p); Equal(1, c.Tenants.Count); Equal(30d, c.DailyRevenue); });
+        Test("development can prefer fewer higher paying tenants", () =>
+        { var p = Project(); p.Bids = new[] { new TenantBid { Tenant = 1, Rent = 100 }, new TenantBid { Tenant = 2, Rent = 1 } };
+            Equal(1, new DevelopmentMarket().Evaluate(p).Tenants.Count); });
+        Test("development ties are deterministic", () =>
+            Equal(1L, new DevelopmentMarket().Choose(new[] { Project(2), Project() })!.Project.Id));
+        Test("development invalid costs cannot authorize construction", () =>
+        { foreach (double bad in new[] { -1d, double.NaN, double.PositiveInfinity })
+            Equal("invalid-project", new DevelopmentMarket().Evaluate(Project(cost: bad)).Reason); });
+        Test("housing construction bid respects affordability and existing valuation", () =>
+        { var person = Person(); var home = Home(99); double rent = DevelopmentMarket.HousingBid(person, home);
+            True(rent <= 50 && rent > 49.99); True(Housing.Evaluate(person, Home(99, rent)).Utility > 0.05); });
+        Test("housing construction bids compete with staying and existing vacancies", () =>
+        { double ordinary = DevelopmentMarket.HousingBid(Person(), Home(99));
+            double alternative = DevelopmentMarket.HousingBid(Person(), Home(99), outsideUtility: 0.8);
+            True(alternative < ordinary); True(Math.Abs(alternative - 15) < 1e-6); });
+        Test("housing construction location can make waiting preferable", () =>
+            Equal(0d, DevelopmentMarket.HousingBid(Person(), Home(99, seconds: 50000))));
+        Test("development random allocations obey all accepted tenant budgets", () =>
+        { var random = new Random(71);
+            for (int i = 0; i < 200; i++)
+            { var p = Project(cost: 0, upkeep: 0, units: random.Next(1, 20));
+                p.Bids = Enumerable.Range(1, 30).Select(n => new TenantBid { Tenant = n, Rent = random.Next(1, 200) }).ToArray();
+                var c = new DevelopmentMarket().Evaluate(p);
+                True(c.Tenants.Count <= p.Units); True(c.Tenants.All(t => p.Bids.Single(b => b.Tenant == t).Rent >= c.RentPerUnit));
+                foreach (var bid in p.Bids) True(Math.Min(p.Units, p.Bids.Count(b => b.Rent >= bid.Rent)) * bid.Rent <= c.DailyRevenue);
+            }
+        });
     }
     private static void True(bool value) { if (!value) throw new Exception("Assertion failed."); }
     private static void Equal<T>(T expected, T actual) { if (!EqualityComparer<T>.Default.Equals(expected, actual)) throw new Exception($"Expected {expected}; got {actual}."); }

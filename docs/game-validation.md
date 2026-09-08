@@ -1,4 +1,16 @@
-# In-game acceptance: housing smoke tests passed; business tests pending
+# In-game acceptance: housing smoke tests passed; business and construction tests pending
+
+## Version 0.3 — tenant-backed construction
+
+On September 8, 2026, all 59 portable tests passed locally, including 16 development
+checks. The new construction adapter is implemented but **not yet compiled or
+tested against the installed game**. Both construction switches default off.
+The VM stopped at its authorized 20:19:19 UTC deadline before this work. The user
+authorized another 90-minute session, with a new STOP deadline of 22:14:36 UTC;
+its first start attempt failed because the zone had no GPU capacity. Version 0.2
+remains the last deployed build. Follow the separate
+[construction acceptance procedure](construction-model.md#diagnostics-and-acceptance);
+earlier household and business evidence below does not validate these new hooks.
 
 ## Version 0.2 — business entry and diagnostics
 

@@ -4,6 +4,8 @@ using Game;
 using Game.Modding;
 using Game.SceneFlow;
 using Game.Simulation;
+using Game.Tools;
+using Unity.Entities;
 
 namespace SpatialDemand.Mod
 {
@@ -20,14 +22,18 @@ namespace SpatialDemand.Mod
             AssetDatabase.global.LoadSettings("SpatialDemand", Settings, new Settings(this));
             updateSystem.UpdateBefore<HousingChoiceSystem, HouseholdFindPropertySystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateAt<BusinessChoiceSystem>(SystemUpdatePhase.GameSimulation);
-            Log.Info("Spatial Demand: housing choice and business entry prototype loaded; housing and business have separate observe/apply options.");
+            updateSystem.UpdateBefore<ConstructionProposalSystem, ZoneSpawnSystem>(SystemUpdatePhase.GameSimulation);
+            updateSystem.UpdateAfter<ConstructionProposalRestoreSystem, ZoneSpawnSystem>(SystemUpdatePhase.GameSimulation);
+            updateSystem.UpdateBefore<ConstructionChoiceSystem, GenerateObjectsSystem>(SystemUpdatePhase.Modification1);
+            Log.Info("Spatial Demand 0.3: household, business and construction choices loaded; separate observe/apply switches. Construction is an unvalidated experimental adapter.");
         }
 
         public void OnDispose()
         {
+            World.DefaultGameObjectInjectionWorld?.GetExistingSystemManaged<ConstructionProposalSystem>()?.Restore();
             Settings?.UnregisterInOptionsUI();
             Settings = null;
-            // No vanilla system is disabled, so there is nothing to re-enable.
+            // No vanilla system is disabled; restore the temporary proposal flag above.
         }
     }
 }

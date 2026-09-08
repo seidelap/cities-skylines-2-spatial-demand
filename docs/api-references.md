@@ -3,6 +3,15 @@
 Implementation is original; these references establish API names and ownership.
 No game assemblies or decompiled game source are distributed in this repository.
 
+Construction 0.3 additionally uses the pinned snapshot's
+[ZoneSpawnSystem](https://github.com/bworthy89/roadmod/blob/5b49a4fc0c572f2b5133df83083ebb4afe2f76a6/New%20folder/Game.Simulation/ZoneSpawnSystem.cs),
+`Game.Common.SystemOrder`, `Game.Tools.GenerateObjectsSystem`, `CreationDefinition`,
+`ObjectDefinition`, `OwnerDefinition`, `BuildingConstructionSystem`, `Worker`,
+`PlaceableObjectData` and `ConsumptionData`. These establish the demand bypass flag,
+16-frame/offset-13 cadence, temporary definition ownership, Modification1 ordering,
+construction completion component and observable cost/workplace fields. This new
+integration still needs compilation and runtime verification on the installed game.
+
 Business integration also consulted the same pinned game snapshot's
 `CommercialSpawnSystem`, `IndustrialSpawnSystem`, `Game.Citizens.CompanyInitializeSystem`,
 `BuildingPropertyData`, `ResourceBuyer`, `IndustrialProcessData`, `ResourceSystem`

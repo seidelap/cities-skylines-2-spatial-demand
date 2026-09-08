@@ -96,7 +96,7 @@ namespace SpatialDemand.Mod
                         (Data((Resource)best.Activity.Output).m_Weight == 0 ? "office" : "industrial");
                     Mod.Log.Info($"business choice sector={sector}, property={Id(building)}, prefab={Id(chosen)}, output={(Resource)best.Activity.Output}, quantity={best.Quantity:F2}, revenue={best.Revenue:F2}, inputs={best.InputCost:F2}, fixedCost={best.Activity.FixedCost:F2}, surplus={best.Profit:F2}, apply={Mod.Settings.ApplyBusinessChoices}, cooldown={cooldown}; forecast=current-orders, transport=straight-line-estimate");
                     book.Commit(best); // Reserve projected buyers and inputs before considering another site.
-                    if (!Mod.Settings.ApplyBusinessChoices || cooldown) continue;
+                    if (!Mod.Settings.ApplyBusinessChoices || cooldown || World.GetOrCreateSystemManaged<ConstructionChoiceSystem>().HasPendingProject) continue;
                     var commands = barrier.CreateCommandBuffer();
                     var company = commands.CreateEntity(EntityManager.GetComponentData<ArchetypeData>(chosen).m_Archetype);
                     commands.SetComponent(company, new PrefabRef { m_Prefab = chosen });
@@ -113,6 +113,20 @@ namespace SpatialDemand.Mod
                 faulted = true;
                 Mod.Log.Error(error, "Business selection stopped for this session; vanilla company systems remain enabled.");
             }
+        }
+
+        internal BusinessMarket ReadMarket() => new BusinessMarket(ReadBuyers(), ReadSellers(),
+            Mod.Settings!.BusinessRangeMetres, Mod.Settings.DeliveryCostPerUnitKm / 1000d);
+
+        internal List<BusinessActivity> Activities(Entity buildingPrefab, float3 position, long site, double rent)
+        {
+            var result = new List<BusinessActivity>();
+            if (economy.IsEmptyIgnoreFilter) return result;
+            var parameters = economy.GetSingleton<EconomyParameterData>();
+            using var prefabs = templates.ToEntityArray(Allocator.Temp);
+            foreach (var prefab in prefabs)
+                if (TryActivity(buildingPrefab, position, site, rent, prefab, parameters, out var activity)) result.Add(activity);
+            return result;
         }
 
         private List<Purchase> ReadBuyers()
@@ -157,11 +171,16 @@ namespace SpatialDemand.Mod
         }
 
         private bool TryActivity(Entity building, Entity prefab, EconomyParameterData parameters, out BusinessActivity activity)
+            => TryActivity(EntityManager.GetComponentData<PrefabRef>(building).m_Prefab,
+                EntityManager.GetComponentData<Game.Objects.Transform>(building).m_Position, Id(building),
+                Math.Max(0, EntityManager.GetComponentData<PropertyOnMarket>(building).m_AskingRent), prefab, parameters, out activity);
+
+        private bool TryActivity(Entity buildingPrefab, float3 position, long site, double rent,
+            Entity prefab, EconomyParameterData parameters, out BusinessActivity activity)
         {
             activity = null!;
             bool retail = EntityManager.HasComponent<CommercialCompanyData>(prefab);
             if (!retail && !EntityManager.HasComponent<IndustrialCompanyData>(prefab)) return false;
-            var buildingPrefab = EntityManager.GetComponentData<PrefabRef>(building).m_Prefab;
             if (!EntityManager.HasComponent<BuildingPropertyData>(buildingPrefab) || !EntityManager.HasComponent<SpawnableBuildingData>(buildingPrefab)) return false;
             var property = EntityManager.GetComponentData<BuildingPropertyData>(buildingPrefab);
             var process = EntityManager.GetComponentData<IndustrialProcessData>(prefab);
@@ -175,11 +194,10 @@ namespace SpatialDemand.Mod
             if (data.m_Price.x <= 0 || (retail ? data.m_NeededWorkPerUnit.y : data.m_NeededWorkPerUnit.x) <= 0) return false;
             int level = EntityManager.GetComponentData<SpawnableBuildingData>(buildingPrefab).m_Level;
             int workers = Math.Max(1, workplace.m_MaxWorkers);
-            var position = EntityManager.GetComponentData<Game.Objects.Transform>(building).m_Position;
-            activity = new BusinessActivity { Id = Id(prefab), Site = Id(building), Retail = retail, Output = (long)output,
+            activity = new BusinessActivity { Id = Id(prefab), Site = site, Retail = retail, Output = (long)output,
                 X = position.x, Z = position.z, Price = retail ? data.m_Price.y : data.m_Price.x,
                 Capacity = EconomyUtils.GetCompanyProductionPerDay(1f, workers, level, !retail, workplace, process, data, ref parameters),
-                FixedCost = Math.Max(0, EntityManager.GetComponentData<PropertyOnMarket>(building).m_AskingRent) +
+                FixedCost = Math.Max(0, rent) +
                     Math.Max(0, EconomyUtils.CalculateTotalWage(workers, workplace.m_Complexity, level, parameters)) };
             AddInput(activity, process.m_Input1, process.m_Output.m_Amount);
             AddInput(activity, process.m_Input2, process.m_Output.m_Amount);

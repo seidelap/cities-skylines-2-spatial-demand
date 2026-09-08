@@ -7,8 +7,8 @@ using Game.Settings;
 namespace SpatialDemand.Mod
 {
     [FileLocation("SpatialDemand")]
-    [SettingsUIGroupOrder("Housing", "Business")]
-    [SettingsUIShowGroupName("Housing", "Business")]
+    [SettingsUIGroupOrder("Housing", "Business", "Construction")]
+    [SettingsUIShowGroupName("Housing", "Business", "Construction")]
     public sealed class Settings : ModSetting
     {
         public Settings(IMod mod) : base(mod) { SetDefaults(); }
@@ -28,10 +28,23 @@ namespace SpatialDemand.Mod
         [SettingsUISection("Main", "Business")]
         public float DeliveryCostPerUnitKm { get; set; }
 
+        [SettingsUISection("Main", "Construction")]
+        public bool ConstructionEnabled { get; set; }
+        [SettingsUISection("Main", "Construction")]
+        public bool ApplyConstruction { get; set; }
+        [SettingsUISection("Main", "Construction")]
+        public int ConstructionCostPerCell { get; set; }
+        [SettingsUISection("Main", "Construction")]
+        public int ConstructionPaybackDays { get; set; }
+        [SettingsUISection("Main", "Construction")]
+        public float ConstructionTravelKph { get; set; }
+
         public override void SetDefaults()
         {
             Enabled = true; ApplyChoices = false; BusinessEnabled = true;
             ApplyBusinessChoices = false; BusinessRangeMetres = 2000; DeliveryCostPerUnitKm = 1;
+            ConstructionEnabled = false; ApplyConstruction = false;
+            ConstructionCostPerCell = 1000; ConstructionPaybackDays = 32; ConstructionTravelKph = 30;
         }
     }
 
@@ -46,6 +59,17 @@ namespace SpatialDemand.Mod
             [settings.GetOptionTabLocaleID("Main")] = "Main",
             [settings.GetOptionGroupLocaleID("Housing")] = "Housing",
             [settings.GetOptionGroupLocaleID("Business")] = "Business entry",
+            [settings.GetOptionGroupLocaleID("Construction")] = "Construction (experimental)",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.ConstructionEnabled))] = "Evaluate construction projects",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ConstructionEnabled))] = "Forecast tenant-supported rents before a zoned building is created. Observe leaves construction unchanged. Both construction switches start off; this adapter still requires in-game validation.",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.ApplyConstruction))] = "Require tenant-backed construction (experimental)",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ApplyConstruction))] = "Bypass the demand threshold for zoned proposals, then allow only the best project whose forecast rents repay its costs. At most one project at a time and per game day. Forecasts do not guarantee occupancy or change actual rents. Existing households and local stocks are required; an empty city may wait indefinitely. Use an established disposable test city.",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.ConstructionCostPerCell))] = "Fallback construction cost per zoning cell",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ConstructionCostPerCell))] = "Planning assumption used when a building prefab has no positive construction cost. No money is withdrawn by this prototype.",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.ConstructionPaybackDays))] = "Required payback horizon (game days)",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ConstructionPaybackDays))] = "Forecast rent after upkeep must repay construction within this horizon. Business current orders are treated as a daily sales proxy, not measured recurring demand.",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.ConstructionTravelKph))] = "Estimated commute speed (km/h)",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ConstructionTravelKph))] = "Straight-line home-to-work estimate used consistently for construction bids and existing-home alternatives. It does not establish road access or predict the eventual routed choice.",
             [settings.GetOptionLabelLocaleID(nameof(Settings.BusinessEnabled))] = "Evaluate new businesses",
             [settings.GetOptionDescLocaleID(nameof(Settings.BusinessEnabled))] = "Compare compatible activities at vacant premises using current buyers and local supplier stock. Log proposals and reasons for rejection.",
             [settings.GetOptionLabelLocaleID(nameof(Settings.ApplyBusinessChoices))] = "Open selected businesses (experimental)",

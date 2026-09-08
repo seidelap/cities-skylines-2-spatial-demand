@@ -213,7 +213,7 @@ namespace SpatialDemand.Mod
             }
         }
 
-        private bool TryOffer(Entity household, Entity property, Entity current, float duration, out HomeOffer offer)
+        internal bool TryOffer(Entity household, Entity property, Entity current, float duration, out HomeOffer offer)
         {
             offer = default;
             if (!EntityManager.Exists(property) || !EntityManager.HasComponent<ResidentialProperty>(property) ||

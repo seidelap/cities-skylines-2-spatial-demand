@@ -1,7 +1,7 @@
 # Spatial Demand — Cities: Skylines II
 
-A small implementation of household housing choice and new business activity
-selection. Households compare reachable homes. Prospective firms compare compatible
+A small implementation of household housing choice, new business activity
+selection and experimental tenant-backed construction. Households compare reachable homes. Prospective firms compare compatible
 activities at vacant premises using buyers, supplier stock and costs. The game
 performs tenancy settlement and runs the resulting companies.
 
@@ -9,7 +9,10 @@ performs tenancy settlement and runs the resulting companies.
 city-reload smoke checks on game 1.6.0f1. Individual preference persistence, difficult
 settlement cases and large-city performance are still unvalidated. Version 0.2 adds
 business entry and richer diagnostics; its business gameplay acceptance is separate
-from the earlier housing results. There is no multiplayer implementation.
+from the earlier housing results. Version 0.3 adds construction selection for
+residential and business buildings. Its 59 portable model tests pass, but the new
+construction adapter has not yet been compiled against the game or validated live.
+Both construction switches start off. There is no multiplayer implementation.
 
 The previous economy prototype is preserved at commit
 [`67f4b1c`](https://github.com/seidelap/cities-skylines-2-spatial-demand/tree/67f4b1cf31567196ac230f119c398e94db31f970)
@@ -34,14 +37,22 @@ source, synthetic city data and historical experiment harness.
   entrant per game day using vanilla initialization; vanilla entry remains active.
 - Reports settlement immediately and periodic status even without new successful
   choices, with housing delegation reasons and business rejection reasons.
+- Quotes prospective household/business rents and compares development projects
+  with waiting. Construction Apply bypasses vanilla's demand threshold for its
+  proposal shortlist and removes unfunded definitions before buildings are created.
+- Persists one active project at a time, with a one-game-day entry limit, and reports
+  actual completion/occupancy separately from forecasts. See the
+  [construction model, assumptions and outstanding acceptance](docs/construction-model.md).
 
 ## Deliberate limits
 
-This is **housing-choice replacement plus experimental business entry**, not yet
+This is **housing-choice replacement, experimental business entry and a construction forecast gate**, not yet
 the complete spatial economy mod. See [business decisions and limits](docs/business-model.md).
 Vanilla still discovers candidate routes and controls immigration, jobs, rent,
-upkeep, construction, trade, shelters and departure. There is no replacement demand
-bar, developer optimizer, endogenous rent auction or overlay yet.
+upkeep, construction execution, trade, shelters and departure. The developer chooses
+among vanilla-generated projects; it does not enumerate every possible design/site.
+There is no replacement demand bar, actual financing, advance lease, endogenous rent
+auction or overlay. Buildings can still finish vacant when forecasts do not settle.
 
 The available options are the game's pathfinding shortlist, not every home in the
 city. Routes reflect vanilla's chosen search origin/destination, which may be a
@@ -106,7 +117,8 @@ dotnet build src/SpatialDemand.Mod -c Release -p:CSIIToolPath='C:\path\to\toolch
 The current adapter was checked against the source references listed in
 [API references](docs/api-references.md), including a November 2025 game source
 snapshot. Compilation and official postprocessing against game 1.6.0f1 have now
-passed; this does not establish runtime behavior or compatibility with later updates.
+passed **for version 0.2**. The new 0.3 construction hooks have not passed that build
+or runtime acceptance yet. Earlier results do not establish their compatibility.
 
 ## Where to read the code
 
@@ -116,6 +128,11 @@ passed; this does not establish runtime behavior or compatibility with later upd
 | `src/SpatialDemand.Core/HousingMarket.cs` | Sequential choice and capacity reservations |
 | `src/SpatialDemand.Mod/HousingChoiceSystem.cs` | Read real searches, submit and reconcile moves |
 | `src/SpatialDemand.Mod/SavedPreferences.cs` | Saved household seed and pending move receipt |
+| `src/SpatialDemand.Core/BusinessMarket.cs` | Buyer/supplier choices and business surplus |
+| `src/SpatialDemand.Core/DevelopmentMarket.cs` | Tenant bids, posted-rent choice and project argmax |
+| `src/SpatialDemand.Mod/ConstructionHousingSystem.cs` | Household construction quotes and existing-home alternatives |
+| `src/SpatialDemand.Mod/ConstructionProposalSystem.cs` | Temporarily bypass the vanilla proposal demand threshold |
+| `src/SpatialDemand.Mod/ConstructionChoiceSystem.cs` | Preconstruction gate, saved permit and completion diagnostics |
 | `src/SpatialDemand.Mod/Mod.cs`, `Settings.cs` | Entry point and Options UI |
 | `tests/SpatialDemand.Tests/Program.cs` | Portable economic checks |
 
@@ -125,9 +142,9 @@ passed; this does not establish runtime behavior or compatibility with later upd
    save/load, settlement and performance before expanding behavior.
 2. Make residential candidate discovery and the incumbent baseline independent of
    vanilla property scoring, using game route queries and the same evaluator.
-3. Add individual outside offers for migration and explicit residential bids.
-4. Derive spatial demand and developer project choices from those bids. Re-evaluate
-   opportunities after commitments, rather than adding a parallel demand formula.
+3. Add individual outside offers for migration and routed future-home quotes.
+4. Validate the new construction adapter, then replace its one-project limit with
+   explicit pipeline claims if multiple simultaneous projects are needed.
 5. Validate the business entry adapter separately for retail, manufacturing and
    offices. Replace distance estimates with routed quotes, observe demand over a
    shared horizon and add imports/pipeline commitments before replacing vanilla entry.
