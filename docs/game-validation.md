@@ -1,5 +1,17 @@
 # In-game acceptance: not yet executed
 
+## Build evidence — September 8, 2026
+
+Revision `e7f069909ad971aa80ef49f2e63fec557169198e` passed all 25 portable
+tests on Windows and compiled against installed game 1.6.0f1. The official
+postprocessor and Burst step completed with zero warnings and errors, and deployed
+the mod to the user's local Mods directory. This required the registered Windows
+x64 .NET 6 runtime in addition to the .NET 10 SDK. Generated postprocessor
+`Library/` files accounted for the build manifest's dirty-working-tree flag.
+
+This establishes build compatibility only. Loading, settlement, serialization and
+performance checks below still require execution in the game.
+
 Use a disposable test city or a copy of a save. Keep a record of the game version,
 the generated build manifest, enabled mods and observations. Start without other
 mods that replace household search or property processing.

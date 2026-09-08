@@ -5,9 +5,10 @@ reachable homes using its own preferences. Vacant units are reserved as househol
 choose; the game performs the actual move and continues collecting rent.
 
 **Status: first implementation, not an in-game-verified release.** The portable
-model builds and its tests run on this Mac. The real mod project requires the game
-and official modding toolchain on Windows. It never substitutes a stub DLL for a
-successful game build. There is no multiplayer implementation in this branch.
+model passes its tests on Mac and Windows. The real mod compiled and passed the
+official postprocessor against game 1.6.0f1 on Windows on September 8, 2026, with
+zero warnings and errors. In-game behavior remains unverified. There is no
+multiplayer implementation in this branch.
 
 The previous economy prototype is preserved at commit
 [`67f4b1c`](https://github.com/seidelap/cities-skylines-2-spatial-demand/tree/67f4b1cf31567196ac230f119c398e94db31f970)
@@ -57,8 +58,9 @@ Install .NET SDK 10, then:
 dotnet run --project tests/SpatialDemand.Tests -c Release
 ```
 
-The core targets **.NET Standard 2.1**, matching the game runtime. Only the test
-runner uses .NET 10. It checks choices, capacity competition, outside options,
+The portable core targets **.NET Standard 2.1**. The mod compiles the same core
+source using the official toolchain's target (**.NET Framework 4.8** in the tested
+version). Only the test runner uses .NET 10. It checks choices, capacity competition, outside options,
 reproducibility, the saved preference mapping, and 300 randomized markets.
 It does not pretend to test ECS, game serialization, pathfinding or in-game effects.
 
@@ -70,6 +72,9 @@ install Steam, sign in, or publish anything to Paradox Mods.
 
 1. Finish installing the game and its modding toolchain. Set `CSII_TOOLPATH` if the
    installer has not made it available in the current shell. Install .NET SDK 10.
+   The tested official postprocessor also requires the Windows x64 .NET 6 runtime,
+   installed alongside the SDK. If using a portable SDK, ensure its directory comes
+   first in this shell's PATH; a runtime-only installation cannot run SDK commands.
 2. Check out this branch on that machine.
 3. Run:
 
@@ -91,7 +96,8 @@ dotnet build src/SpatialDemand.Mod -c Release -p:CSIIToolPath='C:\path\to\toolch
 
 The current adapter was checked against the source references listed in
 [API references](docs/api-references.md), including a November 2025 game source
-snapshot. **A compile against the installed current game is still required.**
+snapshot. Compilation and official postprocessing against game 1.6.0f1 have now
+passed; this does not establish runtime behavior or compatibility with later updates.
 
 ## Where to read the code
 
