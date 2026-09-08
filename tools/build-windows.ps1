@@ -27,9 +27,19 @@ try {
     New-Item -ItemType Directory -Force (Split-Path $buildOutput -Parent) | Out-Null
     $buildArguments = @('build', 'src/SpatialDemand.Mod', '-c', 'Release',
         "-p:CSIIToolPath=$ToolchainPath", "-p:GameAssemblyRecordPath=$resolvedPathFile", '--output', $buildOutput)
-    # DeployWIP always runs in the official toolchain. A global MSBuild property
-    # redirects its copy/removal to an isolated directory when staging a build.
-    if ($NoDeploy) { $buildArguments += "-p:DeployDir=$buildOutput-staged" }
+    # Our explicit copy target fails closed if these arguments are absent.
+    $deploymentArguments = if ($NoDeploy) { @("-p:SpatialDemandStageDirectory=$buildOutput-staged") }
+        else { @('-p:SpatialDemandAllowInstall=true') }
+    $buildArguments += $deploymentArguments
+    $planArguments = @('msbuild', 'src/SpatialDemand.Mod/SpatialDemand.Mod.csproj',
+        "-p:CSIIToolPath=$ToolchainPath") + $deploymentArguments +
+        @('-t:SpatialDemandDeploymentPlan', '-getProperty:SpatialDemandDestination')
+    $plannedDestination = (dotnet @planArguments | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Could not verify the deployment plan.' }
+    if ($NoDeploy -and $plannedDestination -ne "$buildOutput-staged") {
+        throw "Staging path was not honored: $plannedDestination"
+    }
+    Write-Host "Verified deployment destination: $plannedDestination"
     dotnet @buildArguments
     if ($LASTEXITCODE -ne 0) { throw 'Actual game mod build failed. No package produced.' }
 

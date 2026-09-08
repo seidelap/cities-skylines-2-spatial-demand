@@ -9,6 +9,29 @@
   </PropertyGroup>
   <Import Project="$(CSIIToolPath)/Mod.props" Condition="Exists('$(CSIIToolPath)/Mod.props')" />
   <Import Project="$(CSIIToolPath)/Mod.targets" Condition="Exists('$(CSIIToolPath)/Mod.targets')" />
+  <!-- Override only the official copy step. Compilation and postprocessing remain official.
+       Fail closed: neither a plain build nor an ignored staging argument may install. -->
+  <Target Name="SpatialDemandDeploymentPlan" DependsOnTargets="BuildGetFullPaths">
+    <Error Condition="'$(SpatialDemandStageDirectory)' != '' and '$(SpatialDemandAllowInstall)' == 'true'"
+           Text="Choose staging or installation, not both." />
+    <PropertyGroup>
+      <SpatialDemandDestination>$(SpatialDemandStageDirectory)</SpatialDemandDestination>
+      <SpatialDemandDestination Condition="'$(SpatialDemandAllowInstall)' == 'true'">$(DeployDir)</SpatialDemandDestination>
+    </PropertyGroup>
+    <Error Condition="'$(SpatialDemandDestination)' == ''"
+           Text="Use tools/build-windows.ps1, or explicitly supply SpatialDemandStageDirectory or SpatialDemandAllowInstall=true." />
+    <Error Condition="'$(SpatialDemandDestination)' == '$(DeployDir)' and '$(SpatialDemandAllowInstall)' != 'true'"
+           Text="Staging must not use the installed game mod directory." />
+  </Target>
+  <Target Name="DeployWIP" AfterTargets="AfterBuild" DependsOnTargets="SpatialDemandDeploymentPlan" Condition="'$(NeedBuild)'">
+    <ItemGroup>
+      <SpatialDemandDeployFiles Include="$(OutDir)\**\*.*" />
+    </ItemGroup>
+    <Message Text="Copy mod output to verified destination $(SpatialDemandDestination)" Importance="high" />
+    <RemoveDir Directories="$(SpatialDemandDestination)" Condition="'$(SpatialDemandAllowInstall)' == 'true'" />
+    <Copy SourceFiles="@(SpatialDemandDeployFiles)"
+          DestinationFiles="@(SpatialDemandDeployFiles->'$(SpatialDemandDestination)\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
   <ItemGroup>
     <!-- One deployed DLL: compile the same tested core source into the mod. -->
     <Compile Include="../SpatialDemand.Core/*.cs" Link="Core/%(Filename)%(Extension)" />
