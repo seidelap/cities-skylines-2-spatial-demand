@@ -1,14 +1,15 @@
 # Spatial Demand — Cities: Skylines II
 
-A fresh, small implementation of household housing choice. Each household compares
-reachable homes using its own preferences. Vacant units are reserved as households
-choose; the game performs the actual move and continues collecting rent.
+A small implementation of household housing choice and new business activity
+selection. Households compare reachable homes. Prospective firms compare compatible
+activities at vacant premises using buyers, supplier stock and costs. The game
+performs tenancy settlement and runs the resulting companies.
 
-**Status: first implementation, not an in-game-verified release.** The portable
-model passes its tests on Mac and Windows. The real mod compiled and passed the
-official postprocessor against game 1.6.0f1 on Windows on September 8, 2026, with
-zero warnings and errors. In-game behavior remains unverified. There is no
-multiplayer implementation in this branch.
+**Status: experimental prototype.** Housing has passed live observe, apply and
+city-reload smoke checks on game 1.6.0f1. Individual preference persistence, difficult
+settlement cases and large-city performance are still unvalidated. Version 0.2 adds
+business entry and richer diagnostics; its business gameplay acceptance is separate
+from the earlier housing results. There is no multiplayer implementation.
 
 The previous economy prototype is preserved at commit
 [`67f4b1c`](https://github.com/seidelap/cities-skylines-2-spatial-demand/tree/67f4b1cf31567196ac230f119c398e94db31f970)
@@ -26,10 +27,18 @@ source, synthetic city data and historical experiment harness.
 - Recovers rejected submissions, including receipts restored from a save.
 - Provides two options: evaluate choices, and apply choices. Applying is off by
   default until the game validation below is complete.
+- Evaluates commercial, industrial and office-compatible company templates with
+  one shared business choice model. Buyers compare delivered quotes; candidate
+  firms procure inputs cheapest first and select the greatest positive surplus.
+- Has separate business observe/apply switches. Business Apply adds at most one
+  entrant per game day using vanilla initialization; vanilla entry remains active.
+- Reports settlement immediately and periodic status even without new successful
+  choices, with housing delegation reasons and business rejection reasons.
 
 ## Deliberate limits
 
-This is **housing-choice replacement**, not yet the complete spatial economy mod.
+This is **housing-choice replacement plus experimental business entry**, not yet
+the complete spatial economy mod. See [business decisions and limits](docs/business-model.md).
 Vanilla still discovers candidate routes and controls immigration, jobs, rent,
 upkeep, construction, trade, shelters and departure. There is no replacement demand
 bar, developer optimizer, endogenous rent auction or overlay yet.
@@ -119,5 +128,6 @@ passed; this does not establish runtime behavior or compatibility with later upd
 3. Add individual outside offers for migration and explicit residential bids.
 4. Derive spatial demand and developer project choices from those bids. Re-evaluate
    opportunities after commitments, rather than adding a parallel demand formula.
-5. Extend shared decision principles to labor and firms only after the housing and
-   construction loop works in-game.
+5. Validate the business entry adapter separately for retail, manufacturing and
+   offices. Replace distance estimates with routed quotes, observe demand over a
+   shared horizon and add imports/pipeline commitments before replacing vanilla entry.

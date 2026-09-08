@@ -15,6 +15,7 @@ internal static class Program
 
     private static int Main()
     {
+        BusinessTests();
         Test("cheaper otherwise-identical home wins", () => Equal(2L, Choose(Home(1, 30), Home(2, 20)).HomeId));
         Test("actual route duration affects choice", () => Equal(2L, Choose(Home(1, seconds: 7200), Home(2)).HomeId));
         Test("affordability is a hard constraint", () => Equal(Rejection.Unaffordable, Housing.Evaluate(Person(), Home(1, 51)).Rejection));
@@ -148,6 +149,63 @@ internal static class Program
 
     private static string Signature(IReadOnlyList<HomeChoice> choices)
         => string.Join(";", choices.OrderBy(c => c.HouseholdId).Select(c => $"{c.HouseholdId}:{c.HomeId}"));
+
+    private static void BusinessTests()
+    {
+        Purchase Buyer(long id = 1, long resource = 1, double quantity = 10) =>
+            new Purchase { Id = id, Resource = resource, Quantity = quantity, BudgetPerUnit = 100, Retail = true };
+        StockOffer Supplier(double price = 2, double quantity = 100) =>
+            new StockOffer { Id = 1, Resource = 2, Price = price, Quantity = quantity };
+        BusinessActivity Shop(long id = 1, double price = 10, double fixedCost = 5)
+        {
+            var a = new BusinessActivity { Id = id, Output = 1, Retail = true, Price = price, Capacity = 10, FixedCost = fixedCost };
+            a.Inputs[2] = 1; return a;
+        }
+        BusinessMarket Book(Purchase[]? buyers = null, StockOffer[]? suppliers = null) =>
+            new BusinessMarket(buyers ?? new[] { Buyer() }, suppliers ?? new[] { Supplier() }, 1000, 0.01);
+        Test("business accounts for sales inputs and fixed costs", () => Equal(75d, Book().Evaluate(Shop()).Profit));
+        Test("business no-entry beats a loss", () => Equal(null, Book().Choose(new[] { Shop(fixedCost: 1000) })));
+        Test("business chooses highest surplus activity", () => Equal(2L, Book().Choose(new[] { Shop(), Shop(2, 12) })!.Activity.Id));
+        Test("business only sells a requested resource", () => Equal(null, Book(new[] { Buyer(resource: 9) }).Choose(new[] { Shop() })));
+        Test("business needs available inputs", () => Equal("missing-input-stock", Book(suppliers: Array.Empty<StockOffer>()).Evaluate(Shop()).Reason));
+        Test("business can operate below demand when inputs are limited", () => Equal(4d, Book(suppliers: new[] { Supplier(quantity: 4) }).Evaluate(Shop()).Quantity));
+        Test("business lower delivered input cost improves surplus", () => True(Book(suppliers: new[] { Supplier(1) }).Evaluate(Shop()).Profit > Book().Evaluate(Shop()).Profit));
+        Test("business buyers prefer a cheaper incumbent", () =>
+        {
+            var rival = new StockOffer { Id = 2, Resource = 1, Quantity = 100, Price = 9, Retail = true };
+            Equal(null, Book(suppliers: new[] { Supplier(), rival }).Choose(new[] { Shop() }));
+        });
+        Test("business supplier beyond range is unavailable", () =>
+        { var supplier = Supplier(); supplier.X = 1001; Equal("missing-input-stock", Book(suppliers: new[] { supplier }).Evaluate(Shop()).Reason); });
+        Test("business can meet demand beyond a competitor's finite stock", () =>
+        {
+            var rival = new StockOffer { Id = 2, Resource = 1, Quantity = 3, Price = 9, Retail = true };
+            Equal(7d, Book(suppliers: new[] { Supplier(), rival }).Evaluate(Shop()).Quantity);
+        });
+        Test("industrial and office activities use producer buyers and recipes", () =>
+        {
+            var buyer = Buyer(); buyer.Retail = false;
+            var factory = Shop(); factory.Retail = false;
+            Equal(75d, Book(new[] { buyer }).Choose(new[] { factory })!.Profit);
+        });
+        Test("business buyer budget is binding", () =>
+        { var buyer = Buyer(); buyer.BudgetPerUnit = 9; Equal(null, Book(new[] { buyer }).Choose(new[] { Shop() })); });
+        Test("business commitment prevents duplicate buyer allocation", () =>
+        { var book = Book(); book.Commit(book.Choose(new[] { Shop() })!); Equal(null, book.Choose(new[] { Shop(2) })); });
+        Test("business commitment reserves input stock across products", () =>
+        {
+            var book = Book(new[] { Buyer(), Buyer(2, 3) }, new[] { Supplier(quantity: 10) });
+            book.Commit(book.Choose(new[] { Shop() })!);
+            var second = Shop(2); second.Output = 3;
+            Equal(null, book.Choose(new[] { second }));
+        });
+        Test("business evaluating alternatives does not reserve stock", () =>
+        { var book = Book(); book.Evaluate(Shop()); Equal(10d, book.Evaluate(Shop(2)).Quantity); });
+        Test("business distinguishes retail and producer buyers", () =>
+        { var buyer = Buyer(); buyer.Retail = false; Equal(null, Book(new[] { buyer }).Choose(new[] { Shop() })); });
+        Test("business rejects invalid prices", () => Equal("invalid-activity", Book().Evaluate(Shop(price: double.NaN)).Reason));
+        Test("business tie-break is independent of option ordering", () => Equal(1L, Book().Choose(new[] { Shop(2), Shop(1) })!.Activity.Id));
+    }
     private static void True(bool value) { if (!value) throw new Exception("Assertion failed."); }
     private static void Equal<T>(T expected, T actual) { if (!EqualityComparer<T>.Default.Equals(expected, actual)) throw new Exception($"Expected {expected}; got {actual}."); }
     private static void Throws(Action action) { try { action(); } catch (ArgumentException) { return; } throw new Exception("Expected ArgumentException."); }

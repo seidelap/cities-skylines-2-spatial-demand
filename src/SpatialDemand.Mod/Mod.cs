@@ -19,7 +19,8 @@ namespace SpatialDemand.Mod
             GameManager.instance.localizationManager.AddSource("en-US", new Locale(Settings));
             AssetDatabase.global.LoadSettings("SpatialDemand", Settings, new Settings(this));
             updateSystem.UpdateBefore<HousingChoiceSystem, HouseholdFindPropertySystem>(SystemUpdatePhase.GameSimulation);
-            Log.Info("Spatial Demand: housing choice prototype loaded; see Options for observe/apply mode.");
+            updateSystem.UpdateAt<BusinessChoiceSystem>(SystemUpdatePhase.GameSimulation);
+            Log.Info("Spatial Demand: housing choice and business entry prototype loaded; housing and business have separate observe/apply options.");
         }
 
         public void OnDispose()

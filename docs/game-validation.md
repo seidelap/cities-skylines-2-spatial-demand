@@ -1,4 +1,24 @@
-# In-game acceptance: startup passed, simulation checks pending
+# In-game acceptance: housing smoke tests passed; business tests pending
+
+## Version 0.2 — business entry and diagnostics
+
+On September 8, 2026, all 43 portable tests passed on Mac and Windows. The real
+game build and official postprocessor succeeded with zero warnings/errors and
+deployed at 20:05:37 UTC. Binary SHA256:
+`E7E99BE446CD14F1E4784B71A53DC12BCD6CED3147F0B8C09FE8E9E69D0AE8FC`.
+The Windows checkout used copied source changes, so its manifest correctly records
+a dirty working tree on the older base revision. Do not treat that base revision
+alone as the source of the new binary.
+
+The 18 new business tests cover costs, activity selection, no-entry, demand,
+finite competitor stock, input availability, partial production, buyer budgets,
+shared reservations and deterministic ordering. New diagnostics report housing
+settlements independently of new choices and explain delegated attempts. Business
+reports include sampled buyers/sites, compatibility, reasons, costs and receipts.
+
+Business startup, live selection, entry and settlement still need separate game
+evidence. See [business model and acceptance checks](business-model.md). Earlier
+housing results below do not establish that the new business integration works.
 
 ## Build evidence — September 8, 2026
 

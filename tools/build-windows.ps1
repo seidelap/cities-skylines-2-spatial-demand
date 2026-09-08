@@ -4,6 +4,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'Build the game adapter on Windows with Cities: Skylines II installed.' }
+if (Get-Process Cities2 -ErrorAction SilentlyContinue) {
+    throw 'Save your city and exit Cities: Skylines II before building. The official toolchain replaces local mod files that the running game locks.'
+}
 if (-not $ToolchainPath) { $ToolchainPath = [Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'User') }
 if (-not $ToolchainPath -or -not (Test-Path (Join-Path $ToolchainPath 'Mod.props')) -or
     -not (Test-Path (Join-Path $ToolchainPath 'Mod.targets'))) {

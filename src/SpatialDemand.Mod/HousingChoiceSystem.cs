@@ -29,6 +29,8 @@ namespace SpatialDemand.Mod
         private uint lastLogFrame;
         private bool? lastLoggedApplyMode;
         private long evaluated, proposedMoves, queuedMoves, settledMoves, retriedMoves, delegated;
+        private long emptyPaths, pendingPaths, noMembers, noOffers, noCurrentRoute, insolvent;
+        private double lastEvaluationMs;
 
         protected override void OnCreate()
         {
@@ -59,7 +61,17 @@ namespace SpatialDemand.Mod
                 // Finish/recover already submitted actions even if the user turns evaluation off.
                 RecoverSubmissions();
                 if (Mod.Settings.Enabled && !faulted && processing.Enabled && !searches.IsEmptyIgnoreFilter)
+                {
+                    var timer = System.Diagnostics.Stopwatch.StartNew();
                     EvaluateSearches(Mod.Settings.ApplyChoices);
+                    lastEvaluationMs = timer.Elapsed.TotalMilliseconds;
+                }
+                if (lastLoggedApplyMode != Mod.Settings.ApplyChoices || unchecked(simulation.frameIndex - lastLogFrame) >= 4096)
+                {
+                    Mod.Log.Info($"housing status frame={simulation.frameIndex}, enabled={Mod.Settings.Enabled}, apply={Mod.Settings.ApplyChoices}, faulted={faulted}, seekers={searches.CalculateEntityCount()}, pendingReceipts={pending.CalculateEntityCount()}, evaluated={evaluated}, proposed={proposedMoves}, queued={queuedMoves}, settled={settledMoves}, retried={retriedMoves}, delegated={delegated}, emptyPaths={emptyPaths}, pendingPaths={pendingPaths}, noMembers={noMembers}, noOffers={noOffers}, noCurrentRoute={noCurrentRoute}, insolvent={insolvent}, lastBatchMs={lastEvaluationMs:F2}; counters=attempts");
+                    lastLogFrame = simulation.frameIndex;
+                    lastLoggedApplyMode = Mod.Settings.ApplyChoices;
+                }
             }
             catch (Exception error)
             {
@@ -79,12 +91,13 @@ namespace SpatialDemand.Mod
                 if (receipt.Frame == simulation.frameIndex) continue;
                 bool settled = EntityManager.HasComponent<PropertyRenter>(household) &&
                     EntityManager.GetComponentData<PropertyRenter>(household).m_Property == receipt.Property;
-                if (settled) settledMoves++;
+                if (settled) { settledMoves++; Mod.Log.Info($"housing settlement household={Id(household)}, property={Id(receipt.Property)}, result=settled"); }
                 else if (!EntityManager.HasComponent<Deleted>(household) &&
                     !EntityManager.HasComponent<MovingAway>(household) && EntityManager.HasComponent<PropertySeeker>(household))
                 {
                     EntityManager.SetComponentEnabled<PropertySeeker>(household, true);
                     retriedMoves++;
+                    Mod.Log.Info($"housing settlement household={Id(household)}, property={Id(receipt.Property)}, result=retry");
                 }
                 EntityManager.RemoveComponent<PendingHome>(household);
             }
@@ -112,14 +125,14 @@ namespace SpatialDemand.Mod
                 foreach (var entity in entities)
                 {
                     var paths = EntityManager.GetBuffer<PathInformations>(entity, true);
-                    if (paths.Length == 0) continue;
+                    if (paths.Length == 0) { emptyPaths++; continue; }
                     bool pending = false;
                     foreach (var path in paths)
                         pending |= (path.m_State & (PathFlags.Pending | PathFlags.Scheduled)) != 0;
-                    if (pending) continue;
+                    if (pending) { pendingPaths++; continue; }
 
                     var members = EntityManager.GetBuffer<HouseholdCitizen>(entity, true);
-                    if (members.Length == 0) { delegated++; continue; }
+                    if (members.Length == 0) { noMembers++; delegated++; continue; }
                     uint seed = 0;
                     if (EntityManager.HasComponent<SavedPreferences>(entity))
                         seed = EntityManager.GetComponentData<SavedPreferences>(entity).Seed;
@@ -149,13 +162,14 @@ namespace SpatialDemand.Mod
                     // Without a comparable route to the current home, the outside option is
                     // unknown. Do not silently treat it as a zero-minute commute or evict anyone.
                     bool hasCurrent = current == Entity.Null || offers.Exists(o => o.Id == Id(current));
-                    if (offers.Count == 0 || !hasCurrent) { delegated++; continue; }
+                    if (offers.Count == 0) { noOffers++; delegated++; continue; }
+                    if (!hasCurrent) { noCurrentRoute++; delegated++; continue; }
                     if (current != Entity.Null)
                     {
                         var home = offers.Find(o => o.Id == Id(current));
                         var occupiedHome = new HomeOffer(home.Id, home.Rent, home.Space, home.TravelSeconds, 1);
                         // Leave an existing insolvency situation to the game's established lifecycle.
-                        if (!Housing.Evaluate(household, occupiedHome).Feasible) { delegated++; continue; }
+                        if (!Housing.Evaluate(household, occupiedHome).Feasible) { insolvent++; delegated++; continue; }
                     }
                     batch.Add(new HomeSearch(household, offers, current == Entity.Null ? (long?)null : Id(current)));
                     households[household.Id] = entity;
@@ -196,8 +210,6 @@ namespace SpatialDemand.Mod
                 var sample = choices[0];
                 Mod.Log.Info($"housing sample household={sample.HouseholdId}, home={sample.HomeId}, utility={sample.Utility:F3}, " +
                     $"space={sample.Evaluation.SpaceBenefit:F3}, rent={sample.Evaluation.RentCost:F3}, travel={sample.Evaluation.TravelCost:F3}, moved={sample.Moved}");
-                lastLogFrame = simulation.frameIndex;
-                lastLoggedApplyMode = apply;
             }
         }
 
