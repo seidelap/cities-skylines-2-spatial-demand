@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>SpatialDemand</AssemblyName>
+    <Version>0.1.0</Version>
+    <PublishConfigurationPath>Properties/PublishConfiguration.xml</PublishConfigurationPath>
+    <CSIIToolPath Condition="'$(CSIIToolPath)' == ''">$(CSII_TOOLPATH)</CSIIToolPath>
+    <CSIIToolPath Condition="'$(CSIIToolPath)' == '' and '$(OS)' == 'Windows_NT'">$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'User'))</CSIIToolPath>
+  </PropertyGroup>
+  <Import Project="$(CSIIToolPath)/Mod.props" Condition="Exists('$(CSIIToolPath)/Mod.props')" />
+  <Import Project="$(CSIIToolPath)/Mod.targets" Condition="Exists('$(CSIIToolPath)/Mod.targets')" />
+  <ItemGroup>
+    <!-- One deployed DLL: compile the same tested core source into the mod. -->
+    <Compile Include="../SpatialDemand.Core/*.cs" Link="Core/%(Filename)%(Extension)" />
+    <Reference Include="Game" Private="false" />
+    <Reference Include="Colossal.Core" Private="false" />
+    <Reference Include="Colossal.Logging" Private="false" />
+    <Reference Include="Colossal.IO.AssetDatabase" Private="false" />
+    <Reference Include="Colossal.Localization" Private="false" />
+    <Reference Include="Colossal.Serialization.Entities" Private="false" />
+    <Reference Include="Unity.Entities" Private="false" />
+    <Reference Include="Unity.Collections" Private="false" />
+    <Reference Include="Unity.Mathematics" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" Private="false" />
+  </ItemGroup>
+  <Target Name="RequireGameToolchain" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(CSIIToolPath)/Mod.props') or !Exists('$(CSIIToolPath)/Mod.targets')"
+           Text="The actual mod requires the Cities: Skylines II modding toolchain. Install it through the game, then set CSII_TOOLPATH or pass -p:CSIIToolPath=... . For portable tests, build tests/SpatialDemand.Tests instead. There is no stub mod build." />
+  </Target>
+  <Target Name="RecordResolvedGameAssembly" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ResolvedGameAssembly Include="@(ReferencePath)" Condition="'%(ReferencePath.Filename)' == 'Game'" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)game-assembly-path.txt" Lines="@(ResolvedGameAssembly->'%(FullPath)')" Overwrite="true" />
+  </Target>
+</Project>

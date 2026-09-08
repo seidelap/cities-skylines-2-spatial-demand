@@ -1,0 +1,7 @@
+<Publish>
+  <DisplayName Value="Spatial Demand" />
+  <ShortDescription Value="Experimental household housing choices based on individual preferences." />
+  <LongDescription>Early housing-choice prototype. Requires in-game validation before release.</LongDescription>
+  <ModVersion Value="0.1.0" />
+  <AccessLevel Value="Private" />
+</Publish>
