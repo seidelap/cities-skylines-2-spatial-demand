@@ -32,6 +32,12 @@ nor recovery is claimed from this run. The local settings record persisted
 `ApplyChoices: true`; this validates the option save only, not household preference
 or pending-move serialization.
 
+The city was then saved, the VM was stopped, and the same save was reloaded after
+the next boot. Spatial Demand loaded again and Apply mode processed a fresh batch:
+seven evaluated searches, seven queued moves, six settlements and zero retries.
+This verifies save/reload continuity at the city level and sustained post-load
+settlement. It does not identify individual preference seeds across the reload.
+
 Use a disposable test city or a copy of a save. Keep a record of the game version,
 the generated build manifest, enabled mods and observations. Start without other
 mods that replace household search or property processing.
