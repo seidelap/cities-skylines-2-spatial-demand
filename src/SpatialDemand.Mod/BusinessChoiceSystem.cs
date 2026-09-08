@@ -44,7 +44,7 @@ namespace SpatialDemand.Mod
             requests = GetEntityQuery(ComponentType.ReadOnly<ResourceBuyer>(), ComponentType.Exclude<Deleted>(), ComponentType.Exclude<Temp>());
             suppliers = GetEntityQuery(new EntityQueryDesc {
                 All = new[] { ComponentType.ReadOnly<PrefabRef>(), ComponentType.ReadOnly<Resources>() },
-                Any = new[] { ComponentType.ReadOnly<ResourceSeller>(), ComponentType.ReadOnly<StorageCompany>(), ComponentType.ReadOnly<CargoTransportStation>() },
+                Any = new[] { ComponentType.ReadOnly<ResourceSeller>(), ComponentType.ReadOnly<Game.Companies.StorageCompany>(), ComponentType.ReadOnly<Game.Buildings.CargoTransportStation>() },
                 None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>(), ComponentType.ReadOnly<Destroyed>(),
                     ComponentType.ReadOnly<Game.Routes.ShipStop>(), ComponentType.ReadOnly<Game.Routes.AirplaneStop>(), ComponentType.ReadOnly<Game.Routes.TrainStop>() }
             });

@@ -80,7 +80,7 @@ namespace SpatialDemand.Mod
                         !EntityManager.HasComponent<ServiceAvailable>(seller) ||
                         !EntityManager.HasComponent<PropertyRenter>(seller) ||
                         !EntityManager.HasBuffer<Resources>(seller) ||
-                        EntityManager.HasComponent<StorageCompany>(seller) ||
+                        EntityManager.HasComponent<Game.Companies.StorageCompany>(seller) ||
                         !ShoppingPriceQuote.TryGet(EntityManager, prefabs, ref data, seller, request.m_ResourceNeeded, true, out var price))
                     { unsupported++; continue; }
                     int stock = EconomyUtils.GetResources(request.m_ResourceNeeded, EntityManager.GetBuffer<Resources>(seller, true));
