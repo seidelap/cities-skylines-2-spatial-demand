@@ -1,10 +1,11 @@
-# Tenant-backed construction prototype (0.3)
+# Tenant-backed construction prototype
 
 **Implementation status:** all 59 portable tests pass on Mac and Windows. The new
 game adapter compiled and passed official postprocessing against installed game
 1.6.0f1 with zero warnings/errors and was deployed on September 8, 2026 at 20:52 UTC.
-Construction runtime acceptance is still pending; the prior live smoke-tested
-version was 0.2. Both construction options default off. For the test session,
+The loaded 0.3 observed 30 proposals after the test city's bulldozing and rebuild,
+with Apply off and zero funded, cancelled or completed mod projects. This proves
+proposal interception in Observe, not construction settlement. Both construction options default off. For the test session,
 construction Observe was explicitly enabled while Apply remained off. No claim of
 validated construction behavior follows from housing's earlier live tests.
 
@@ -97,7 +98,10 @@ business projects compete with each other in each sampled round.
 - Business uses the existing capped buyer/order and supplier/stock snapshot.
   Current orders are treated as a **daily sales proxy**, then held constant over
   the payback horizon. This is not measured recurring demand. Inputs must be
-  visible locally; imports, extractors and storage activities are not supported.
+  visible in the supplier snapshot. Version 0.4 includes real stocked warehouses
+  and eligible outside suppliers at current checkout quotes, with the game's
+  weight/shipment freight cost on estimated straight-line distance. It creates no
+  fictional import stock. Extractor and storage **entry activities** remain unsupported.
 - Capital cost uses a positive prefab construction cost when present, otherwise
   **1,000 currency per zoning cell**, configurable. Upkeep uses the prefab's
   consumption data. The default payback horizon is **32 game days**. These are
@@ -108,12 +112,14 @@ business projects compete with each other in each sampled round.
 - Demand bars continue to display vanilla values. Immigration is still vanilla.
   An empty city with no existing households or a region without observable input
   suppliers can stop growing under strict Apply. Use an established test city;
-  outside household offers and import quotes are future work, not invented demand.
+  outside household offers and route-verified import quotes remain future work.
 
 ## Diagnostics and acceptance
 
 Periodic `construction quote` rows show forecast tenants/capacity, proposed rent,
 capital cost and source, upkeep, payback, surplus and business rejection reasons.
+Version 0.4 retains the most recent quote and cumulative decision reasons for the
+periodic status report, including proposals that disappear between log intervals.
 `construction status` reports observe/apply, forced batches, invalid settings,
 pipeline blocking, proposal/permit/rejection counts and elapsed time. Settlement
 reports actual building identity and renter count separately from the forecast.
@@ -122,7 +128,8 @@ Required Windows/game checks (compilation passed; runtime checks outstanding):
 
 1. Compilation/postprocessing passed. Inspect runtime phase order and confirm
    the temporary flag is restored to its previous value, including unload.
-2. Observe: proposals are logged and every vanilla definition remains intact.
+2. Observe: 30 proposals were observed in 0.3; still verify each definition remains
+   intact and inspect 0.4's retained explanations after a short rebuilding batch.
 3. Apply with no acceptable bids: newly zoned land stays empty, including attached
    subareas/subnets. Existing buildings, player tools and unrelated definitions
    remain intact. Test low/zero demand bars to prove proposal generation bypass.

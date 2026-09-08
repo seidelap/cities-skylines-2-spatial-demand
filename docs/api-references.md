@@ -3,6 +3,23 @@
 Implementation is original; these references establish API names and ownership.
 No game assemblies or decompiled game source are distributed in this repository.
 
+Version 0.4 also uses the pinned snapshot's
+[ResourceBuyerSystem](https://github.com/bworthy89/roadmod/blob/5b49a4fc0c572f2b5133df83083ebb4afe2f76a6/New%20folder/Game.Simulation/ResourceBuyerSystem.cs),
+`ResourcePathfindSetup`, `EconomyUtils`, `TradeCost`, `ServiceAvailable`,
+`StorageCompanyData` and `VehicleUtils`. Checkout adds the seller's embedded buy
+cost and applies the retail service multiplier. New freight uses the resource's
+weight and shipment quantity. Its distance is an explicit forecast approximation.
+Shopping's single `PathInformation` winner is not housing's candidate buffer;
+substituting a seller would invalidate the already computed route.
+
+`PayWageSystem`, `TaxSystem`, `WorkProviderSystem`, `FreeWorkplaces` and
+`CompanyDividendSystem` establish the labor/ownership boundary: vanilla payroll
+owns company debits, household credits and tax accrual; household income estimates
+also use its education wage table. `Worker` and `Employee` have no per-person
+salary field. The original labor auction therefore only reports hypothetical
+contracts. Vanilla company dividends already transfer surplus to employees'
+households; a second ownership ledger would not be a harmless extra feature.
+
 Construction 0.3 additionally uses the pinned snapshot's
 [ZoneSpawnSystem](https://github.com/bworthy89/roadmod/blob/5b49a4fc0c572f2b5133df83083ebb4afe2f76a6/New%20folder/Game.Simulation/ZoneSpawnSystem.cs),
 `Game.Common.SystemOrder`, `Game.Tools.GenerateObjectsSystem`, `CreationDefinition`,

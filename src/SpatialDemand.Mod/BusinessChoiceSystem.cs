@@ -42,8 +42,12 @@ namespace SpatialDemand.Mod
             templates = GetEntityQuery(ComponentType.ReadOnly<ArchetypeData>(), ComponentType.ReadOnly<IndustrialProcessData>(),
                 ComponentType.ReadOnly<WorkplaceData>(), ComponentType.Exclude<ExtractorCompanyData>(), ComponentType.Exclude<StorageCompanyData>());
             requests = GetEntityQuery(ComponentType.ReadOnly<ResourceBuyer>(), ComponentType.Exclude<Deleted>(), ComponentType.Exclude<Temp>());
-            suppliers = GetEntityQuery(ComponentType.ReadOnly<CompanyData>(), ComponentType.ReadOnly<PropertyRenter>(),
-                ComponentType.ReadOnly<PrefabRef>(), ComponentType.ReadOnly<Resources>(), ComponentType.Exclude<Deleted>(), ComponentType.Exclude<Temp>());
+            suppliers = GetEntityQuery(new EntityQueryDesc {
+                All = new[] { ComponentType.ReadOnly<PrefabRef>(), ComponentType.ReadOnly<Resources>() },
+                Any = new[] { ComponentType.ReadOnly<ResourceSeller>(), ComponentType.ReadOnly<StorageCompany>(), ComponentType.ReadOnly<CargoTransportStation>() },
+                None = new[] { ComponentType.ReadOnly<Deleted>(), ComponentType.ReadOnly<Temp>(), ComponentType.ReadOnly<Destroyed>(),
+                    ComponentType.ReadOnly<Game.Routes.ShipStop>(), ComponentType.ReadOnly<Game.Routes.AirplaneStop>(), ComponentType.ReadOnly<Game.Routes.TrainStop>() }
+            });
             receipts = GetEntityQuery(ComponentType.ReadOnly<PendingBusiness>(), ComponentType.Exclude<Created>());
             entries = GetEntityQuery(ComponentType.ReadOnly<BusinessEntry>());
             economy = GetEntityQuery(ComponentType.ReadOnly<EconomyParameterData>());
@@ -63,7 +67,7 @@ namespace SpatialDemand.Mod
                 if (!Mod.Settings.BusinessEnabled || faulted) return;
                 var buyers = ReadBuyers();
                 var sellers = ReadSellers();
-                var book = new BusinessMarket(buyers, sellers, Mod.Settings.BusinessRangeMetres, Mod.Settings.DeliveryCostPerUnitKm / 1000d);
+                var book = MakeMarket(buyers, sellers);
                 var reasons = new Dictionary<string, int>();
                 bool cooldown = false;
                 using (var recent = entries.ToComponentDataArray<BusinessEntry>(Allocator.Temp))
@@ -94,7 +98,7 @@ namespace SpatialDemand.Mod
                     var chosen = prefabs[best.Activity.Id];
                     string sector = best.Activity.Retail ? "commercial" :
                         (Data((Resource)best.Activity.Output).m_Weight == 0 ? "office" : "industrial");
-                    Mod.Log.Info($"business choice sector={sector}, property={Id(building)}, prefab={Id(chosen)}, output={(Resource)best.Activity.Output}, quantity={best.Quantity:F2}, revenue={best.Revenue:F2}, inputs={best.InputCost:F2}, fixedCost={best.Activity.FixedCost:F2}, surplus={best.Profit:F2}, apply={Mod.Settings.ApplyBusinessChoices}, cooldown={cooldown}; forecast=current-orders, transport=straight-line-estimate");
+                    Mod.Log.Info($"business choice sector={sector}, property={Id(building)}, prefab={Id(chosen)}, output={(Resource)best.Activity.Output}, quantity={best.Quantity:F2}, revenue={best.Revenue:F2}, inputs={best.InputCost:F2}, fixedCost={best.Activity.FixedCost:F2}, surplus={best.Profit:F2}, apply={Mod.Settings.ApplyBusinessChoices}, cooldown={cooldown}; forecast=current-orders, transport=game-freight-cost-on-straight-line, prices=checkout-quotes");
                     book.Commit(best); // Reserve projected buyers and inputs before considering another site.
                     if (!Mod.Settings.ApplyBusinessChoices || cooldown || World.GetOrCreateSystemManaged<ConstructionChoiceSystem>().HasPendingProject) continue;
                     var commands = barrier.CreateCommandBuffer();
@@ -115,8 +119,28 @@ namespace SpatialDemand.Mod
             }
         }
 
-        internal BusinessMarket ReadMarket() => new BusinessMarket(ReadBuyers(), ReadSellers(),
-            Mod.Settings!.BusinessRangeMetres, Mod.Settings.DeliveryCostPerUnitKm / 1000d);
+        internal BusinessMarket ReadMarket() => MakeMarket(ReadBuyers(), ReadSellers());
+
+        private BusinessMarket MakeMarket(List<Purchase> buyers, List<StockOffer> sellers)
+            => new BusinessMarket(buyers, sellers, Mod.Settings!.BusinessRangeMetres, 0, TransportQuote);
+
+        // Quote only the new leg. Seller prices already include their embedded upstream
+        // trade costs. Game freight uses resource weight and actual proposed shipment size;
+        // distance is still an estimate, not proof of a usable road connection.
+        private double TransportQuote(long resource, double quantity, double distance, bool retail)
+        {
+            if (retail)
+            {
+                double speed = Mod.Settings!.ConstructionTravelKph;
+                if (speed <= 0 || double.IsNaN(speed) || double.IsInfinity(speed)) return double.PositiveInfinity;
+                return distance / 1000 / speed * Mod.Settings.ShoppingTimeValuePerHour;
+            }
+            if (quantity > int.MaxValue || distance > float.MaxValue) return double.PositiveInfinity;
+            var data = Data((Resource)resource);
+            if (data.m_Weight < 0 || !math.isfinite(data.m_Weight)) return double.PositiveInfinity;
+            int cost = EconomyUtils.GetTransportCost((float)distance, (Resource)resource, (int)Math.Ceiling(quantity), data.m_Weight);
+            return cost >= 0 ? cost : double.PositiveInfinity;
+        }
 
         internal List<BusinessActivity> Activities(Entity buildingPrefab, float3 position, long site, double rent)
         {
@@ -141,7 +165,8 @@ namespace SpatialDemand.Mod
                 // Never invent purchasing power for an unobservable payer.
                 if (!EntityManager.HasBuffer<Resources>(buyer.m_Payer)) continue;
                 int money = EconomyUtils.GetResources(Resource.Money, EntityManager.GetBuffer<Resources>(buyer.m_Payer, true));
-                double budget = Math.Max(0, money) / (double)buyer.m_AmountNeeded;
+                double spendable = retail ? Math.Max(0d, (double)money - HouseholdBehaviorSystem.kMinimumShoppingMoney) : Math.Max(0, money);
+                double budget = spendable / buyer.m_AmountNeeded;
                 result.Add(new Purchase { Id = Id(entity), Resource = (long)buyer.m_ResourceNeeded, Quantity = buyer.m_AmountNeeded,
                     BudgetPerUnit = budget, Retail = retail, X = buyer.m_Location.x, Z = buyer.m_Location.z });
             }
@@ -151,21 +176,39 @@ namespace SpatialDemand.Mod
         private List<StockOffer> ReadSellers()
         {
             var result = new List<StockOffer>();
+            var data = GetComponentLookup<ResourceData>(true);
+            var resourcePrefabs = resources.GetPrefabs();
+            var trucks = GetComponentLookup<Game.Vehicles.DeliveryTruck>(true);
+            var guests = GetBufferLookup<Game.Vehicles.GuestVehicle>(true);
+            var layouts = GetBufferLookup<Game.Vehicles.LayoutElement>(true);
             using var entities = suppliers.ToEntityArray(Allocator.Temp);
-            foreach (var entity in entities.Take(512))
+            long quoteId = 0;
+            foreach (var entity in entities.OrderBy(Id).Take(512))
             {
                 var prefab = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
-                var building = EntityManager.GetComponentData<PropertyRenter>(entity).m_Property;
-                if (!EntityManager.HasComponent<IndustrialProcessData>(prefab) || !EntityManager.HasComponent<Game.Objects.Transform>(building)) continue;
-                var process = EntityManager.GetComponentData<IndustrialProcessData>(prefab);
-                bool retail = EntityManager.HasComponent<CommercialCompany>(entity);
-                int amount = EconomyUtils.GetResources(process.m_Output.m_Resource, EntityManager.GetBuffer<Resources>(entity, true));
+                var building = EntityManager.HasComponent<PropertyRenter>(entity)
+                    ? EntityManager.GetComponentData<PropertyRenter>(entity).m_Property : entity;
+                if (!EntityManager.HasComponent<Game.Objects.Transform>(building) || EntityManager.HasComponent<Abandoned>(building) ||
+                    EntityManager.HasComponent<Condemned>(building) || EntityManager.HasComponent<Destroyed>(building)) continue;
+                if (EntityManager.HasComponent<Game.Buildings.Building>(building) && BuildingUtils.CheckOption(
+                    EntityManager.GetComponentData<Game.Buildings.Building>(building), BuildingOption.Inactive)) continue;
+                bool retail = EntityManager.HasComponent<ServiceAvailable>(entity);
+                Resource allowed = EntityManager.HasComponent<StorageCompanyData>(prefab) && !retail
+                    ? EntityManager.GetComponentData<StorageCompanyData>(prefab).m_StoredResources
+                    : EntityManager.HasComponent<IndustrialProcessData>(prefab)
+                        ? EntityManager.GetComponentData<IndustrialProcessData>(prefab).m_Output.m_Resource : Resource.NoResource;
                 var position = EntityManager.GetComponentData<Game.Objects.Transform>(building).m_Position;
-                var data = Data(process.m_Output.m_Resource);
-                if (amount <= 0 || data.m_Price.x <= 0) continue;
-                result.Add(new StockOffer { Id = Id(entity), Resource = (long)process.m_Output.m_Resource,
-                    Quantity = amount, Price = retail ? data.m_Price.y : data.m_Price.x,
-                    Retail = retail, X = position.x, Z = position.z });
+                foreach (var stock in EntityManager.GetBuffer<Resources>(entity, true))
+                {
+                    if (stock.m_Resource == Resource.Money || stock.m_Resource == Resource.NoResource || (allowed & stock.m_Resource) == 0) continue;
+                    int reserved = Game.Vehicles.VehicleUtils.GetAllBuyingResourcesTrucks(entity, stock.m_Resource, ref trucks, ref guests, ref layouts);
+                    int amount = stock.m_Amount - reserved;
+                    if (amount <= 0 || !ShoppingPriceQuote.TryGet(EntityManager, resourcePrefabs, ref data, entity, stock.m_Resource, retail, out var quote)) continue;
+                    // Per-resource IDs are local to this snapshot; outside connections and
+                    // warehouses may offer several resources. Never fabricate import stock.
+                    result.Add(new StockOffer { Id = ++quoteId, Resource = (long)stock.m_Resource,
+                        Quantity = amount, Price = quote.UnitPrice, Retail = retail, X = position.x, Z = position.z });
+                }
             }
             return result;
         }

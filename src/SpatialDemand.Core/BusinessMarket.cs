@@ -45,9 +45,11 @@ namespace SpatialDemand.Core
         private readonly ILookup<Tuple<long, bool>, StockOffer> sellersByResource;
         private readonly Dictionary<long, double> demand, stock;
         private readonly double range, deliveryPerUnitMetre;
+        private readonly Func<long, double, double, bool, double>? transportQuote;
 
         public BusinessMarket(IEnumerable<Purchase> buyers, IEnumerable<StockOffer> sellers,
-            double range, double deliveryPerUnitMetre)
+            double range, double deliveryPerUnitMetre,
+            Func<long, double, double, bool, double>? transportQuote = null)
         {
             if (!Valid(range) || !Valid(deliveryPerUnitMetre)) throw new ArgumentException("Invalid delivery assumptions.");
             this.buyers = buyers.OrderBy(b => b.Id).ToList();
@@ -57,6 +59,7 @@ namespace SpatialDemand.Core
             demand = this.buyers.ToDictionary(b => b.Id, b => Valid(b.Quantity) ? b.Quantity : 0);
             stock = this.sellers.ToDictionary(s => s.Id, s => Valid(s.Quantity) ? s.Quantity : 0);
             this.range = range; this.deliveryPerUnitMetre = deliveryPerUnitMetre;
+            this.transportQuote = transportQuote;
         }
 
         public BusinessChoice Evaluate(BusinessActivity a)
@@ -69,45 +72,67 @@ namespace SpatialDemand.Core
             foreach (var input in a.Inputs)
                 if (input.Value > 0)
                     capacity = Math.Min(capacity, sellersByResource[Tuple.Create(input.Key, false)].Where(s =>
-                        !double.IsInfinity(Delivered(s.Price, s.X, s.Z, a.X, a.Z))).Sum(s => stock[s.Id]) / input.Value);
+                        !double.IsInfinity(Delivered(s.Price, s.Resource, Math.Min(stock[s.Id], a.Capacity * input.Value), false, s.X, s.Z, a.X, a.Z))).Sum(s => stock[s.Id]) / input.Value);
             if (capacity <= 0) { result.Reason = "missing-input-stock"; return result; }
             var competingStock = new Dictionary<long, double>(stock);
             foreach (var b in buyersByResource[Tuple.Create(a.Output, a.Retail)])
             {
+                if (result.Quantity >= capacity) break;
                 if (b.Resource != a.Output || b.Retail != a.Retail || !Valid(b.BudgetPerUnit)) continue;
-                double quote = Delivered(a.Price, a.X, a.Z, b.X, b.Z);
-                if (quote > b.BudgetPerUnit || double.IsInfinity(quote)) continue;
-                // The incumbent wins equal-price ties. A new firm must improve the offer.
                 double unmet = demand[b.Id];
-                foreach (var incumbent in sellersByResource[Tuple.Create(b.Resource, b.Retail)]
-                    .Where(s => Delivered(s.Price, s.X, s.Z, b.X, b.Z) <= quote)
-                    .OrderBy(s => Delivered(s.Price, s.X, s.Z, b.X, b.Z)).ThenBy(s => s.Id))
+                while (unmet > 0 && result.Quantity < capacity)
                 {
-                    double supplied = Math.Min(unmet, competingStock[incumbent.Id]);
-                    competingStock[incumbent.Id] -= supplied;
-                    unmet -= supplied;
-                    if (unmet <= 0) break;
+                    double amount = Math.Min(unmet, capacity - result.Quantity);
+                    double quote = Delivered(a.Price, a.Output, amount, a.Retail, a.X, a.Z, b.X, b.Z);
+                    if (!Affordable(a.Price, quote, b)) quote = double.PositiveInfinity;
+                    StockOffer? bestSeller = null;
+                    foreach (var incumbent in sellersByResource[Tuple.Create(b.Resource, b.Retail)])
+                    {
+                        double supplied = Math.Min(unmet, competingStock[incumbent.Id]);
+                        double alternative = Delivered(incumbent.Price, incumbent.Resource, supplied, incumbent.Retail,
+                            incumbent.X, incumbent.Z, b.X, b.Z);
+                        if (!Affordable(incumbent.Price, alternative, b)) continue;
+                        // Incumbents win ties with entry, then stable seller order.
+                        if (alternative < quote || (alternative == quote &&
+                            (bestSeller == null || incumbent.Id < bestSeller.Id)))
+                        { bestSeller = incumbent; quote = alternative; amount = supplied; }
+                    }
+                    if (double.IsInfinity(quote)) break;
+                    if (bestSeller != null) competingStock[bestSeller.Id] -= amount;
+                    else
+                    {
+                        result.Sales.TryGetValue(b.Id, out double prior);
+                        result.Sales[b.Id] = prior + amount;
+                        result.Quantity += amount;
+                    }
+                    unmet -= amount;
+                    // Requote each feasible shipment after stock/demand changes. A trip
+                    // cannot be amortized over the original order when only part is sold.
                 }
-                double amount = Math.Min(unmet, capacity - result.Quantity);
-                if (amount <= 0) continue;
-                result.Sales[b.Id] = amount;
-                result.Quantity += amount;
             }
             if (result.Quantity <= 0) return result;
             foreach (var input in a.Inputs)
             {
                 double needed = result.Quantity * input.Value;
-                foreach (var s in sellersByResource[Tuple.Create(input.Key, false)]
-                    .OrderBy(s => Delivered(s.Price, s.X, s.Z, a.X, a.Z)).ThenBy(s => s.Id))
+                while (needed > 1e-8)
                 {
-                    double price = Delivered(s.Price, s.X, s.Z, a.X, a.Z);
-                    if (double.IsInfinity(price)) continue;
-                    double amount = Math.Min(stock[s.Id], needed);
-                    if (amount <= 0) continue;
-                    result.Purchases[s.Id] = amount;
-                    result.InputCost += amount * price;
-                    needed -= amount;
-                    if (needed <= 1e-8) break;
+                    StockOffer? bestSeller = null;
+                    double bestPrice = double.PositiveInfinity, bestAmount = 0;
+                    foreach (var s in sellersByResource[Tuple.Create(input.Key, false)])
+                    {
+                        result.Purchases.TryGetValue(s.Id, out double reserved);
+                        double amount = Math.Min(stock[s.Id] - reserved, needed);
+                        double price = Delivered(s.Price, s.Resource, amount, false, s.X, s.Z, a.X, a.Z);
+                        if (price < bestPrice || (price == bestPrice && bestSeller != null && s.Id < bestSeller.Id))
+                        { bestSeller = s; bestPrice = price; bestAmount = amount; }
+                    }
+                    if (bestSeller == null) break;
+                    result.Purchases.TryGetValue(bestSeller.Id, out double prior);
+                    result.Purchases[bestSeller.Id] = prior + bestAmount;
+                    result.InputCost += bestAmount * bestPrice;
+                    needed -= bestAmount;
+                    // Shipment charges depend on quantity. Reordering only once before
+                    // sourcing would retain stale unit quotes for the smaller remainder.
                 }
                 if (needed > 1e-8) { result.Reason = "missing-input-stock"; return result; }
             }
@@ -137,11 +162,21 @@ namespace SpatialDemand.Core
             foreach (var p in choice.Purchases) stock[p.Key] -= p.Value;
         }
 
-        private double Delivered(double price, double x, double z, double toX, double toZ)
+        private double Delivered(double price, long resource, double quantity, bool retail, double x, double z, double toX, double toZ)
         {
-            if (!Valid(price) || !Finite(x) || !Finite(z) || !Finite(toX) || !Finite(toZ)) return double.PositiveInfinity;
+            if (!Valid(price) || !Valid(quantity) || quantity <= 0 || !Finite(x) || !Finite(z) || !Finite(toX) || !Finite(toZ)) return double.PositiveInfinity;
             double distance = Math.Sqrt((x - toX) * (x - toX) + (z - toZ) * (z - toZ));
-            return distance <= range ? price + distance * deliveryPerUnitMetre : double.PositiveInfinity;
+            // Zero means no artificial radius; candidate snapshot size still bounds work.
+            if (!Finite(distance) || (range > 0 && distance > range)) return double.PositiveInfinity;
+            double extra = transportQuote == null ? distance * deliveryPerUnitMetre : transportQuote(resource, quantity, distance, retail) / quantity;
+            return Valid(extra) && Finite(price + extra) ? price + extra : double.PositiveInfinity;
+        }
+        private bool Affordable(double price, double delivered, Purchase buyer)
+        {
+            // BudgetPerUnit remains the conservative ceiling for the original order.
+            // Retail time affects preference; it is not another withdrawal of cash.
+            double payment = buyer.Retail && transportQuote != null ? price : delivered;
+            return Finite(delivered) && payment <= buyer.BudgetPerUnit;
         }
         private static bool Finite(double n) => !double.IsNaN(n) && !double.IsInfinity(n);
         private static bool Valid(double n) => Finite(n) && n >= 0;

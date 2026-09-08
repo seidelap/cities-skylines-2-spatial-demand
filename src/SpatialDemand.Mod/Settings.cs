@@ -7,8 +7,8 @@ using Game.Settings;
 namespace SpatialDemand.Mod
 {
     [FileLocation("SpatialDemand")]
-    [SettingsUIGroupOrder("Housing", "Business", "Construction")]
-    [SettingsUIShowGroupName("Housing", "Business", "Construction")]
+    [SettingsUIGroupOrder("Housing", "Business", "Construction", "Diagnostics")]
+    [SettingsUIShowGroupName("Housing", "Business", "Construction", "Diagnostics")]
     public sealed class Settings : ModSetting
     {
         public Settings(IMod mod) : base(mod) { SetDefaults(); }
@@ -25,8 +25,12 @@ namespace SpatialDemand.Mod
         public bool ApplyBusinessChoices { get; set; }
         [SettingsUISection("Main", "Business")]
         public int BusinessRangeMetres { get; set; }
-        [SettingsUISection("Main", "Business")]
-        public float DeliveryCostPerUnitKm { get; set; }
+        [SettingsUISection("Main", "Diagnostics")]
+        public bool ShoppingEnabled { get; set; }
+        [SettingsUISection("Main", "Diagnostics")]
+        public bool LaborEnabled { get; set; }
+        [SettingsUISection("Main", "Diagnostics")]
+        public float ShoppingTimeValuePerHour { get; set; }
 
         [SettingsUISection("Main", "Construction")]
         public bool ConstructionEnabled { get; set; }
@@ -42,7 +46,8 @@ namespace SpatialDemand.Mod
         public override void SetDefaults()
         {
             Enabled = true; ApplyChoices = false; BusinessEnabled = true;
-            ApplyBusinessChoices = false; BusinessRangeMetres = 2000; DeliveryCostPerUnitKm = 1;
+            ApplyBusinessChoices = false; BusinessRangeMetres = 0;
+            ShoppingEnabled = false; LaborEnabled = false; ShoppingTimeValuePerHour = 1;
             ConstructionEnabled = false; ApplyConstruction = false;
             ConstructionCostPerCell = 1000; ConstructionPaybackDays = 32; ConstructionTravelKph = 30;
         }
@@ -59,6 +64,13 @@ namespace SpatialDemand.Mod
             [settings.GetOptionTabLocaleID("Main")] = "Main",
             [settings.GetOptionGroupLocaleID("Housing")] = "Housing",
             [settings.GetOptionGroupLocaleID("Business")] = "Business entry",
+            [settings.GetOptionGroupLocaleID("Diagnostics")] = "Shopping and labor diagnostics",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.ShoppingEnabled))] = "Explain shopping prices and trips",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ShoppingEnabled))] = "Log the actual selected shopping route, seller price and estimated time cost. Vanilla still chooses routes and settles purchases; this does not replace shopping destinations.",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.LaborEnabled))] = "Evaluate hypothetical wage offers",
+            [settings.GetOptionDescLocaleID(nameof(Settings.LaborEnabled))] = "Compare workers' outside options with employers' hiring budgets and the option of leaving a job empty. Read-only estimates; actual jobs, salaries and payroll remain vanilla.",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.ShoppingTimeValuePerHour))] = "Estimated value of travel time (currency/hour)",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ShoppingTimeValuePerHour))] = "Shared time preference for shopping, business retail forecasts and labor diagnostics. This is not a fare or cash debit. Estimates use the configured commute speed; actual game routing remains in control.",
             [settings.GetOptionGroupLocaleID("Construction")] = "Construction (experimental)",
             [settings.GetOptionLabelLocaleID(nameof(Settings.ConstructionEnabled))] = "Evaluate construction projects",
             [settings.GetOptionDescLocaleID(nameof(Settings.ConstructionEnabled))] = "Forecast tenant-supported rents before a zoned building is created. Observe leaves construction unchanged. Both construction switches start off; this adapter still requires in-game validation.",
@@ -68,16 +80,14 @@ namespace SpatialDemand.Mod
             [settings.GetOptionDescLocaleID(nameof(Settings.ConstructionCostPerCell))] = "Planning assumption used when a building prefab has no positive construction cost. No money is withdrawn by this prototype.",
             [settings.GetOptionLabelLocaleID(nameof(Settings.ConstructionPaybackDays))] = "Required payback horizon (game days)",
             [settings.GetOptionDescLocaleID(nameof(Settings.ConstructionPaybackDays))] = "Forecast rent after upkeep must repay construction within this horizon. Business current orders are treated as a daily sales proxy, not measured recurring demand.",
-            [settings.GetOptionLabelLocaleID(nameof(Settings.ConstructionTravelKph))] = "Estimated commute speed (km/h)",
-            [settings.GetOptionDescLocaleID(nameof(Settings.ConstructionTravelKph))] = "Straight-line home-to-work estimate used consistently for construction bids and existing-home alternatives. It does not establish road access or predict the eventual routed choice.",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.ConstructionTravelKph))] = "Estimated travel speed (km/h)",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ConstructionTravelKph))] = "Shared straight-line estimate for construction home comparisons, retail forecasts and labor diagnostics. It does not establish road access or predict the eventual routed choice.",
             [settings.GetOptionLabelLocaleID(nameof(Settings.BusinessEnabled))] = "Evaluate new businesses",
             [settings.GetOptionDescLocaleID(nameof(Settings.BusinessEnabled))] = "Compare compatible activities at vacant premises using current buyers and local supplier stock. Log proposals and reasons for rejection.",
             [settings.GetOptionLabelLocaleID(nameof(Settings.ApplyBusinessChoices))] = "Open selected businesses (experimental)",
             [settings.GetOptionDescLocaleID(nameof(Settings.ApplyBusinessChoices))] = "Create at most one additional company per game day using its chosen activity. Vanilla entry remains active. Use a disposable test city.",
-            [settings.GetOptionLabelLocaleID(nameof(Settings.BusinessRangeMetres))] = "Business search radius (metres)",
-            [settings.GetOptionDescLocaleID(nameof(Settings.BusinessRangeMetres))] = "Straight-line approximation for buyers and input suppliers; this does not prove a road connection exists.",
-            [settings.GetOptionLabelLocaleID(nameof(Settings.DeliveryCostPerUnitKm))] = "Estimated delivery cost per unit per kilometre",
-            [settings.GetOptionDescLocaleID(nameof(Settings.DeliveryCostPerUnitKm))] = "Explicit planning assumption, not a measured transport charge. Actual purchases use the game's routing.",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.BusinessRangeMetres))] = "Optional forecast distance limit (metres; 0 means none)",
+            [settings.GetOptionDescLocaleID(nameof(Settings.BusinessRangeMetres))] = "Default zero compares the bounded supplier/buyer sample without a hard distance cutoff. Offers compete on cost including transport. Positive values limit the forecast only, not actual cim shopping.",
             [settings.GetOptionLabelLocaleID(nameof(Settings.Enabled))] = "Evaluate housing choices",
             [settings.GetOptionDescLocaleID(nameof(Settings.Enabled))] = "Compare reachable homes using each household's preferences. Results are recorded in the mod log.",
             [settings.GetOptionLabelLocaleID(nameof(Settings.ApplyChoices))] = "Apply housing choices (experimental)",

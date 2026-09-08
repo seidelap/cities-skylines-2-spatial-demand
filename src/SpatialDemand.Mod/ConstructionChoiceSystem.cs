@@ -28,6 +28,8 @@ namespace SpatialDemand.Mod
         internal bool ForcedBatch;
         private uint lastReconcile, lastLog;
         private long proposed, funded, rejected, completed;
+        private readonly Dictionary<string, long> reasons = new Dictionary<string, long>();
+        private string lastQuote = "none";
         internal bool CanGenerate => !faulted && Mod.Settings != null && Mod.Settings.ConstructionEnabled &&
             Mod.Settings.ApplyConstruction && SettingsValid() && permits.IsEmptyIgnoreFilter;
         internal bool HasPendingProject
@@ -123,6 +125,9 @@ namespace SpatialDemand.Mod
                         var choice = developers.Evaluate(project);
                         choices[project.Id] = choice;
                         proposed++;
+                        string reason = residential ? choice.Reason : choice.Reason + "/" + businessReason;
+                        reasons.TryGetValue(reason, out long count); reasons[reason] = count + 1;
+                        lastQuote = $"sector={(residential ? "residential" : "business")}, tenants={choice.Tenants.Count}/{project.Units}, rent={choice.RentPerUnit:F2}, capital={project.ConstructionCost:F2}, costSource={costSource}, upkeep={project.UpkeepPerDay:F2}, surplus={choice.Surplus:F2}, result={reason}, households={prospects.Count}";
                         if (logDue || (apply && choice.Reason == "funded"))
                             Mod.Log.Info($"construction quote frame={simulation.frameIndex}, sector={(residential ? "residential" : "business")}, proposal={project.Id}, prefab={Id(prefab)}, tenants={choice.Tenants.Count}/{project.Units}, rent={choice.RentPerUnit:F2}, capital={project.ConstructionCost:F2}, costSource={costSource}, upkeep={project.UpkeepPerDay:F2}, paybackDays={project.PaybackDays}, surplus={choice.Surplus:F2}, result={choice.Reason}, business={businessReason}; forecast-only, travel=straight-line, sampleHouseholds={prospects.Count}");
                     }
@@ -163,6 +168,7 @@ namespace SpatialDemand.Mod
                 if (unchecked(simulation.frameIndex - lastLog) >= 4096 || accepted != Entity.Null)
                 {
                     Mod.Log.Info($"construction status frame={simulation.frameIndex}, apply={apply}, forced={ForcedBatch}, validSettings={valid}, pipelineBusy={busy}, proposals={proposed}, funded={funded}, rejected={rejected}, completed={completed}, roots={roots.Count}, evaluated={choices.Count}, ms={timer.Elapsed.TotalMilliseconds:F2}; cap=one-project-at-a-time-and-per-game-day, invalid-or-unsampled=wait");
+                    Mod.Log.Info($"construction reasons {string.Join(";", reasons.Select(p => p.Key + "=" + p.Value))}; lastQuote={lastQuote}");
                     lastLog = simulation.frameIndex;
                 }
             }
@@ -240,7 +246,7 @@ namespace SpatialDemand.Mod
 
         private static bool SettingsValid() => Mod.Settings!.ConstructionCostPerCell > 0 && Mod.Settings.ConstructionPaybackDays > 0 &&
             Mod.Settings.ConstructionTravelKph > 0 && !float.IsInfinity(Mod.Settings.ConstructionTravelKph) &&
-            Mod.Settings.BusinessRangeMetres > 0 && Mod.Settings.DeliveryCostPerUnitKm >= 0 && !float.IsInfinity(Mod.Settings.DeliveryCostPerUnitKm);
+            Mod.Settings.BusinessRangeMetres >= 0 && Mod.Settings.ShoppingTimeValuePerHour >= 0 && !float.IsInfinity(Mod.Settings.ShoppingTimeValuePerHour);
         private static long Id(Entity e) => ((long)e.Version << 32) | (uint)e.Index;
         private static Entity FromId(long id) => new Entity { Index = (int)id, Version = (int)(id >> 32) };
     }

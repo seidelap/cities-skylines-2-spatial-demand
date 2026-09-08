@@ -22,10 +22,12 @@ namespace SpatialDemand.Mod
             AssetDatabase.global.LoadSettings("SpatialDemand", Settings, new Settings(this));
             updateSystem.UpdateBefore<HousingChoiceSystem, HouseholdFindPropertySystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateAt<BusinessChoiceSystem>(SystemUpdatePhase.GameSimulation);
+            updateSystem.UpdateBefore<ShoppingChoiceSystem, ResourceBuyerSystem>(SystemUpdatePhase.GameSimulation);
+            updateSystem.UpdateAfter<LaborChoiceSystem, WorkProviderSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<ConstructionProposalSystem, ZoneSpawnSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateAfter<ConstructionProposalRestoreSystem, ZoneSpawnSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<ConstructionChoiceSystem, GenerateObjectsSystem>(SystemUpdatePhase.Modification1);
-            Log.Info("Spatial Demand 0.3: household, business and construction choices loaded; separate observe/apply switches. Construction is an unvalidated experimental adapter.");
+            Log.Info("Spatial Demand 0.4: household, business and construction choices; checkout/freight quotes and optional shopping/labor diagnostics. Actual shopping and payroll remain vanilla; construction Apply is experimental.");
         }
 
         public void OnDispose()

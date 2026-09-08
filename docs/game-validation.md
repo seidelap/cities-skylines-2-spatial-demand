@@ -1,5 +1,26 @@
 # In-game acceptance: housing smoke tests passed; business and construction tests pending
 
+## Version 0.4 — market quotes and optional diagnostics
+
+Portable tests cover checkout/freight costing, buyer cash versus travel preferences,
+stock reservations, fixed-basket shopping choices and incremental labor bidding.
+The shopping and labor game systems are read-only diagnostics, default off. No
+shopping destination, worker contract, salary, tax or ownership is changed by them.
+Windows compilation and a fresh in-game run must be recorded separately below.
+
+The build script accepts `-NoDeploy`: the official toolchain's deployment target
+is redirected to an isolated staging directory while the game remains open.
+Verify the installed DLL hash stays unchanged before calling this a staged build.
+
+After installing with the game closed, check the 0.4 startup marker. Enable the
+shopping and labor diagnostics separately: compare quoted checkout prices with
+game purchases; verify incomplete routes never become offers, and confirm the
+logs say `applied=0`. Check warehouse/outside stock and outgoing-truck reservations
+against game data. Freight distances and future commutes remain straight-line
+estimates; no reachable-path or wage-equilibrium validation follows from these logs.
+For labor, test no seekers, excess seekers, competing slots, education restrictions,
+cash limits and vacancy winners. The sampled wage forecasts do not alter payroll.
+
 ## Version 0.3 — tenant-backed construction
 
 On September 8, 2026, all 59 portable tests passed on Mac and Windows, including 16
@@ -8,7 +29,7 @@ zero warnings/errors and deployed at 20:52:08 UTC. Source revision:
 `d5e4245cc7c0b1580e23aebc791479634d338ef9` (clean checkout). Binary SHA256:
 `A7D3543B86F755B88525C27C0E68F7348F9151494B3A4021464C4559B33ADB8C`.
 The Game.dll hash remains the version 0.2 test's recorded installed assembly.
-**Construction behavior is not yet tested in-game.** Both construction switches
+**Construction Apply behavior is not yet tested in-game.** Both construction switches
 default off. For the pending live check, the saved mod configuration explicitly
 sets ConstructionEnabled=true and ApplyConstruction=false; existing housing Apply
 remains true. Its prior configuration was backed up on the VM.
@@ -16,17 +37,19 @@ The VM stopped at its authorized 20:19:19 UTC deadline before this work. The use
 authorized another 90-minute session, with a new STOP deadline of 22:14:36 UTC;
 its first start attempt failed because the zone had no GPU capacity. The retry
 succeeded and the cloud STOP setting was verified. Version 0.3 is now deployed,
-but the game was still closed at the last check. Windows App automation timed out
+and the city later loaded. Windows App automation initially timed out
 on both reading and acting on its disconnection notice; the secure RDP tunnel was
 confirmed listening, and the user was asked to reconnect and load the saved city.
 Follow the separate
 [construction acceptance procedure](construction-model.md#diagnostics-and-acceptance);
 earlier household and business evidence below does not validate these new hooks.
 
-The city subsequently loaded: the 0.3 startup marker was logged at 20:58:43 UTC,
-and construction Observe reported valid settings, Apply=false, no pending permits
-and zero proposals through 21:02 UTC. This validates system startup and idle
-execution only; no construction decision or cancellation has been exercised.
+The 0.3 startup marker was logged at 20:58:43 UTC. After the user bulldozed and
+allowed rebuilding, Observe recorded **30 proposals**, valid settings, Apply=false,
+and zero funded/rejected/completed mod projects by 21:07 UTC. This validates startup
+and proposal interception in Observe. The old logging interval missed individual
+quote explanations; 0.4 retains them. No Apply cancellation, accepted construction
+or permit persistence has been exercised.
 Steady idle status samples took 0.10–0.12 ms in this small city. Housing remained
 unfaulted, and business Observe continued rejecting its sampled premises for
 missing input stock. The user was asked to add residential and commercial zoning.
@@ -109,7 +132,7 @@ mods that replace household search or property processing.
 ## Build and load
 
 - `tools/build-windows.ps1` succeeds against the installed game's real assemblies.
-- Spatial Demand loads and its two options appear with English labels.
+- Spatial Demand loads and its housing, business, construction and diagnostic options appear with English labels.
 - Observe mode reports evaluated searches without changing entities or queues.
 - Confirm `m_Duration` is measured in seconds and that income and asking rent use
   the same period. Check values against the game's own search and budget displays.

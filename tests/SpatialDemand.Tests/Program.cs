@@ -17,6 +17,10 @@ internal static class Program
     {
         BusinessTests();
         DevelopmentTests();
+        Test("shopping choices and shared stock invariants (17 scenarios)", ShoppingTests.Run);
+        Test("labor scarcity, tax, vacancy and matching invariants", LaborTests.Run);
+        TransportTests();
+        Test("quantity-aware business transport regressions (7 scenarios)", BusinessTransportTests.Run);
         Test("cheaper otherwise-identical home wins", () => Equal(2L, Choose(Home(1, 30), Home(2, 20)).HomeId));
         Test("actual route duration affects choice", () => Equal(2L, Choose(Home(1, seconds: 7200), Home(2)).HomeId));
         Test("affordability is a hard constraint", () => Equal(Rejection.Unaffordable, Housing.Evaluate(Person(), Home(1, 51)).Rejection));
@@ -207,6 +211,33 @@ internal static class Program
         Test("business rejects invalid prices", () => Equal("invalid-activity", Book().Evaluate(Shop(price: double.NaN)).Reason));
         Test("business tie-break is independent of option ordering", () => Equal(1L, Book().Choose(new[] { Shop(2), Shop(1) })!.Activity.Id));
     }
+    private static void TransportTests()
+    {
+        var buyer = new Purchase { Id = 1, Resource = 1, Quantity = 10, BudgetPerUnit = 10, Retail = true, X = 5000 };
+        var seller = new StockOffer { Id = 2, Resource = 2, Quantity = 10, Price = 1, X = 100 };
+        var shop = new BusinessActivity { Id = 1, Output = 1, Retail = true, Price = 10, Capacity = 10 };
+        shop.Inputs[2] = 1;
+        Test("business zero radius means no artificial cutoff", () =>
+            Equal(10d, new BusinessMarket(new[] { buyer }, new[] { seller }, 0, 0).Evaluate(shop).Quantity));
+        Test("business uses shipment quote exactly once including quantity", () =>
+        { var book = new BusinessMarket(new[] { buyer }, new[] { seller }, 0, 0, (r, q, d, retail) => retail ? 0 : q + 5);
+            Equal(25d, book.Evaluate(shop).InputCost); });
+        Test("business retail time cost is not another cash debit", () =>
+        { var book = new BusinessMarket(new[] { buyer }, new[] { seller }, 0, 0, (r, q, d, retail) => retail ? 1000 : 0);
+            Equal(10d, book.Evaluate(shop).Quantity); });
+        Test("business unaffordable incumbent cannot absorb a buyer", () =>
+        { var expensive = new StockOffer { Id = 3, Resource = 1, Quantity = 10, Price = 11, Retail = true, X = 5000 };
+            var book = new BusinessMarket(new[] { buyer }, new[] { seller, expensive }, 0, 0, (r, q, d, retail) => retail ? d : 0);
+            Equal(10d, book.Evaluate(shop).Quantity); });
+        Test("business transport quote can make a cheaper distant input lose", () =>
+        { var distant = new StockOffer { Id = 3, Resource = 2, Quantity = 10, Price = 0, X = 10000 };
+            var book = new BusinessMarket(new[] { buyer }, new[] { seller, distant }, 0, 0, (r, q, d, retail) => retail ? 0 : d / 100);
+            Equal(11d, book.Evaluate(shop).InputCost); });
+        Test("business invalid freight is not free transport", () =>
+        { var book = new BusinessMarket(new[] { buyer }, new[] { seller }, 0, 0, (r, q, d, retail) => double.NaN);
+            Equal(null, book.Choose(new[] { shop })); });
+    }
+
     private static void DevelopmentTests()
     {
         DevelopmentProject Project(long id = 1, double cost = 100, double upkeep = 1, int units = 2) =>

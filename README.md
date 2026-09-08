@@ -1,19 +1,19 @@
 # Spatial Demand — Cities: Skylines II
 
 A small implementation of household housing choice, new business activity
-selection and experimental tenant-backed construction. Households compare reachable homes. Prospective firms compare compatible
-activities at vacant premises using buyers, supplier stock and costs. The game
-performs tenancy settlement and runs the resulting companies.
+selection and experimental tenant-backed construction. Households compare reachable
+homes; prospective firms compare compatible activities using observed buyers,
+stock and costs. Optional shopping and labor diagnostics explain individual
+decisions while the game continues to choose shopping trips and pay salaries.
 
 **Status: experimental prototype.** Housing has passed live observe, apply and
 city-reload smoke checks on game 1.6.0f1. Individual preference persistence, difficult
-settlement cases and large-city performance are still unvalidated. Version 0.2 adds
-business entry and richer diagnostics; its business gameplay acceptance is separate
-from the earlier housing results. Version 0.3 adds construction selection for
-residential and business buildings. Its 59 portable model tests pass on Mac and
-Windows; the real game build and official postprocessor pass with zero warnings
-or errors. Construction behavior has not yet been validated live.
-Both construction switches start off. There is no multiplayer implementation.
+settlement cases and large-city performance are still unvalidated. Versions 0.2
+and 0.3 passed real game builds and official postprocessing; those results do not
+establish business or construction gameplay acceptance. Version 0.4 updates seller
+and transport quotes and adds shopping/labor models with read-only diagnostics.
+Its Windows build and in-game acceptance are pending. Construction and both new
+diagnostics start off. There is no multiplayer implementation.
 
 The previous economy prototype is preserved at commit
 [`67f4b1c`](https://github.com/seidelap/cities-skylines-2-spatial-demand/tree/67f4b1cf31567196ac230f119c398e94db31f970)
@@ -29,11 +29,17 @@ source, synthetic city data and historical experiment harness.
 - Allocates available units sequentially at the game's posted rents, rotating priority.
 - Submits choices through `PropertyProcessingSystem` and checks whether they settled.
 - Recovers rejected submissions, including receipts restored from a save.
-- Provides two options: evaluate choices, and apply choices. Applying is off by
-  default until the game validation below is complete.
+- Provides separate housing evaluate/apply options. Applying is off by default
+  while the remaining game validation is incomplete.
 - Evaluates commercial, industrial and office-compatible company templates with
   one shared business choice model. Buyers compare delivered quotes; candidate
   firms procure inputs cheapest first and select the greatest positive surplus.
+- Quotes existing sellers using current checkout price terms, including embedded
+  buying costs and retail service pricing. Reads finite stocked warehouse/outside
+  offers where supported, subtracting stock reserved by buying trucks.
+- Uses the game's freight-cost function with resource weight and shipment size
+  over estimated straight-line distance. The optional forecast distance limit
+  defaults to **0: no cutoff**; bounded samples still limit coverage.
 - Has separate business observe/apply switches. Business Apply adds at most one
   entrant per game day using vanilla initialization; vanilla entry remains active.
 - Reports settlement immediately and periodic status even without new successful
@@ -44,6 +50,9 @@ source, synthetic city data and historical experiment harness.
 - Persists one active project at a time, with a one-game-day entry limit, and reports
   actual completion/occupancy separately from forecasts. See the
   [construction model, assumptions and outstanding acceptance](docs/construction-model.md).
+- Offers separate, default-off shopping and labor diagnostics. Shopping explains
+  the single route vanilla selected; labor forecasts wage bids and the choice to
+  leave a job empty. Neither changes actual shopping, employment or payroll.
 
 ## Deliberate limits
 
@@ -54,6 +63,9 @@ upkeep, construction execution, trade, shelters and departure. The developer cho
 among vanilla-generated projects; it does not enumerate every possible design/site.
 There is no replacement demand bar, actual financing, advance lease, endogenous rent
 auction or overlay. Buildings can still finish vacant when forecasts do not settle.
+The portable labor auction sets hypothetical contract wages; it does **not** set
+cims' actual salaries. Consistent negotiated payroll and alternative shopping-route
+discovery require further game integration.
 
 The available options are the game's pathfinding shortlist, not every home in the
 city. Routes reflect vanilla's chosen search origin/destination, which may be a
@@ -81,8 +93,9 @@ dotnet run --project tests/SpatialDemand.Tests -c Release
 
 The portable core targets **.NET Standard 2.1**. The mod compiles the same core
 source using the official toolchain's target (**.NET Framework 4.8** in the tested
-version). Only the test runner uses .NET 10. It checks choices, capacity competition, outside options,
-reproducibility, the saved preference mapping, and 300 randomized markets.
+version). Only the test runner uses .NET 10. It checks choices, capacity competition,
+outside options, shopping basket costs, freight quotes, wage scarcity,
+reproducibility, the saved preference mapping, and randomized housing markets.
 It does not pretend to test ECS, game serialization, pathfinding or in-game effects.
 
 ## Build and test the actual mod
@@ -106,6 +119,9 @@ install Steam, sign in, or publish anything to Paradox Mods.
    The script runs core tests, builds the **real** mod, and creates a local package
    plus a manifest recording the installed game assembly version and hash. The
    official toolchain may also deploy the build into the local Mods directory.
+   Close the game first for installation. Add `-NoDeploy` to compile and package
+   into an isolated staging directory while the game remains open; this does not
+   update the installed mod. The package includes generated native libraries.
 4. Follow [the in-game acceptance procedure](docs/game-validation.md) on a test city,
    first observing and then applying choices. Record the game version and results.
 
@@ -117,9 +133,9 @@ dotnet build src/SpatialDemand.Mod -c Release -p:CSIIToolPath='C:\path\to\toolch
 
 The current adapter was checked against the source references listed in
 [API references](docs/api-references.md), including a November 2025 game source
-snapshot. Compilation and official postprocessing against game 1.6.0f1 have now
-passed for versions 0.2 and 0.3. The new 0.3 construction hooks have not passed
-runtime acceptance yet. Compilation does not establish gameplay behavior.
+snapshot. Compilation and official postprocessing against game 1.6.0f1 passed for
+versions 0.2 and 0.3. Version 0.4 build/acceptance and construction runtime acceptance
+remain pending. Compilation does not establish gameplay behavior.
 
 ## Where to read the code
 
@@ -130,6 +146,11 @@ runtime acceptance yet. Compilation does not establish gameplay behavior.
 | `src/SpatialDemand.Mod/HousingChoiceSystem.cs` | Read real searches, submit and reconcile moves |
 | `src/SpatialDemand.Mod/SavedPreferences.cs` | Saved household seed and pending move receipt |
 | `src/SpatialDemand.Core/BusinessMarket.cs` | Buyer/supplier choices and business surplus |
+| `src/SpatialDemand.Mod/BusinessChoiceSystem.cs` | Read stocked offers, quote transport and submit company entries |
+| `src/SpatialDemand.Core/ShoppingMarket.cs` | Affordable basket choice and finite stock reservations |
+| `src/SpatialDemand.Mod/ShoppingPriceQuote.cs`, `ShoppingChoiceSystem.cs` | Shared seller quote and read-only shopping observations |
+| `src/SpatialDemand.Core/LaborMarket.cs` | Individual wage bids, outside options and one-to-one matching |
+| `src/SpatialDemand.Mod/LaborChoiceSystem.cs` | Read-only wage forecasts from seekers, vacancies and cash |
 | `src/SpatialDemand.Core/DevelopmentMarket.cs` | Tenant bids, posted-rent choice and project argmax |
 | `src/SpatialDemand.Mod/ConstructionHousingSystem.cs` | Household construction quotes and existing-home alternatives |
 | `src/SpatialDemand.Mod/ConstructionProposalSystem.cs` | Temporarily bypass the vanilla proposal demand threshold |
@@ -147,5 +168,9 @@ runtime acceptance yet. Compilation does not establish gameplay behavior.
 4. Validate the new construction adapter, then replace its one-project limit with
    explicit pipeline claims if multiple simultaneous projects are needed.
 5. Validate the business entry adapter separately for retail, manufacturing and
-   offices. Replace distance estimates with routed quotes, observe demand over a
-   shared horizon and add imports/pipeline commitments before replacing vanilla entry.
+   offices, including stocked warehouse/outside offers. Replace distance estimates
+   with routed quotes and observe demand over a shared horizon before replacing
+   vanilla entry.
+6. Obtain comparable shopping-route alternatives and implement coherent negotiated
+   employment/payroll accounting before turning the new portable models into
+   gameplay replacements. Keep diagnostics explicit about the current boundary.
