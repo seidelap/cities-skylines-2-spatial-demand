@@ -12,7 +12,9 @@ settlement cases and large-city performance are still unvalidated. Versions 0.2
 and 0.3 passed real game builds and official postprocessing; those results do not
 establish business or construction gameplay acceptance. Version 0.4 updates seller
 and transport quotes and adds shopping/labor models with read-only diagnostics.
-Its Windows build and in-game acceptance are pending. Construction and both new
+Its real Windows build and official postprocessing passed with zero warnings/errors;
+all 68 portable check groups passed on Mac and Windows. It is staged only, with
+in-game acceptance pending. Construction and both new
 diagnostics start off. There is no multiplayer implementation.
 
 The previous economy prototype is preserved at commit
@@ -128,14 +130,19 @@ install Steam, sign in, or publish anything to Paradox Mods.
 Direct game build:
 
 ```powershell
-dotnet build src/SpatialDemand.Mod -c Release -p:CSIIToolPath='C:\path\to\toolchain'
+dotnet build src/SpatialDemand.Mod -c Release -p:CSIIToolPath='C:\path\to\toolchain' -p:SpatialDemandStageDirectory='D:\mod-staging\SpatialDemand'
 ```
 
 The current adapter was checked against the source references listed in
 [API references](docs/api-references.md), including a November 2025 game source
 snapshot. Compilation and official postprocessing against game 1.6.0f1 passed for
-versions 0.2 and 0.3. Version 0.4 build/acceptance and construction runtime acceptance
-remain pending. Compilation does not establish gameplay behavior.
+versions 0.2, 0.3 and 0.4. The clean 0.4 build is revision `74c066f`, staged at
+21:49 UTC on September 8, 2026. Its gameplay acceptance and construction Apply
+acceptance remain pending. Compilation does not establish gameplay behavior.
+
+The copy target refuses an unspecified destination. The wrapper verifies the
+resolved staging path before compiling; actual installation requires the game's
+files to be unlocked and explicit `SpatialDemandAllowInstall=true` from the wrapper.
 
 ## Where to read the code
 

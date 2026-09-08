@@ -6,11 +6,30 @@ Portable tests cover checkout/freight costing, buyer cash versus travel preferen
 stock reservations, fixed-basket shopping choices and incremental labor bidding.
 The shopping and labor game systems are read-only diagnostics, default off. No
 shopping destination, worker contract, salary, tax or ownership is changed by them.
-Windows compilation and a fresh in-game run must be recorded separately below.
+All **68 portable check groups passed on Mac and Windows**. The actual game build
+and official postprocessing succeeded with zero warnings/errors at 21:49:51 UTC on
+September 8, 2026, from clean revision `74c066fb39a57a039c1f67daab5808c480798807`.
+DLL SHA256: `C0DF14B3681D251870AC2B505E21AE227FC877607EFFDA144EC48342D6C08BED`.
+The installed Game.dll hash remains `721E7E17BF74299AA2B988C1BD07E90874BB8BC72D263229500C4BF639E7E4EE`.
+This build is staged in `D:\src\economy-review\artifacts\SpatialDemand`, **not
+installed or tested live**. The final staged run preserved the installed 0.3 hash
+and the same running game process, 9248. Do not terminate that process or overwrite
+its files without preserving the user's city.
 
 The build script accepts `-NoDeploy`: the official toolchain's deployment target
-is redirected to an isolated staging directory while the game remains open.
+is replaced by a small explicit copy target that verifies an isolated staging
+directory before compiling. Compilation and postprocessing remain official.
 Verify the installed DLL hash stays unchanged before calling this a staged build.
+
+The first 0.4 staging attempt compiled and postprocessed but the official target
+ignored a `DeployDir` override, removed unlocked installed files and failed on the
+loaded native library. Missing files were restored from the verified 0.3 build;
+all six installed mod files then matched that original build. The game was not
+restarted. The corrected target fails closed unless staging or installation is
+explicitly selected and has a read-only destination preflight.
+The corrected staged build passed and preserved the installed DLL. A separate
+read-only negative test confirmed an unspecified destination is rejected before
+copying, with the intended request for an explicit stage/install setting.
 
 After installing with the game closed, check the 0.4 startup marker. Enable the
 shopping and labor diagnostics separately: compare quoted checkout prices with

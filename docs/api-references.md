@@ -19,6 +19,9 @@ also use its education wage table. `Worker` and `Employee` have no per-person
 salary field. The original labor auction therefore only reports hypothetical
 contracts. Vanilla company dividends already transfer surplus to employees'
 households; a second ownership ledger would not be a harmless extra feature.
+The 0.4 adapter compiled and passed official postprocessing against the installed
+1.6.0f1 assemblies at revision `74c066f`; this verifies API compatibility, not the
+meaning of route/time units or negotiated-wage gameplay.
 
 Construction 0.3 additionally uses the pinned snapshot's
 [ZoneSpawnSystem](https://github.com/bworthy89/roadmod/blob/5b49a4fc0c572f2b5133df83083ebb4afe2f76a6/New%20folder/Game.Simulation/ZoneSpawnSystem.cs),

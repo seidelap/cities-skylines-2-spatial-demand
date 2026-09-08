@@ -5,7 +5,9 @@ At each vacant compatible property it chooses the activity with the greatest
 positive projected surplus. No entry is an explicit option. Existing companies
 keep their original templates, employees, stock and accounts.
 Version 0.4 improves the observable price and stock inputs and adds two optional,
-read-only diagnostics. Its Windows build and in-game acceptance are pending.
+read-only diagnostics. All 68 portable check groups passed on Mac and Windows, and
+the real game build/postprocessing passed at revision `74c066f`. It is staged only;
+in-game acceptance remains pending. See [validation evidence](game-validation.md).
 
 ## Decisions and accounting
 
