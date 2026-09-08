@@ -28,7 +28,9 @@ With Apply enabled on the same city at 19:10:33 UTC, a later batch reported four
 evaluated searches, four proposed moves and one queued rent action. The selected
 sample had utility `0.438` (space `0.669`, rent `0.175`, travel `0.006`). The next
 search batch had not occurred when this evidence was captured, so neither settlement
-nor recovery is claimed from this run.
+nor recovery is claimed from this run. The local settings record persisted
+`ApplyChoices: true`; this validates the option save only, not household preference
+or pending-move serialization.
 
 Use a disposable test city or a copy of a save. Keep a record of the game version,
 the generated build manifest, enabled mods and observations. Start without other
