@@ -23,6 +23,18 @@ Follow the separate
 [construction acceptance procedure](construction-model.md#diagnostics-and-acceptance);
 earlier household and business evidence below does not validate these new hooks.
 
+The city subsequently loaded: the 0.3 startup marker was logged at 20:58:43 UTC,
+and construction Observe reported valid settings, Apply=false, no pending permits
+and zero proposals through 21:02 UTC. This validates system startup and idle
+execution only; no construction decision or cancellation has been exercised.
+Steady idle status samples took 0.10–0.12 ms in this small city. Housing remained
+unfaulted, and business Observe continued rejecting its sampled premises for
+missing input stock. The user was asked to add residential and commercial zoning.
+Selecting the remote session through Windows App's Window menu restored native
+menu control and screenshots. Keyboard Escape reached the game, but coordinate
+clicks still failed with `noWindowsAvailable`, including after leaving macOS full
+screen; the desktop-control issue is not resolved.
+
 ## Version 0.2 — business entry and diagnostics
 
 On September 8, 2026, all 43 portable tests passed on Mac and Windows. The real
