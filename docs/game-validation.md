@@ -24,6 +24,12 @@ live paths and makes an observable choice without mutating the city. It does not
 validate applying, settlement, persistence, or the semantic correctness of the
 game's supplied duration and rent units.
 
+With Apply enabled on the same city at 19:10:33 UTC, a later batch reported four
+evaluated searches, four proposed moves and one queued rent action. The selected
+sample had utility `0.438` (space `0.669`, rent `0.175`, travel `0.006`). The next
+search batch had not occurred when this evidence was captured, so neither settlement
+nor recovery is claimed from this run.
+
 Use a disposable test city or a copy of a save. Keep a record of the game version,
 the generated build manifest, enabled mods and observations. Start without other
 mods that replace household search or property processing.
