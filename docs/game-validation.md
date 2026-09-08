@@ -1,4 +1,4 @@
-# In-game acceptance: not yet executed
+# In-game acceptance: startup passed, simulation checks pending
 
 ## Build evidence — September 8, 2026
 
@@ -9,8 +9,20 @@ the mod to the user's local Mods directory. This required the registered Windows
 x64 .NET 6 runtime in addition to the .NET 10 SDK. Generated postprocessor
 `Library/` files accounted for the build manifest's dirty-working-tree flag.
 
-This establishes build compatibility only. Loading, settlement, serialization and
-performance checks below still require execution in the game.
+After restarting the game, Modding.log recorded successful loading of SpatialDemand
+and its additional Burst library at 18:49:41 UTC. SpatialDemand.log recorded the
+prototype's OnLoad message, and SceneFlow.log confirmed the main menu was reached.
+This establishes startup only. Options, settlement, serialization and performance
+checks below still require execution in the game.
+
+On the disposable Sunshine Peninsula city, observe mode processed its first
+supported household search at 19:04:55 UTC. It evaluated one household, proposed a
+move, selected a home with utility `0.574` (space `1.000`, rent `0.371`, travel
+`0.005`), and queued no move because Apply was off. The same batch delegated 122
+unsupported searches to the game's normal process. This confirms that the mod reads
+live paths and makes an observable choice without mutating the city. It does not
+validate applying, settlement, persistence, or the semantic correctness of the
+game's supplied duration and rent units.
 
 Use a disposable test city or a copy of a save. Keep a record of the game version,
 the generated build manifest, enabled mods and observations. Start without other
