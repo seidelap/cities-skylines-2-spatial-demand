@@ -28,9 +28,12 @@
            Text="The actual mod requires the Cities: Skylines II modding toolchain. Install it through the game, then set CSII_TOOLPATH or pass -p:CSIIToolPath=... . For portable tests, build tests/SpatialDemand.Tests instead. There is no stub mod build." />
   </Target>
   <Target Name="RecordResolvedGameAssembly" AfterTargets="ResolveAssemblyReferences">
+    <PropertyGroup>
+      <GameAssemblyRecordPath Condition="'$(GameAssemblyRecordPath)' == ''">$(IntermediateOutputPath)game-assembly-path.txt</GameAssemblyRecordPath>
+    </PropertyGroup>
     <ItemGroup>
       <ResolvedGameAssembly Include="@(ReferencePath)" Condition="'%(ReferencePath.Filename)' == 'Game'" />
     </ItemGroup>
-    <WriteLinesToFile File="$(IntermediateOutputPath)game-assembly-path.txt" Lines="@(ResolvedGameAssembly->'%(FullPath)')" Overwrite="true" />
+    <WriteLinesToFile File="$(GameAssemblyRecordPath)" Lines="@(ResolvedGameAssembly->'%(FullPath)')" Overwrite="true" />
   </Target>
 </Project>

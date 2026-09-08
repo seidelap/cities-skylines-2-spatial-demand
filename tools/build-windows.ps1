@@ -17,12 +17,15 @@ try {
     dotnet run --project tests/SpatialDemand.Tests -c Release
     if ($LASTEXITCODE -ne 0) { throw 'Core tests failed.' }
     $buildOutput = Join-Path $repo ('artifacts\build-' + [Guid]::NewGuid().ToString('N'))
-    dotnet build src/SpatialDemand.Mod -c Release "-p:CSIIToolPath=$ToolchainPath" --output $buildOutput
+    # The official toolchain chooses the target framework and clears OutDir.
+    # Keep the reference receipt beside that directory, with a unique name.
+    $resolvedPathFile = $buildOutput + '.game-assembly-path.txt'
+    New-Item -ItemType Directory -Force (Split-Path $buildOutput -Parent) | Out-Null
+    dotnet build src/SpatialDemand.Mod -c Release "-p:CSIIToolPath=$ToolchainPath" "-p:GameAssemblyRecordPath=$resolvedPathFile" --output $buildOutput
     if ($LASTEXITCODE -ne 0) { throw 'Actual game mod build failed. No package produced.' }
 
     $dll = Join-Path $buildOutput 'SpatialDemand.dll'
     if (-not (Test-Path $dll)) { throw 'The toolchain changed its output path; locate the actual new build before packaging.' }
-    $resolvedPathFile = Join-Path $repo 'src\SpatialDemand.Mod\obj\Release\netstandard2.1\game-assembly-path.txt'
     if (-not (Test-Path $resolvedPathFile)) { throw 'The build did not record its resolved game assembly.' }
     $resolvedGame = (Get-Content $resolvedPathFile -Raw).Trim()
     if (-not $resolvedGame -or -not (Test-Path $resolvedGame)) { throw 'Cannot verify the resolved game assembly.' }
