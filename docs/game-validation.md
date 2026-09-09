@@ -41,6 +41,13 @@ but coordinate clicks fail with `noWindowsAvailable`, including in windowed mode
 The 0.5 package is ready for installation after the user closes the game. Positive
 construction, rejection, completion and persistence cases remain unvalidated.
 
+The authorized session subsequently ended automatically: GCP reported the VM
+stopped at 01:09:03 UTC on September 9, following the 01:08:36 UTC deadline. The
+monitor was paused and disks retained. The final running game remained 0.4, with
+its last startup marker at 00:47:36 UTC and no city simulation or construction
+decision logs. Version 0.5 remains staged; a new session is required for its live
+acceptance. No additional gameplay validation is claimed.
+
 ## Version 0.4 — market quotes and optional diagnostics
 
 Portable tests cover checkout/freight costing, buyer cash versus travel preferences,
