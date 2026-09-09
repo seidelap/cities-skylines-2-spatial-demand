@@ -18,16 +18,17 @@ using Unity.Mathematics;
 
 namespace SpatialDemand.Mod
 {
-    // Read-only contract forecasts. Worker/Employee contain no salary field;
-    // vanilla's private Burst payroll job also owns company debits and tax accrual.
-    // Never write wages, money, job matches, or disable the vanilla payroll here.
+    // Negotiate against actual standing jobs and vacancies. Only retention raises
+    // can settle here: employment changes still belong to vanilla's routed search.
     public partial class LaborChoiceSystem : GameSystemBase
     {
-        private EntityQuery seekers, employers, economy;
+        private EntityQuery seekers, employers, economy, contracts;
         private SimulationSystem simulation = null!;
         private ResourceSystem resources = null!;
         private TaxSystem taxes = null!;
         private bool faulted;
+        private readonly Dictionary<long, double> raiseCash = new Dictionary<long, double>();
+        private long accepted;
 
         protected override void OnCreate()
         {
@@ -43,6 +44,7 @@ namespace SpatialDemand.Mod
                 ComponentType.ReadOnly<PropertyRenter>(), ComponentType.ReadOnly<PrefabRef>(),
                 ComponentType.ReadOnly<Resources>(), ComponentType.Exclude<Deleted>(), ComponentType.Exclude<Temp>());
             economy = GetEntityQuery(ComponentType.ReadOnly<EconomyParameterData>());
+            contracts = GetEntityQuery(ComponentType.ReadOnly<NegotiatedWage>());
             RequireForUpdate(economy);
         }
 
@@ -50,6 +52,16 @@ namespace SpatialDemand.Mod
 
         protected override void OnUpdate()
         {
+            // Retired employment agreements must not revive after a later rehire,
+            // including while new negotiations are switched off.
+            if (!contracts.IsEmptyIgnoreFilter)
+            {
+                EntityManager.CompleteAllTrackedJobs();
+                using var entities = contracts.ToEntityArray(Allocator.Temp);
+                foreach (var person in entities)
+                    if (!EntityManager.HasComponent<Worker>(person) || !ContractSalary.TryGet(EntityManager, person,
+                        EntityManager.GetComponentData<Worker>(person), out _)) EntityManager.RemoveComponent<NegotiatedWage>(person);
+            }
             if (Mod.Settings == null || !Mod.Settings.LaborEnabled || faulted) return;
             var timer = System.Diagnostics.Stopwatch.StartNew();
             try
@@ -58,21 +70,22 @@ namespace SpatialDemand.Mod
                 if (!Finite(speed) || speed <= 0 || !Finite(timeValue) || timeValue < 0) return;
                 EntityManager.CompleteAllTrackedJobs();
                 var parameters = economy.GetSingleton<EconomyParameterData>();
-                var people = ReadWorkers(parameters);
-                var jobs = ReadJobs(parameters);
                 // Daily round-trip time, using the same physical speed and time value
                 // as the other choice diagnostics. Straight line does not prove access.
                 double commutePerMetre = 2 * timeValue / (speed * 1000);
+                var people = ReadWorkers(parameters);
+                var jobs = ReadJobs(parameters, people, commutePerMetre);
                 var result = LaborMarket.Clear(people, jobs, double.MaxValue, commutePerMetre, 1, 10000);
+                int applied = result.Converged && NegotiatedPayrollHooks.Active ? ApplyRetention(result, parameters) : 0;
                 if (result.Converged)
                     foreach (var match in result.Assignments.Take(6))
-                        Mod.Log.Info($"labor contract forecast employer={match.Job.Employer}, slot={match.Job.Id}, citizen={match.Worker.Id}, education={match.Job.RequiredEducation}, gross={match.GrossWage:F2}, vanillaGross={parameters.GetWage(match.Job.RequiredEducation)}, takeHome={match.TakeHomeIncome:F2}, commute={match.CommuteCost:F2}, workerGain={match.WorkerUtility - match.Worker.OutsideOption:F2}, valueCeiling={match.Job.MarginalValue:F2}, reservedCash={match.Job.WageBudget:F2}, fillSurplus={match.EmployerSurplus:F2}, emptySurplus=0; applied=0, payroll=vanilla, horizon=game-day, value=full-sales-technology-estimate");
-                Mod.Log.Info($"labor status frame={simulation.frameIndex}, sampledSeekers={people.Count}/{seekers.CalculateEntityCount()}, sampledSlots={jobs.Count}, eligibleEmployers={employers.CalculateEntityCount()}, hypotheticalMatches={result.Assignments.Count}, unfilled={result.UnfilledJobs.Count}, outside={result.OutsideWorkers.Count}, bids={result.Bids}, converged={result.Converged}, ms={timer.Elapsed.TotalMilliseconds:F2}; applied=0, payroll=vanilla, city-equilibrium=false, sample-cap=128-seekers/64-employers/128-slots, outside=observed-benefit-only, value=technology-at-prefab-prices-assuming-sales-and-full-efficiency, cash=after-incumbent-wages-rent-new-inputs, commute=straight-line-round-trip, net-bid-increment=1");
+                        Mod.Log.Info($"labor contract forecast employer={match.Job.Employer}, slot={match.Job.Id}, citizen={match.Worker.Id}, education={match.Job.RequiredEducation}, gross={match.GrossWage:F2}, vanillaGross={parameters.GetWage(match.Job.RequiredEducation)}, takeHome={match.TakeHomeIncome:F2}, commute={match.CommuteCost:F2}, workerGain={match.WorkerUtility - match.Worker.OutsideOption:F2}, valueCeiling={match.Job.MarginalValue:F2}, reservedCash={match.Job.WageBudget:F2}, fillSurplus={match.EmployerSurplus:F2}, emptySurplus=0; job-change=forecast-only, horizon=game-day, value=full-sales-technology-estimate");
+                Mod.Log.Info($"labor status frame={simulation.frameIndex}, sampledPeople={people.Count}, sampledSlots={jobs.Count}, hypotheticalMatches={result.Assignments.Count}, unfilled={result.UnfilledJobs.Count}, outside={result.OutsideWorkers.Count}, bids={result.Bids}, converged={result.Converged}, appliedRaises={applied}, acceptedTotal={accepted}, hooksReady={NegotiatedPayrollHooks.Ready}, payrollActive={NegotiatedPayrollHooks.Active}, salaryReads={NegotiatedPayrollHooks.SalarySubstitutions}, managedJobs={NegotiatedPayrollHooks.ManagedJobs}, managedMs={NegotiatedPayrollHooks.ManagedMilliseconds:F2}, ms={timer.Elapsed.TotalMilliseconds:F2}; transactions=vanilla, city-equilibrium=false, retention-only, cap=128-people/64-employers/128-slots, value=full-sales-technology-estimate, cash=after-standing-wages-rent-full-input-reserve, commute=straight-line-round-trip");
             }
             catch (Exception error)
             {
                 faulted = true;
-                Mod.Log.Error(error, "Labor diagnostics stopped for this session; vanilla employment and payroll remain enabled.");
+                Mod.Log.Error(error, "New wage negotiations stopped for this session; existing valid wage obligations and game payroll continue.");
             }
         }
 
@@ -80,7 +93,7 @@ namespace SpatialDemand.Mod
         {
             var result = new List<LaborWorker>();
             using var entities = seekers.ToEntityArray(Allocator.Temp);
-            foreach (var person in entities.OrderBy(Id).Take(128))
+            foreach (var person in entities.OrderBy(Id).Take(64))
             {
                 var citizen = EntityManager.GetComponentData<Citizen>(person);
                 if (citizen.GetAge() != CitizenAge.Adult) continue;
@@ -103,9 +116,10 @@ namespace SpatialDemand.Mod
             return result;
         }
 
-        private List<LaborJob> ReadJobs(EconomyParameterData parameters)
+        private List<LaborJob> ReadJobs(EconomyParameterData parameters, List<LaborWorker> people, double commutePerMetre)
         {
             var result = new List<LaborJob>();
+            raiseCash.Clear();
             using var entities = employers.ToEntityArray(Allocator.Temp);
             foreach (var company in entities.OrderBy(Id).Take(64))
             {
@@ -140,21 +154,60 @@ namespace SpatialDemand.Mod
                     if (employee.m_Level <= 4) vacancies[employee.m_Level]--;
                 int count = 0;
                 for (int education = 0; education < 5; education++) count += Math.Max(0, vacancies[education]);
-                if (count == 0 || maxWorkers <= 0) continue;
+                if (maxWorkers <= 0) continue;
                 double cash = EconomyUtils.GetResources(Resource.Money, EntityManager.GetBuffer<Resources>(company, true));
-                double reserve = Math.Max(0, cash - Math.Max(0, lease.m_Rent) - EconomyUtils.CalculateTotalWage(staff, ref parameters));
-                // Divide by every real vacancy, including slots outside this sample.
-                // Each sampled position therefore has a disjoint cash reservation.
-                double perSlotCash = reserve / count;
                 double workforce = EconomyUtils.GetAverageWorkforce(maxWorkers, workplace.m_Complexity, level);
                 if (workforce <= 0) continue;
                 double production = EconomyUtils.GetCompanyProductionPerDay(1f, maxWorkers, level, !retail,
                     workplace, process, data, ref parameters);
+                double reserve = Math.Max(0, cash - Math.Max(0, lease.m_Rent) -
+                    EconomyUtils.CalculateTotalWage(staff, ref parameters) - production * inputPrice);
+                raiseCash[Id(company)] = reserve;
+                // Divide spare cash among every actual position, including unsampled
+                // positions. Existing payroll is reserved before considering any raise.
+                double perSlotCash = reserve / Math.Max(1, count + staff.Length);
+                foreach (var employee in staff)
+                {
+                    if (result.Count >= 128 || people.Count >= 128) break;
+                    Entity person = employee.m_Worker;
+                    if (employee.m_Level > 4 || !ContractSalary.Eligible(EntityManager, person, company, employee.m_Level) ||
+                        !EntityManager.HasComponent<Citizen>(person) || EntityManager.HasComponent<HealthProblem>(person) ||
+                        EntityManager.HasComponent<Game.Citizens.Student>(person)) continue;
+                    var citizen = EntityManager.GetComponentData<Citizen>(person);
+                    if (citizen.GetAge() != CitizenAge.Adult) continue;
+                    var household = EntityManager.GetComponentData<HouseholdMember>(person).m_Household;
+                    if (!EntityManager.HasComponent<PropertyRenter>(household)) continue;
+                    Entity home = EntityManager.GetComponentData<PropertyRenter>(household).m_Property;
+                    if (!EntityManager.HasComponent<Game.Objects.Transform>(home)) continue;
+                    var location = EntityManager.GetComponentData<Game.Objects.Transform>(home).m_Position;
+                    if (!math.all(math.isfinite(location))) continue;
+                    var worker = EntityManager.GetComponentData<Worker>(person);
+                    int gross = ContractSalary.Get(EntityManager, person, worker, parameters);
+                    double taxRate = taxes.GetResidentialTaxRate(employee.m_Level);
+                    double takeHome = 1 - taxRate / 100;
+                    double dx = (double)position.x - location.x, dz = (double)position.z - location.z;
+                    double travel = Math.Sqrt(dx * dx + dz * dz) * commutePerMetre;
+                    // Match the auction's continuous quote exactly. Integer payroll
+                    // rounding is checked again before accepting a real raise.
+                    double allowance = Math.Max(0, parameters.m_ResidentialMinimumEarnings);
+                    double net = gross <= allowance ? gross : allowance + (gross - allowance) * takeHome;
+                    double outside = Math.Max(0, net - travel);
+                    double value = production * EconomyUtils.GetWorkerWorkforce(50, employee.m_Level) / workforce * margin;
+                    if (!Finite(value) || !Finite(takeHome) || takeHome <= 0) continue;
+                    var personQuote = new LaborWorker { Id = Id(person), Education = citizen.GetEducationLevel(),
+                        X = location.x, Z = location.z, OutsideOption = outside };
+                    if (people.Any(p => p.Id == personQuote.Id)) continue;
+                    people.Add(personQuote);
+                    result.Add(new LaborJob { Id = result.Count + 1, Employer = Id(company), RequiredEducation = employee.m_Level,
+                        X = position.x, Z = position.z, MarginalValue = value, WageBudget = gross + perSlotCash,
+                        TakeHomeRate = takeHome, TaxFreeAllowance = Math.Max(0, parameters.m_ResidentialMinimumEarnings),
+                        IncumbentWorker = Id(person), IncumbentGrossWage = gross });
+                }
                 for (int education = 0; education < 5; education++)
                 {
                     double quantity = production * EconomyUtils.GetWorkerWorkforce(50, education) / workforce;
                     double value = Math.Max(0, quantity * margin);
-                    double wageBudget = Math.Max(0, perSlotCash - quantity * inputPrice);
+                    double wageBudget = perSlotCash;
                     double takeHomeRate = 1 - taxes.GetResidentialTaxRate(education) / 100d;
                     if (!Finite(value) || !Finite(wageBudget) || !Finite(takeHomeRate) || takeHomeRate <= 0) continue;
                     for (int slot = 0; slot < vacancies[education] && result.Count < 128; slot++)
@@ -164,6 +217,29 @@ namespace SpatialDemand.Mod
                 }
             }
             return result;
+        }
+
+        private int ApplyRetention(LaborResult result, EconomyParameterData parameters)
+        {
+            int count = 0;
+            foreach (var proposal in result.Assignments.OrderBy(m => m.Job.Id))
+            {
+                if (proposal.Job.IncumbentWorker != proposal.Worker.Id || !proposal.RetentionAfterCompetition) continue;
+                Entity person = FromId(proposal.Worker.Id), employer = FromId(proposal.Job.Employer);
+                if (!ContractSalary.Eligible(EntityManager, person, employer, proposal.Job.RequiredEducation)) continue;
+                var worker = EntityManager.GetComponentData<Worker>(person);
+                int previous = ContractSalary.Get(EntityManager, person, worker, parameters);
+                if (!raiseCash.TryGetValue(proposal.Job.Employer, out double remaining) ||
+                    !LaborContractRules.TryAgree(proposal, previous, remaining, PayWageSystem.kUpdatesPerDay, out int gross)) continue;
+                var contract = new NegotiatedWage { Employer = employer, JobLevel = worker.m_Level,
+                    DailyGross = gross, AcceptedFrame = simulation.frameIndex };
+                if (EntityManager.HasComponent<NegotiatedWage>(person)) EntityManager.SetComponentData(person, contract);
+                else EntityManager.AddComponentData(person, contract);
+                raiseCash[proposal.Job.Employer] = remaining - (gross - previous);
+                count++; accepted++;
+                Mod.Log.Info($"labor agreed citizen={proposal.Worker.Id}, employer={proposal.Job.Employer}, level={worker.m_Level}, previousDaily={previous}, dailyGross={gross}, frame={simulation.frameIndex}; retention-only, no-money-written, payroll=original-game-job");
+            }
+            return count;
         }
 
         private double InputCost(ResourceStack input)
@@ -179,5 +255,6 @@ namespace SpatialDemand.Mod
         }
         private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
         private static long Id(Entity entity) => ((long)entity.Version << 32) | (uint)entity.Index;
+        private static Entity FromId(long id) => new Entity { Index = (int)id, Version = (int)(id >> 32) };
     }
 }

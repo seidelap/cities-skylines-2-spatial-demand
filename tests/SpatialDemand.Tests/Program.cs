@@ -19,6 +19,7 @@ internal static class Program
         DevelopmentTests();
         Test("shopping choices and shared stock invariants (17 scenarios)", ShoppingTests.Run);
         Test("labor scarcity, tax, vacancy and matching invariants", LaborTests.Run);
+        Test("standing wage competition, quantization and payroll conservation", LaborPayrollTests.Run);
         TransportTests();
         Test("quantity-aware business transport regressions (7 scenarios)", BusinessTransportTests.Run);
         Test("cheaper otherwise-identical home wins", () => Equal(2L, Choose(Home(1, 30), Home(2, 20)).HomeId));

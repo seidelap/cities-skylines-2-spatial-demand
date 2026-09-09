@@ -19,6 +19,10 @@ namespace SpatialDemand.Core
         // Cash reserved exclusively for this one slot for the planning horizon.
         // The caller must not reserve the same employer cash for multiple slots.
         public double WageBudget;
+        // Optional standing agreement. It is held without bidding against itself;
+        // only another employer's improving offer can start a retention contest.
+        public long? IncumbentWorker;
+        public double IncumbentGrossWage;
         // Tax follows the job's education bracket in the game, including when
         // an overqualified person takes a lower-level job.
         public double TaxFreeAllowance, TakeHomeRate = 1;
@@ -33,6 +37,7 @@ namespace SpatialDemand.Core
         public LaborJob Job = null!;
         public LaborWorker Worker = null!;
         public double GrossWage, TakeHomeIncome, CommuteCost;
+        public bool RetentionAfterCompetition;
         public double WorkerUtility => TakeHomeIncome - CommuteCost;
         public double EmployerSurplus => Job.MarginalValue - GrossWage;
     }
@@ -77,7 +82,8 @@ namespace SpatialDemand.Core
             var utility = people.Select(w => w.OutsideOption).ToArray();
             var employedBy = Enumerable.Repeat(-1, people.Length).ToArray();
             var matches = new LaborAssignment?[slots.Length];
-            var queue = new Queue<int>(Enumerable.Range(0, slots.Length));
+            var contested = new bool[slots.Length];
+            var queue = new Queue<int>();
             var result = new LaborResult();
             // Cache travel/qualification once; bids do not change either assumption.
             var commute = new double[slots.Length, people.Length];
@@ -90,6 +96,23 @@ namespace SpatialDemand.Core
                         distance * commuteCostPerMetre : double.PositiveInfinity;
                 }
 
+            for (int j = 0; j < slots.Length; j++)
+            {
+                var job = slots[j];
+                int w = job.IncumbentWorker.HasValue ? Array.FindIndex(people, p => p.Id == job.IncumbentWorker.Value) : -1;
+                if (w >= 0 && employedBy[w] >= 0) throw new ArgumentException("A worker cannot hold two incumbent jobs.");
+                double gross = job.IncumbentGrossWage;
+                if (w >= 0 && Nonnegative(gross) && Finite(commute[j, w]) && gross <= job.WageBudget &&
+                    gross < job.MarginalValue && job.TakeHome(gross) - commute[j, w] >= utility[w])
+                {
+                    matches[j] = new LaborAssignment { Job = job, Worker = people[w], GrossWage = gross,
+                        TakeHomeIncome = job.TakeHome(gross), CommuteCost = commute[j, w] };
+                    employedBy[w] = j;
+                    utility[w] = matches[j]!.WorkerUtility;
+                }
+                else queue.Enqueue(j);
+            }
+
             while (queue.Count > 0 && result.Bids < maxBids)
             {
                 int j = queue.Dequeue(), best = -1;
@@ -98,6 +121,7 @@ namespace SpatialDemand.Core
                 for (int w = 0; w < people.Length; w++)
                 {
                     if (!Finite(commute[j, w])) continue;
+                    if (job.Employer != 0 && employedBy[w] >= 0 && slots[employedBy[w]].Employer == job.Employer) continue;
                     double targetUtility = utility[w] + netBidIncrement;
                     double wage = job.GrossFor(targetUtility + commute[j, w]);
                     double surplus = job.MarginalValue - wage;
@@ -110,11 +134,14 @@ namespace SpatialDemand.Core
                 int displaced = employedBy[best];
                 if (displaced >= 0)
                 {
+                    if (slots[displaced].IncumbentWorker == people[best].Id &&
+                        slots[displaced].Employer != job.Employer) contested[displaced] = true;
                     matches[displaced] = null;
                     queue.Enqueue(displaced);
                 }
                 var match = new LaborAssignment { Job = job, Worker = people[best], GrossWage = bestWage,
-                    TakeHomeIncome = job.TakeHome(bestWage), CommuteCost = commute[j, best] };
+                    TakeHomeIncome = job.TakeHome(bestWage), CommuteCost = commute[j, best],
+                    RetentionAfterCompetition = contested[j] && job.IncumbentWorker == people[best].Id };
                 matches[j] = match;
                 employedBy[best] = j;
                 utility[best] = match.WorkerUtility;

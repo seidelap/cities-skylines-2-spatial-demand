@@ -28,7 +28,11 @@ namespace SpatialDemand.Mod
         [SettingsUISection("Main", "Diagnostics")]
         public bool ShoppingEnabled { get; set; }
         [SettingsUISection("Main", "Diagnostics")]
+        public bool ApplyShoppingChoices { get; set; }
+        [SettingsUISection("Main", "Diagnostics")]
         public bool LaborEnabled { get; set; }
+        [SettingsUISection("Main", "Diagnostics")]
+        public bool ApplyNegotiatedWages { get; set; }
         [SettingsUISection("Main", "Diagnostics")]
         public float ShoppingTimeValuePerHour { get; set; }
 
@@ -48,6 +52,7 @@ namespace SpatialDemand.Mod
             Enabled = true; ApplyChoices = false; BusinessEnabled = true;
             ApplyBusinessChoices = false; BusinessRangeMetres = 0;
             ShoppingEnabled = false; LaborEnabled = false; ShoppingTimeValuePerHour = 1;
+            ApplyShoppingChoices = false; ApplyNegotiatedWages = false;
             ConstructionEnabled = false; ApplyConstruction = false;
             ConstructionCostPerCell = 1000; ConstructionPaybackDays = 32; ConstructionTravelKph = 30;
         }
@@ -66,9 +71,13 @@ namespace SpatialDemand.Mod
             [settings.GetOptionGroupLocaleID("Business")] = "Business entry",
             [settings.GetOptionGroupLocaleID("Diagnostics")] = "Shopping and labor diagnostics",
             [settings.GetOptionLabelLocaleID(nameof(Settings.ShoppingEnabled))] = "Explain shopping prices and trips",
-            [settings.GetOptionDescLocaleID(nameof(Settings.ShoppingEnabled))] = "Log the actual selected shopping route, seller price and estimated time cost. Vanilla still chooses routes and settles purchases; this does not replace shopping destinations.",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ShoppingEnabled))] = "Request comparable walking routes to stocked shops and compare basket price plus travel time. Observe leaves the existing shopping trip unchanged.",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.ApplyShoppingChoices))] = "Choose walking shopping trips (experimental)",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ApplyShoppingChoices))] = "For supported full-basket pedestrian searches, compare up to eight real routes and hand the complete winning route to the game's purchase system. One held search at a time; unsupported or interrupted searches retain the original route. Requires shopping evaluation.",
             [settings.GetOptionLabelLocaleID(nameof(Settings.LaborEnabled))] = "Evaluate hypothetical wage offers",
-            [settings.GetOptionDescLocaleID(nameof(Settings.LaborEnabled))] = "Compare workers' outside options with employers' hiring budgets and the option of leaving a job empty. Read-only estimates; actual jobs, salaries and payroll remain vanilla.",
+            [settings.GetOptionDescLocaleID(nameof(Settings.LaborEnabled))] = "Compare workers' outside options with employers' hiring budgets, current wages and the option of leaving a job empty. Job changes are forecasts only; the separate wage option can apply qualified retention raises.",
+            [settings.GetOptionLabelLocaleID(nameof(Settings.ApplyNegotiatedWages))] = "Apply negotiated retention wages (experimental)",
+            [settings.GetOptionDescLocaleID(nameof(Settings.ApplyNegotiatedWages))] = "Save affordable raises for current local private-company employees when competing bids justify retention. Original game payroll settles money and taxes. Required wage-reading jobs run synchronously, which may slow large cities. Turning this off restores vanilla salaries; saved agreements remain dormant. New agreements require labor evaluation.",
             [settings.GetOptionLabelLocaleID(nameof(Settings.ShoppingTimeValuePerHour))] = "Estimated value of travel time (currency/hour)",
             [settings.GetOptionDescLocaleID(nameof(Settings.ShoppingTimeValuePerHour))] = "Shared time preference for shopping, business retail forecasts and labor diagnostics. This is not a fare or cash debit. Estimates use the configured commute speed; actual game routing remains in control.",
             [settings.GetOptionGroupLocaleID("Construction")] = "Construction (experimental)",

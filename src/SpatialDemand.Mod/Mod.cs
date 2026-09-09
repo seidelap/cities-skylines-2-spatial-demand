@@ -23,16 +23,21 @@ namespace SpatialDemand.Mod
             updateSystem.UpdateBefore<HousingChoiceSystem, HouseholdFindPropertySystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateAt<BusinessChoiceSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<ShoppingChoiceSystem, ResourceBuyerSystem>(SystemUpdatePhase.GameSimulation);
+            updateSystem.UpdateAt<ShoppingChoiceSystem>(SystemUpdatePhase.PreDeserialize);
             updateSystem.UpdateAfter<LaborChoiceSystem, WorkProviderSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<ConstructionProposalSystem, ZoneSpawnSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateAfter<ConstructionProposalRestoreSystem, ZoneSpawnSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<ConstructionChoiceSystem, GenerateObjectsSystem>(SystemUpdatePhase.Modification1);
-            Log.Info("Spatial Demand 0.4: household, business and construction choices; checkout/freight quotes and optional shopping/labor diagnostics. Actual shopping and payroll remain vanilla; construction Apply is experimental.");
+            NegotiatedPayrollHooks.Install();
+            Log.Info("Spatial Demand 0.5: comparable pedestrian shopping routes and optional negotiated retention wages. Purchase and payroll transactions remain game-owned. Shopping, wages and construction Apply are experimental.");
         }
 
         public void OnDispose()
         {
             World.DefaultGameObjectInjectionWorld?.GetExistingSystemManaged<ConstructionProposalSystem>()?.Restore();
+            World.DefaultGameObjectInjectionWorld?.GetExistingSystemManaged<ShoppingChoiceSystem>()?.Restore();
+            World.DefaultGameObjectInjectionWorld?.EntityManager.CompleteAllTrackedJobs();
+            NegotiatedPayrollHooks.Uninstall();
             Settings?.UnregisterInOptionsUI();
             Settings = null;
             // No vanilla system is disabled; restore the temporary proposal flag above.

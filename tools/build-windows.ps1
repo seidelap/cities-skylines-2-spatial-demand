@@ -57,6 +57,12 @@ try {
     New-Item -ItemType Directory -Force -Path $package | Out-Null
     # Include this mod's generated native/Burst libraries as well as its managed DLL.
     Get-ChildItem $buildOutput -File -Filter 'SpatialDemand*' | Copy-Item -Destination $package -Force
+    # Harmony must accompany the mod: the game does not provide this dependency.
+    foreach ($dependency in @('0Harmony.dll', 'Harmony-LICENSE.txt')) {
+        $source = Join-Path $buildOutput $dependency
+        if (-not (Test-Path $source)) { throw "Required runtime dependency missing: $dependency" }
+        Copy-Item $source -Destination $package -Force
+    }
     $revision = git rev-parse HEAD
     if ($LASTEXITCODE -ne 0) { throw 'Cannot determine repository revision.' }
     $dirty = [bool](git status --porcelain)
@@ -67,6 +73,7 @@ try {
         gameAssemblyVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($gameAssembly).FileVersion
         gameAssemblySha256 = $gameHash
         modSha256 = (Get-FileHash $dll -Algorithm SHA256).Hash
+        harmonySha256 = (Get-FileHash (Join-Path $package '0Harmony.dll') -Algorithm SHA256).Hash
         deployment = $(if ($NoDeploy) { 'staged only; installed mod unchanged' } else { 'local game mod directory' })
         inGameValidation = 'not recorded; follow docs/game-validation.md'
     } | ConvertTo-Json | Set-Content (Join-Path $package 'build-manifest.json') -Encoding UTF8
