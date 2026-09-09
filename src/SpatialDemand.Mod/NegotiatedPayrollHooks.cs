@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.ExceptionServices;
+using Game.Agents;
 using Game.Citizens;
 using Game.Companies;
 using Game.Economy;
