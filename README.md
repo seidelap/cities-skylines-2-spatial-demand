@@ -13,8 +13,10 @@ and 0.3 passed real game builds and official postprocessing; those results do no
 establish business or construction gameplay acceptance. Version 0.4's market quote
 build passed official postprocessing and 68 portable check groups. Version 0.5 adds
 comparable walking routes and optional negotiated retention wages; 69 portable
-check groups pass. Its game integration and live acceptance are being checked
-separately in [game validation](docs/game-validation.md). Shopping, labor and
+check groups pass on Mac and Windows. Its real Windows build and official
+postprocessing passed with zero warnings/errors at clean revision `efa671e`.
+The package is staged, with live acceptance pending; see
+[game validation](docs/game-validation.md). Shopping, labor and
 construction Apply start off. There is no multiplayer implementation.
 
 The previous economy prototype is preserved at commit
@@ -145,8 +147,8 @@ dotnet build src/SpatialDemand.Mod -c Release -p:CSIIToolPath='C:\path\to\toolch
 The current adapter was checked against the source references listed in
 [API references](docs/api-references.md), including a November 2025 game source
 snapshot. Compilation and official postprocessing against game 1.6.0f1 passed for
-versions 0.2, 0.3 and 0.4. The clean 0.4 build is revision `74c066f`, staged at
-21:49 UTC on September 8, 2026. Its gameplay acceptance and construction Apply
+versions 0.2 through 0.5. The clean 0.5 build is revision `efa671e`, staged at
+00:34 UTC on September 9, 2026. Its gameplay acceptance and construction Apply
 acceptance remain pending. Compilation does not establish gameplay behavior.
 
 The copy target refuses an unspecified destination. The wrapper verifies the

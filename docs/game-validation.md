@@ -1,5 +1,46 @@
 # In-game acceptance: housing smoke tests passed; business and construction tests pending
 
+## Version 0.5 — comparable routes and negotiated payroll
+
+All **69 portable check groups passed on Mac and Windows**. The final actual-game
+build and official postprocessing passed with **zero warnings and zero errors**
+at 00:34:47 UTC on September 9, 2026 (8:34 PM Eastern on September 8), from clean
+revision `efa671e17b03aaa3e4b5e662097f8c231e6fa47e`.
+
+- Mod DLL SHA256: `641817A2D1849F8FD85082921C08BCCE1CE565AA49F63435920293ABCB4CE236`.
+- Bundled Harmony 2.2.2 SHA256: `0DE0118C8F1D4408DE389CA33B46D2FF7778F3A8541B430CAE729EC913D899C7`.
+- Installed Game.dll SHA256: `721E7E17BF74299AA2B988C1BD07E90874BB8BC72D263229500C4BF639E7E4EE`.
+- The game identifies itself as 1.6.0f1 in its UI; its file-version metadata is 0.0.0.0.
+
+The package is **staged only**. The build receipt verified that the installed 0.4
+DLL was unchanged. It includes the mod's managed DLL/PDB, generated native
+libraries, Harmony, its license and a manifest. Install the complete package with
+the game closed. No 0.5 startup, shopping handoff, negotiated payment, save/reload
+or performance acceptance is claimed from this compilation.
+
+The first compiled candidate's official postprocessor rejected Harmony 2.4.2
+metadata with an assembly-hashing error. Pinning 2.2.2 passed the same official
+pipeline; no postprocessing step was disabled. An orphaned IL-processing helper
+also held the first wrapper's output pipe open after failure. The subsequent
+wrapper used native file redirection and returned the actual build exit code.
+
+The game-side implementation and required live checks are documented in
+[shopping and payroll](shopping-payroll.md). New Apply options default off.
+
+### Construction Apply session
+
+At 23:48 UTC on September 8, all test saves, settings and the old mod were backed
+up to `D:\cs2-test-backups\before-construction-apply-20260908-234835`. Autosaves from
+22:09 and 22:14 UTC were found. Version 0.4 was installed with the game closed,
+with construction Observe and Apply enabled and business Apply off. Its startup
+marker was observed at 00:18:43 UTC on September 9.
+
+The last inspected screen was the main menu, with no city simulation or new
+construction decision logs yet. Remote screenshots and native menu actions work,
+but coordinate clicks fail with `noWindowsAvailable`, including in windowed mode.
+The 0.5 package is ready for installation after the user closes the game. Positive
+construction, rejection, completion and persistence cases remain unvalidated.
+
 ## Version 0.4 — market quotes and optional diagnostics
 
 Portable tests cover checkout/freight costing, buyer cash versus travel preferences,
@@ -11,8 +52,8 @@ and official postprocessing succeeded with zero warnings/errors at 21:49:51 UTC 
 September 8, 2026, from clean revision `74c066fb39a57a039c1f67daab5808c480798807`.
 DLL SHA256: `C0DF14B3681D251870AC2B505E21AE227FC877607EFFDA144EC48342D6C08BED`.
 The installed Game.dll hash remains `721E7E17BF74299AA2B988C1BD07E90874BB8BC72D263229500C4BF639E7E4EE`.
-This build is staged in `D:\src\economy-review\artifacts\SpatialDemand`, **not
-installed or tested live**. The final staged run preserved the installed 0.3 hash
+This build was initially staged without installation; it was installed and reached
+the main menu in the later session described above. The original staged run preserved the installed 0.3 hash
 and the same running game process, 9248. Do not terminate that process or overwrite
 its files without preserving the user's city.
 
