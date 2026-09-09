@@ -42,6 +42,16 @@ namespace SpatialDemand.Mod
         internal static bool Install()
         {
             if (Ready) return true;
+            // Live CS2 1.6.0f1 validation fails in the patched value-type
+            // SetupFindHome method, including with Apply off. Keep the complete
+            // integration uninstalled until that runtime seam is validated.
+            // Merely returning vanilla schedules still executes the bad wrapper.
+            Mod.Log.Warn("Negotiated payroll unavailable: SetupFindHome runtime validation failed; no payroll hooks installed. Labor observation remains available and salaries remain vanilla.");
+            return false;
+        }
+
+        private static bool InstallUnvalidatedHooks()
+        {
             try
             {
                 runWithoutJobs = typeof(JobChunkExtensions).GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
@@ -140,11 +150,10 @@ namespace SpatialDemand.Mod
 
         private static void EnterSystem(ComponentSystemBase __instance, out World? __state)
         { __state = contextWorld; contextWorld = __instance.World; }
-        // SetupFindHome is an instance method on CitizenPathfindSetup. Its first
-        // explicit argument is the owning PathfindSetupSystem, so Harmony's __0
-        // denotes the struct instance and __1 denotes the system.
-        private static void EnterPathfind(PathfindSetupSystem __1, out World? __state)
-        { __state = contextWorld; contextWorld = __1.World; }
+        // Harmony argument indices exclude the value-type instance. __0 is the
+        // first explicit argument (system); __1 is SetupData, not a system.
+        private static void EnterPathfind(PathfindSetupSystem __0, out World? __state)
+        { __state = contextWorld; contextWorld = __0.World; }
         private static Exception? LeaveSystem(Exception? __exception, World? __state)
         { contextWorld = __state; return __exception; }
 

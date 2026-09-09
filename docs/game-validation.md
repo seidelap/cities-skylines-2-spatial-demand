@@ -244,3 +244,17 @@ population/performance target yet. Main-thread job completion and allocations pe
 batch are known costs to measure before increasing coverage.
 
 The local randomized tests do not substitute for any of these checks.
+# September 9 runtime regression
+
+Builds `efa671e` and `a693646` both fail after loading the saved city in
+`CitizenPathfindSetup.SetupFindHome_Patch2` with a `NullReferenceException`.
+Changing the Harmony argument index did not fix the problem; that attempted
+diagnosis was incorrect. The installed game's signature has `system` as its
+first explicit argument, so Harmony's index is `__0`.
+
+The complete negotiated-payroll integration is now quarantined: `Install`
+returns without installing any patches, and the wage Apply option is labeled
+unavailable. Labor forecasts remain available. This is containment, not a
+validated repair of negotiated payroll. No payroll settlement acceptance is
+claimed. Construction permitted one residential proposal before the failed
+run stopped; completed construction and shopping routes still need live checks.
