@@ -53,7 +53,7 @@ namespace SpatialDemand.Mod
                     new[] { "Game.Simulation.ProcessingCompanySystem", "OnUpdate", "UpdateProcessingJob" },
                     new[] { "Game.Simulation.SicknessCheckSystem", "OnUpdate", "SicknessCheckJob" },
                     new[] { "Game.Simulation.RentAdjustSystem", "OnUpdate", "AdjustRentJob" },
-                    new[] { "Game.Pathfind.CitizenPathfindSetup", "SetupFindHome", "SetupFindHomeJob" }
+                    new[] { "Game.Simulation.CitizenPathfindSetup", "SetupFindHome", "SetupFindHomeJob" }
                 };
                 JobNames.Clear();
                 foreach (var specification in specifications)
@@ -146,11 +146,11 @@ namespace SpatialDemand.Mod
         private static JobHandle ScheduleChunk<T>(T job, EntityQuery query, JobHandle dependsOn) where T : struct, IJobChunk
         {
             if (!Active) return job.ScheduleParallel(query, dependsOn);
+            var timer = Stopwatch.StartNew();
             dependsOn.Complete();
             var previous = snapshot;
             var previousOwners = rosterOwners;
             snapshot = ReadContracts();
-            var timer = Stopwatch.StartNew();
             try { runWithoutJobs.MakeGenericMethod(typeof(T)).Invoke(null, new object[] { job, query }); }
             catch (TargetInvocationException error)
             {
@@ -164,11 +164,11 @@ namespace SpatialDemand.Mod
         private static JobHandle ScheduleSingle<T>(T job, JobHandle dependsOn) where T : struct, IJob
         {
             if (!Active) return job.Schedule(dependsOn);
+            var timer = Stopwatch.StartNew();
             dependsOn.Complete();
             var previous = snapshot;
             var previousOwners = rosterOwners;
             snapshot = ReadContracts();
-            var timer = Stopwatch.StartNew();
             try { job.Execute(); }
             finally { snapshot = previous; rosterOwners = previousOwners; ManagedJobs++; ManagedMilliseconds += timer.Elapsed.TotalMilliseconds; }
             return default;

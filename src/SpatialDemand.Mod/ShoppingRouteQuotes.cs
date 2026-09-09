@@ -34,6 +34,7 @@ namespace SpatialDemand.Mod
                 !EntityManager.HasBuffer<Resources>(request.m_Payer) || !EntityManager.Exists(origin) ||
                 !EntityManager.HasComponent<Game.Objects.Transform>(origin) ||
                 !EntityManager.HasBuffer<TripNeeded>(shopper) || EntityManager.GetBuffer<TripNeeded>(shopper, true).Length != 0 ||
+                EntityManager.HasComponent<Game.Citizens.Student>(shopper) ||
                 (EntityManager.HasComponent<CarKeeper>(shopper) && EntityManager.IsComponentEnabled<CarKeeper>(shopper)) ||
                 (EntityManager.HasComponent<BicycleOwner>(shopper) && EntityManager.IsComponentEnabled<BicycleOwner>(shopper))) return false;
             int money = EconomyUtils.GetResources(Resource.Money, EntityManager.GetBuffer<Resources>(request.m_Payer, true));

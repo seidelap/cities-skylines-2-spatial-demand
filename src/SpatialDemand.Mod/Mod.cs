@@ -23,7 +23,7 @@ namespace SpatialDemand.Mod
             updateSystem.UpdateBefore<HousingChoiceSystem, HouseholdFindPropertySystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateAt<BusinessChoiceSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<ShoppingChoiceSystem, ResourceBuyerSystem>(SystemUpdatePhase.GameSimulation);
-            updateSystem.UpdateAt<ShoppingChoiceSystem>(SystemUpdatePhase.PreDeserialize);
+            updateSystem.UpdateBefore<Game.Serialization.PreDeserialize<ShoppingChoiceSystem>>(SystemUpdatePhase.Deserialize);
             updateSystem.UpdateAfter<LaborChoiceSystem, WorkProviderSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<ConstructionProposalSystem, ZoneSpawnSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateAfter<ConstructionProposalRestoreSystem, ZoneSpawnSystem>(SystemUpdatePhase.GameSimulation);
