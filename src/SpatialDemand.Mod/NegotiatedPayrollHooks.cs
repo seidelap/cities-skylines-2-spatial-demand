@@ -140,8 +140,11 @@ namespace SpatialDemand.Mod
 
         private static void EnterSystem(ComponentSystemBase __instance, out World? __state)
         { __state = contextWorld; contextWorld = __instance.World; }
-        private static void EnterPathfind(PathfindSetupSystem __0, out World? __state)
-        { __state = contextWorld; contextWorld = __0.World; }
+        // SetupFindHome is an instance method on CitizenPathfindSetup. Its first
+        // explicit argument is the owning PathfindSetupSystem, so Harmony's __0
+        // denotes the struct instance and __1 denotes the system.
+        private static void EnterPathfind(PathfindSetupSystem __1, out World? __state)
+        { __state = contextWorld; contextWorld = __1.World; }
         private static Exception? LeaveSystem(Exception? __exception, World? __state)
         { contextWorld = __state; return __exception; }
 
