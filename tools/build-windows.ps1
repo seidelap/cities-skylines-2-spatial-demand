@@ -25,7 +25,7 @@ try {
     # Keep the reference receipt beside that directory, with a unique name.
     $resolvedPathFile = $buildOutput + '.game-assembly-path.txt'
     New-Item -ItemType Directory -Force (Split-Path $buildOutput -Parent) | Out-Null
-    $buildArguments = @('build', 'src/SpatialDemand.Mod', '-c', 'Release',
+    $buildArguments = @('build', 'src/SpatialDemand.Mod', '-c', 'Release', '--disable-build-servers', '-p:UseSharedCompilation=false',
         "-p:CSIIToolPath=$ToolchainPath", "-p:GameAssemblyRecordPath=$resolvedPathFile", '--output', $buildOutput)
     # Our explicit copy target fails closed if these arguments are absent.
     $deploymentArguments = if ($NoDeploy) { @("-p:SpatialDemandStageDirectory=$buildOutput-staged") }

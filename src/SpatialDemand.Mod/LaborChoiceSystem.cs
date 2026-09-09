@@ -80,7 +80,7 @@ namespace SpatialDemand.Mod
                 if (result.Converged)
                     foreach (var match in result.Assignments.Take(6))
                         Mod.Log.Info($"labor contract forecast employer={match.Job.Employer}, slot={match.Job.Id}, citizen={match.Worker.Id}, education={match.Job.RequiredEducation}, gross={match.GrossWage:F2}, vanillaGross={parameters.GetWage(match.Job.RequiredEducation)}, takeHome={match.TakeHomeIncome:F2}, commute={match.CommuteCost:F2}, workerGain={match.WorkerUtility - match.Worker.OutsideOption:F2}, valueCeiling={match.Job.MarginalValue:F2}, reservedCash={match.Job.WageBudget:F2}, fillSurplus={match.EmployerSurplus:F2}, emptySurplus=0; job-change=forecast-only, horizon=game-day, value=full-sales-technology-estimate");
-                Mod.Log.Info($"labor status frame={simulation.frameIndex}, sampledPeople={people.Count}, sampledSlots={jobs.Count}, hypotheticalMatches={result.Assignments.Count}, unfilled={result.UnfilledJobs.Count}, outside={result.OutsideWorkers.Count}, bids={result.Bids}, converged={result.Converged}, appliedRaises={applied}, acceptedTotal={accepted}, hooksReady={NegotiatedPayrollHooks.Ready}, payrollActive={NegotiatedPayrollHooks.Active}, salaryReads={NegotiatedPayrollHooks.SalarySubstitutions}, managedJobs={NegotiatedPayrollHooks.ManagedJobs}, managedMs={NegotiatedPayrollHooks.ManagedMilliseconds:F2}, ms={timer.Elapsed.TotalMilliseconds:F2}; transactions=vanilla, city-equilibrium=false, retention-only, cap=128-people/64-employers/128-slots, value=full-sales-technology-estimate, cash=after-standing-wages-rent-full-input-reserve, commute=straight-line-round-trip");
+                Mod.Log.Info($"labor status frame={simulation.frameIndex}, sampledPeople={people.Count}, sampledSlots={jobs.Count}, hypotheticalMatches={result.Assignments.Count}, unfilled={result.UnfilledJobs.Count}, outside={result.OutsideWorkers.Count}, bids={result.Bids}, converged={result.Converged}, appliedRaises={applied}, acceptedTotal={accepted}, hooksReady={NegotiatedPayrollHooks.Ready}, payrollActive={NegotiatedPayrollHooks.Active}, salaryReads={NegotiatedPayrollHooks.SalarySubstitutions}, paymentReceipts={NegotiatedPayrollHooks.PaymentReceipts}, paymentMismatches={NegotiatedPayrollHooks.PaymentMismatches}, managedJobs={NegotiatedPayrollHooks.ManagedJobs}, managedMs={NegotiatedPayrollHooks.ManagedMilliseconds:F2}, ms={timer.Elapsed.TotalMilliseconds:F2}; transactions=vanilla, city-equilibrium=false, retention-only, cap=128-people/64-employers/128-slots, value=full-sales-technology-estimate, cash=after-standing-wages-rent-full-input-reserve, commute=straight-line-round-trip");
             }
             catch (Exception error)
             {
@@ -231,6 +231,9 @@ namespace SpatialDemand.Mod
                 int previous = ContractSalary.Get(EntityManager, person, worker, parameters);
                 if (!raiseCash.TryGetValue(proposal.Job.Employer, out double remaining) ||
                     !LaborContractRules.TryAgree(proposal, previous, remaining, PayWageSystem.kUpdatesPerDay, out int gross)) continue;
+                int rate = taxes.GetResidentialTaxRate(worker.m_Level);
+                if (LaborContractRules.NetDailyIncome(gross, parameters.m_ResidentialMinimumEarnings, rate) <=
+                    LaborContractRules.NetDailyIncome(previous, parameters.m_ResidentialMinimumEarnings, rate)) continue;
                 var contract = new NegotiatedWage { Employer = employer, JobLevel = worker.m_Level,
                     DailyGross = gross, AcceptedFrame = simulation.frameIndex };
                 if (EntityManager.HasComponent<NegotiatedWage>(person)) EntityManager.SetComponentData(person, contract);

@@ -86,11 +86,13 @@ namespace SpatialDemand.Mod
 
         protected override void OnUpdate()
         {
+            bool enabled = Mod.Settings != null && Mod.Settings.ShoppingEnabled && !faulted && buying.Enabled;
+            if (!enabled && sessions.Count == 0 && holds.IsEmptyIgnoreFilter && probes.IsEmptyIgnoreFilter && backups.IsEmptyIgnoreFilter)
+            { LogStatus(false, false); return; }
             try
             {
                 EntityManager.CompleteAllTrackedJobs();
                 RecoverOrphans();
-                bool enabled = Mod.Settings != null && Mod.Settings.ShoppingEnabled && !faulted && buying.Enabled;
                 bool apply = enabled && Mod.Settings!.ApplyShoppingChoices;
                 foreach (var session in sessions.Values.ToArray())
                 {

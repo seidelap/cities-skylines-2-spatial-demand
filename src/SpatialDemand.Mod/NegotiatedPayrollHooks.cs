@@ -35,6 +35,7 @@ namespace SpatialDemand.Mod
         internal static bool Ready { get; private set; }
         internal static bool Active => Ready && Mod.Settings != null && Mod.Settings.ApplyNegotiatedWages;
         internal static long ManagedJobs, SalarySubstitutions;
+        internal static long PaymentReceipts, PaymentMismatches;
         internal static double ManagedMilliseconds;
 
         internal static bool Install()
@@ -207,10 +208,21 @@ namespace SpatialDemand.Mod
             return true;
         }
 
-        private static void BeforePayWage(Entity __1, Worker __3, ref EconomyParameterData __8, out EconomyParameterData __state)
+        private struct WageCall
         {
-            __state = __8;
+            internal EconomyParameterData Original;
+            internal int Money, Taxable, Wage;
+            internal bool Contract;
+        }
+
+        private static void BeforePayWage(Entity __1, Worker __3, ref TaxPayer __4, DynamicBuffer<Resources> __5,
+            ref EconomyParameterData __8, out WageCall __state)
+        {
+            __state = new WageCall { Original = __8 };
             if (!Active || !Salary(__1, __3, out int wage)) return;
+            __state.Contract = true; __state.Wage = wage;
+            __state.Money = EconomyUtils.GetResources(Resource.Money, __5);
+            __state.Taxable = __4.m_UntaxedIncome;
             switch (__3.m_Level)
             {
                 case 0: __8.m_Wage0 = wage; break;
@@ -221,8 +233,24 @@ namespace SpatialDemand.Mod
             }
             SalarySubstitutions++;
         }
-        private static Exception? RestorePayWage(Exception? __exception, ref EconomyParameterData __8, EconomyParameterData __state)
-        { __8 = __state; return __exception; }
+        private static Exception? RestorePayWage(Exception? __exception, Entity __0, Entity __1,
+            ref TaxPayer __4, DynamicBuffer<Resources> __5, ref EconomyParameterData __8, WageCall __state)
+        {
+            __8 = __state.Original;
+            if (__state.Contract && __exception == null)
+            {
+                int expected = __state.Wage / PayWageSystem.kUpdatesPerDay;
+                int credited = EconomyUtils.GetResources(Resource.Money, __5) - __state.Money;
+                int accrued = __4.m_UntaxedIncome - __state.Taxable;
+                int expectedTaxable = Math.Max(0, expected - __8.m_ResidentialMinimumEarnings / PayWageSystem.kUpdatesPerDay);
+                bool matches = credited == expected && accrued == expectedTaxable;
+                PaymentReceipts++;
+                if (!matches) PaymentMismatches++;
+                if (PaymentReceipts <= 6 || !matches)
+                    Mod.Log.Info($"labor payroll receipt citizen={__1}, employer={__0}, dailyGross={__state.Wage}, expectedSlice={expected}, householdCredit={credited}, taxableAdded={accrued}, expectedTaxable={expectedTaxable}, matches={matches}; company-debit=queued-by-vanilla-not-yet-confirmed, receipt=read-only");
+            }
+            return __exception;
+        }
 
         private static void AfterHouseholdIncome(DynamicBuffer<HouseholdCitizen> __0, ref ComponentLookup<Worker> __1,
             ref ComponentLookup<HealthProblem> __3, ref EconomyParameterData __4, NativeArray<int> __5, ref int __result)

@@ -35,7 +35,8 @@
           DestinationFiles="@(SpatialDemandDeployFiles->'$(SpatialDemandDestination)\%(RecursiveDir)%(Filename)%(Extension)')" />
   </Target>
   <ItemGroup>
-    <PackageReference Include="Lib.Harmony" Version="2.4.2" />
+    <!-- The installed Burst postprocessor cannot hash the merged 2.4.2 assembly. -->
+    <PackageReference Include="Lib.Harmony" Version="2.2.2" />
     <None Include="../../licenses/Harmony-LICENSE.txt" Link="Harmony-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
     <!-- Compile the same tested core into the mod; Harmony is the only runtime dependency. -->
     <Compile Include="../SpatialDemand.Core/*.cs" Link="Core/%(Filename)%(Extension)" />

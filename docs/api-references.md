@@ -3,6 +3,23 @@
 Implementation is original; these references establish API names and ownership.
 No game assemblies or decompiled game source are distributed in this repository.
 
+Version 0.5 additionally inspected the installed Game.dll (SHA256
+`721E7E17BF74299AA2B988C1BD07E90874BB8BC72D263229500C4BF639E7E4EE`)
+and Unity.Entities.dll directly. The salary-call census identified eight job
+scheduling seams for the retained-employee subset; extractor salaries are excluded.
+The installed Unity `RunByRefWithoutJobs` body directly invokes each chunk job's
+managed Execute with original query filters, enabled masks and unfiltered indices.
+This establishes the intended scheduling mechanism, not successful runtime patches.
+Game `PreDeserialize<T>` wrappers run before the Deserialize phase; there is no
+`SystemUpdatePhase.PreDeserialize` enum value in this installation.
+
+The bundled [Harmony 2.2.2 dependency](https://www.nuget.org/packages/Lib.Harmony/2.2.2)
+provides managed patching. Its [MIT license](../licenses/Harmony-LICENSE.txt) travels
+with the package. Default-off scope, covered salary consumers and limitations are
+listed in [shopping and payroll](shopping-payroll.md). The installed official
+Burst postprocessor rejected the merged 2.4.2 assembly while hashing its metadata;
+this older backend is pinned for compatibility, without bypassing postprocessing.
+
 Version 0.4 also uses the pinned snapshot's
 [ResourceBuyerSystem](https://github.com/bworthy89/roadmod/blob/5b49a4fc0c572f2b5133df83083ebb4afe2f76a6/New%20folder/Game.Simulation/ResourceBuyerSystem.cs),
 `ResourcePathfindSetup`, `EconomyUtils`, `TradeCost`, `ServiceAvailable`,

@@ -3,19 +3,19 @@
 A small implementation of household housing choice, new business activity
 selection and experimental tenant-backed construction. Households compare reachable
 homes; prospective firms compare compatible activities using observed buyers,
-stock and costs. Optional shopping and labor diagnostics explain individual
-decisions while the game continues to choose shopping trips and pay salaries.
+stock and costs. Experimental shopping choices compare actual walking routes;
+negotiated retention wages preserve the game's payment and tax transactions.
 
 **Status: experimental prototype.** Housing has passed live observe, apply and
 city-reload smoke checks on game 1.6.0f1. Individual preference persistence, difficult
 settlement cases and large-city performance are still unvalidated. Versions 0.2
 and 0.3 passed real game builds and official postprocessing; those results do not
-establish business or construction gameplay acceptance. Version 0.4 updates seller
-and transport quotes and adds shopping/labor models with read-only diagnostics.
-Its real Windows build and official postprocessing passed with zero warnings/errors;
-all 68 portable check groups passed on Mac and Windows. It is staged only, with
-in-game acceptance pending. Construction and both new
-diagnostics start off. There is no multiplayer implementation.
+establish business or construction gameplay acceptance. Version 0.4's market quote
+build passed official postprocessing and 68 portable check groups. Version 0.5 adds
+comparable walking routes and optional negotiated retention wages; 69 portable
+check groups pass. Its game integration and live acceptance are being checked
+separately in [game validation](docs/game-validation.md). Shopping, labor and
+construction Apply start off. There is no multiplayer implementation.
 
 The previous economy prototype is preserved at commit
 [`67f4b1c`](https://github.com/seidelap/cities-skylines-2-spatial-demand/tree/67f4b1cf31567196ac230f119c398e94db31f970)
@@ -52,9 +52,14 @@ source, synthetic city data and historical experiment harness.
 - Persists one active project at a time, with a one-game-day entry limit, and reports
   actual completion/occupancy separately from forecasts. See the
   [construction model, assumptions and outstanding acceptance](docs/construction-model.md).
-- Offers separate, default-off shopping and labor diagnostics. Shopping explains
-  the single route vanilla selected; labor forecasts wage bids and the choice to
-  leave a job empty. Neither changes actual shopping, employment or payroll.
+- Requests comparable walking routes for up to eight stocked shops, including the
+  incumbent. Optional Apply hands the entire winning route to vanilla checkout,
+  with recovery on interruption, timeout, toggling and loading.
+- Negotiates wages against standing jobs and vacant slots. Optional Apply saves
+  affordable retention raises caused by an outside employer's competing bid.
+  Salary-dependent household and company calculations use the same agreement;
+  vanilla remains the only payment and tax owner. Job changes remain forecasts.
+  See [shopping and payroll scope](docs/shopping-payroll.md).
 
 ## Deliberate limits
 
@@ -65,9 +70,12 @@ upkeep, construction execution, trade, shelters and departure. The developer cho
 among vanilla-generated projects; it does not enumerate every possible design/site.
 There is no replacement demand bar, actual financing, advance lease, endogenous rent
 auction or overlay. Buildings can still finish vacant when forecasts do not settle.
-The portable labor auction sets hypothetical contract wages; it does **not** set
-cims' actual salaries. Consistent negotiated payroll and alternative shopping-route
-discovery require further game integration.
+The labor auction does not reassign employees, negotiate wage cuts or implement a
+citywide equilibrium. Eight salary-consuming game jobs must run synchronously
+when negotiated wages are active; large-city performance is unvalidated. Shopping
+Apply supports ordinary local pedestrian full-basket searches only. Other travel
+modes and unsupported searches stay with vanilla. These constraints are explicit
+first-version boundaries, not claims of a complete replacement economy.
 
 The available options are the game's pathfinding shortlist, not every home in the
 city. Routes reflect vanilla's chosen search origin/destination, which may be a
@@ -123,7 +131,8 @@ install Steam, sign in, or publish anything to Paradox Mods.
    official toolchain may also deploy the build into the local Mods directory.
    Close the game first for installation. Add `-NoDeploy` to compile and package
    into an isolated staging directory while the game remains open; this does not
-   update the installed mod. The package includes generated native libraries.
+   update the installed mod. The package includes generated native libraries,
+   the Harmony runtime dependency and its license. Install the whole package.
 4. Follow [the in-game acceptance procedure](docs/game-validation.md) on a test city,
    first observing and then applying choices. Record the game version and results.
 
@@ -155,9 +164,10 @@ files to be unlocked and explicit `SpatialDemandAllowInstall=true` from the wrap
 | `src/SpatialDemand.Core/BusinessMarket.cs` | Buyer/supplier choices and business surplus |
 | `src/SpatialDemand.Mod/BusinessChoiceSystem.cs` | Read stocked offers, quote transport and submit company entries |
 | `src/SpatialDemand.Core/ShoppingMarket.cs` | Affordable basket choice and finite stock reservations |
-| `src/SpatialDemand.Mod/ShoppingPriceQuote.cs`, `ShoppingChoiceSystem.cs` | Shared seller quote and read-only shopping observations |
+| `src/SpatialDemand.Mod/ShoppingPriceQuote.cs`, `ShoppingChoiceSystem.cs` | Shared seller quote, comparable routes and complete-route handoff |
 | `src/SpatialDemand.Core/LaborMarket.cs` | Individual wage bids, outside options and one-to-one matching |
-| `src/SpatialDemand.Mod/LaborChoiceSystem.cs` | Read-only wage forecasts from seekers, vacancies and cash |
+| `src/SpatialDemand.Mod/LaborChoiceSystem.cs` | Wage forecasts and qualified retention agreements |
+| `src/SpatialDemand.Mod/NegotiatedPayrollHooks.cs`, `NegotiatedWage.cs` | Saved salaries and game-owned payroll integration |
 | `src/SpatialDemand.Core/DevelopmentMarket.cs` | Tenant bids, posted-rent choice and project argmax |
 | `src/SpatialDemand.Mod/ConstructionHousingSystem.cs` | Household construction quotes and existing-home alternatives |
 | `src/SpatialDemand.Mod/ConstructionProposalSystem.cs` | Temporarily bypass the vanilla proposal demand threshold |

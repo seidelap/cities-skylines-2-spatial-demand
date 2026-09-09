@@ -34,6 +34,7 @@ namespace SpatialDemand.Mod
         {
             if (level < 0 || level > 4 || !manager.HasComponent<Worker>(citizen) ||
                 !manager.HasComponent<CompanyData>(employer) || !manager.HasComponent<PrefabRef>(employer) ||
+                manager.HasComponent<Game.Objects.OutsideConnection>(employer) ||
                 !manager.HasBuffer<Employee>(employer) || manager.HasComponent<Deleted>(employer) ||
                 manager.HasComponent<Deleted>(citizen) || !manager.HasComponent<HouseholdMember>(citizen)) return false;
             var worker = manager.GetComponentData<Worker>(citizen);
