@@ -28,6 +28,8 @@ namespace SpatialDemand.Mod
                 (request.m_Flags & SetupTargetFlags.Commercial) == 0 ||
                 (request.m_Flags & (SetupTargetFlags.RequireTransport | SetupTargetFlags.BuildingUpkeep | SetupTargetFlags.SecondaryPath)) != 0 ||
                 !EntityManager.HasComponent<CimHousehold>(request.m_Payer) ||
+                !EntityManager.HasComponent<HouseholdMember>(shopper) ||
+                EntityManager.GetComponentData<HouseholdMember>(shopper).m_Household != request.m_Payer ||
                 !EntityManager.HasBuffer<HouseholdCitizen>(request.m_Payer) ||
                 EntityManager.HasComponent<TouristHousehold>(request.m_Payer) ||
                 EntityManager.HasComponent<CommuterHousehold>(request.m_Payer) || EntityManager.HasComponent<MovingAway>(request.m_Payer) ||
